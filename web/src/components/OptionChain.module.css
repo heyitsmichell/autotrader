@@ -1,0 +1,73 @@
+/* OptionChain styles (CSS Module). Shared primitives are global, in src/styles/. */
+
+:global(.controls-row) .input-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+:global(.controls-row) .input-group label {
+  white-space: nowrap;
+}
+.expirations-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  scrollbar-width: thin;
+}
+.tab-button {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: 500 11px var(--mono);
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.tab-button:hover {
+  background: #1a2830;
+  border-color: var(--blue);
+  color: #fff;
+}
+.tab-button:global(.active) {
+  background: #163242;
+  border-color: var(--blue);
+  color: #58c0f5;
+}
+.call-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font: 700 9px var(--mono);
+  background: #133225;
+  color: var(--green);
+  border: 1px solid #23543d;
+  letter-spacing: 0.03em;
+}
+.put-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font: 700 9px var(--mono);
+  background: #3a1d22;
+  color: var(--red);
+  border: 1px solid #63333b;
+  letter-spacing: 0.03em;
+}
+.sort-indicator {
+  font-size: 11px;
+  margin-left: 4px;
+  display: inline-block;
+}
+.sort-indicator.inactive {
+  color: var(--faint);
+  opacity: 0.6;
+}
+.sort-indicator:global(.active) {
+  color: var(--blue);
+  font-weight: bold;
+}

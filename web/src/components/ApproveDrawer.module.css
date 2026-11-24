@@ -1,0 +1,53 @@
+/* ApproveDrawer styles (CSS Module). Shared primitives are global, in src/styles/. */
+
+.env-strip {
+  border-radius: 4px;
+  padding: 7px 10px;
+  font: var(--fs-xs) var(--mono);
+  margin-bottom: 12px;
+}
+.env-strip:global(.paper) {
+  color: var(--paper);
+  background: var(--paper-bg);
+  border: 1px solid #2d4962;
+}
+.env-strip:global(.live) {
+  color: #fff;
+  background: var(--live-bg);
+  border: 1px solid var(--live);
+}
+.env-strip b {
+  letter-spacing: 0.1em;
+  margin-right: 6px;
+}
+.review-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 7px 16px;
+  margin: 0 0 12px;
+  font-size: var(--fs-sm);
+}
+.review-grid dt {
+  color: var(--muted);
+  font: var(--fs-xs) var(--mono);
+  padding-top: 2px;
+}
+.review-grid dd {
+  margin: 0;
+}
+.review-grid :global(.delta) {
+  color: var(--amber);
+  font-size: var(--fs-xs);
+}
+.neg {
+  color: var(--red);
+}
+.blocker-list {
+  margin: 0 0 12px;
+  padding: 9px 12px 9px 28px;
+  border: 1px solid #7a2f36;
+  background: #2a1215;
+  color: #ffd9db;
+  border-radius: 5px;
+  font-size: var(--fs-sm);
+}

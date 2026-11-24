@@ -1,0 +1,106 @@
+/* MLScorecard styles (CSS Module). Shared primitives are global, in src/styles/. */
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 8px 0;
+}
+.metric-label {
+  color: var(--muted);
+  font: 11px var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.metric-threshold {
+  color: var(--faint);
+  font: 11px var(--mono);
+  margin: 4px 0 8px;
+}
+.metric-status {
+  font: 11px var(--mono);
+  font-weight: 700;
+}
+.metric-status:global(.pass) {
+  color: var(--green);
+}
+.metric-status:global(.fail) {
+  color: var(--red);
+}
+
+.feature-table {
+  font-size: 11px;
+}
+
+.models-table {
+  font-size: 11px;
+}
+.feature-table th {
+  font-size: 11px;
+}
+.models-table th {
+  font-size: 11px;
+}
+.feature-table td {
+  padding: 8px 9px;
+}
+.models-table td {
+  padding: 8px 9px;
+}
+.importance-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.importance-fill {
+  height: 6px;
+  background: var(--blue);
+  border-radius: 3px;
+  flex: 1;
+}
+.models-table tr:global(.active) {
+  background: #152a24;
+}
+.active-badge {
+  color: var(--green);
+  font: 11px var(--mono);
+  background: #143126;
+  border: 1px solid #285440;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.settings-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 16px;
+  margin-top: 8px;
+  font-size: 11px;
+}
+.settings-list dt {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+.settings-list dd {
+  color: #c4cdd2;
+  font: 11px var(--mono);
+  margin: 0;
+}
+@media (max-width: 820px) {
+  .metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 580px) {
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.ml-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 14px;
+}

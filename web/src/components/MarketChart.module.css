@@ -1,0 +1,110 @@
+/* MarketChart styles (CSS Module). Shared primitives are global, in src/styles/. */
+.chart-head {
+  align-items: center;
+}
+.chart-head h2 {
+  font-size: 16px;
+}
+.chart-price {
+  font: 500 12px var(--mono);
+  color: var(--green);
+  margin-left: 8px;
+}
+.chart-controls {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.chart-controls select {
+  background: #0d1419;
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 6px;
+  border-radius: 4px;
+}
+.frame-tabs {
+  display: flex;
+  gap: 2px;
+}
+.frame-tabs button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 11px var(--mono);
+  padding: 5px 7px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.frame-tabs button:global(.selected) {
+  background: #20302f;
+  color: var(--green);
+}
+.chart-legend {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  color: var(--muted);
+  font: 11px var(--mono);
+  margin: 3px 0 0;
+}
+.chart-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.legend-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.legend-dot.blue {
+  background: var(--blue);
+}
+.legend-dot.gold {
+  background: var(--amber);
+}
+.live-label {
+  margin-left: auto;
+}
+.chart-host {
+  height: 280px;
+  width: 100%;
+  margin-top: 6px;
+}
+.chart-foot {
+  display: flex;
+  justify-content: space-between;
+  color: var(--faint);
+  font: 11px var(--mono);
+  padding-top: 6px;
+  border-top: 1px solid var(--line2);
+}
+@media (max-width: 580px) {
+  .chart-head {
+    align-items: flex-start;
+  }
+  .chart-head :global(.panel-head) {
+    gap: 5px;
+  }
+  .chart-controls {
+    flex-direction: column;
+    align-items: flex-end;
+  }
+  .frame-tabs button {
+    padding: 4px;
+  }
+  .chart-host {
+    height: 230px;
+  }
+}
+.ext-toggle {
+  margin-left: 6px !important;
+  border-color: #2a3a46 !important;
+  color: #7e8e9c !important;
+  font-weight: 700 !important;
+}
+.ext-toggle:global(.selected) {
+  background: #2a2512 !important;
+  border-color: #e4b85a !important;
+  color: #e4b85a !important;
+}

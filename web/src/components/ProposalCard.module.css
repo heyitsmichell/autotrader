@@ -1,0 +1,191 @@
+/* ProposalCard styles (CSS Module). Shared primitives are global, in src/styles/. */
+.proposal-title small {
+  display: block;
+  color: var(--muted);
+  font: 11px var(--mono);
+  margin-top: 3px;
+}
+.text-button {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: #e3ecef;
+  cursor: pointer;
+  font-weight: 700;
+}
+.text-button:hover {
+  color: var(--green);
+}
+.text-button {
+  font-size: 11px;
+  color: var(--blue);
+}
+.proposal-list {
+  display: grid;
+  gap: 8px;
+}
+.proposal-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 12px;
+  border: 1px solid var(--line);
+  background: #10171d;
+  border-radius: 5px;
+  padding: 12px;
+  align-items: start;
+}
+.side-badge {
+  display: grid;
+  place-items: center;
+  width: 39px;
+  height: 34px;
+  border-radius: 4px;
+  font: 700 10px var(--mono);
+}
+.side-badge:global(.buy) {
+  color: var(--green);
+  background: #153328;
+}
+.side-badge:global(.sell) {
+  color: var(--red);
+  background: #382226;
+}
+.proposal-title {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.proposal-title b {
+  font: 700 13px var(--display);
+}
+.proposal-title span {
+  font: 11px var(--mono);
+  color: #c6d0d4;
+}
+.proposal-title small {
+  display: inline;
+  margin: 0;
+}
+.proposal-main p {
+  color: #aebbc1;
+  font-size: 11px;
+  margin: 5px 0 6px;
+}
+.proposal-sub {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+.proposal-actions {
+  display: flex;
+  gap: 6px;
+}
+.proposal-actions :global(.button) {
+  font-size: 11px;
+  padding: 7px 9px;
+}
+@media (max-width: 1100px) {
+  .proposal-row {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+  .proposal-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+  .proposal-title small {
+    display: none;
+  }
+}
+@media (max-width: 580px) {
+  .proposal-row {
+    padding: 9px;
+    gap: 8px;
+  }
+  .proposal-actions {
+    flex-wrap: wrap;
+  }
+  .proposal-actions :global(.button) {
+    padding: 7px;
+  }
+  .requote-grid {
+    grid-template-columns: auto auto;
+  }
+}
+.expiry-chip {
+  color: #9dc3ec;
+  font: 11px var(--mono);
+  border: 1px solid #2d4962;
+  background: #101c27;
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+.expiry-chip:global(.expired) {
+  color: #ffc9ca;
+  border-color: #7c4148;
+  background: #3a1a1e;
+}
+.expiry-chip:global(.warn) {
+  color: #ffd9a1;
+  border-color: #6b5329;
+  background: #2a2110;
+}
+.proposal-row:global(.expired) {
+  opacity: 0.86;
+  border-color: #5a3036;
+}
+.requote-box {
+  grid-column: 1/-1;
+  margin-top: 9px;
+  border: 1px solid #334a5c;
+  background: #0f1a22;
+  border-radius: 5px;
+  padding: 9px 11px;
+  font: 11px var(--mono);
+  color: #bcd0db;
+}
+.requote-box:global(.failed) {
+  border-color: #7c4148;
+  background: #241014;
+}
+.requote-title {
+  margin-bottom: 6px;
+  color: #9dc3ec;
+  letter-spacing: 0.04em;
+}
+.requote-grid {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 3px 14px;
+  justify-content: start;
+}
+.requote-grid span {
+  color: var(--faint);
+}
+.requote-box > :global(.inline-warning) {
+  margin: 7px 0 0;
+}
+
+.side-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font: 11px var(--mono);
+  font-weight: 700;
+}
+:global(.action-queue) .proposal-row {
+  grid-template-columns: 38px minmax(0, 1fr);
+}
+:global(.action-queue) .proposal-actions {
+  grid-column: 1/-1;
+  justify-content: flex-end;
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+.side-badge:global(.option) {
+  background: #1c1830;
+  color: #b8a9e8;
+  border: 1px solid #453a68;
+}

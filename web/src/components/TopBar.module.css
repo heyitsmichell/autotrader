@@ -1,0 +1,175 @@
+/* TopBar styles (CSS Module). Shared primitives are global, in src/styles/. */
+.brand-mark {
+  height: 32px;
+  width: 32px;
+  border: 1px solid #315044;
+  background: #152a24;
+  color: var(--green);
+  display: grid;
+  place-items: center;
+  font: 800 16px var(--display);
+  border-radius: 8px;
+}
+.brand-copy {
+  display: grid;
+  line-height: 1.15;
+  margin-right: 15px;
+}
+.brand-copy b {
+  font: 800 13px var(--display);
+  letter-spacing: 0.13em;
+}
+.brand-copy span {
+  margin-top: 4px;
+  color: var(--faint);
+  font: 11px var(--mono);
+  letter-spacing: 0.08em;
+}
+.state-tag {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 5px 8px;
+  color: #aebbc2;
+  font: 11px var(--mono);
+  white-space: nowrap;
+}
+.state-tag {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+.state-tag:global(.good) {
+  color: #b0d9ca;
+}
+.state-tag:global(.bad) {
+  color: #f09b9d;
+  border-color: #623b3f;
+}
+.top-spacer {
+  flex: 1;
+}
+.clock {
+  color: #aab6bd;
+  font: 11px var(--mono);
+  white-space: nowrap;
+}
+@media (max-width: 580px) {
+  .brand-copy {
+    margin-right: auto;
+  }
+  .state-tag {
+    font-size: 11px;
+    padding: 4px 6px;
+  }
+  .clock {
+    display: none;
+  }
+}
+.pending-badge {
+  border: 1px solid #6a5a2b;
+  background: #2a2410;
+  color: #f0d492;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font: 11px var(--mono);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.pending-badge:hover {
+  background: #3a3114;
+}
+:global(.topbar).sticky-top {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(6px);
+  flex-wrap: wrap;
+  min-height: 64px;
+  height: auto;
+  padding: 8px 0;
+}
+:global(.topbar).sticky-top.is-live {
+  border-bottom: 2px solid var(--live);
+}
+.env-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 4px;
+  padding: 5px 9px;
+  font: 700 var(--fs-xs) var(--mono);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.env-badge:global(.paper) {
+  color: var(--paper);
+  background: var(--paper-bg);
+  border: 1px solid #2d4962;
+}
+.env-badge:global(.live) {
+  color: #fff;
+  background: var(--live);
+  border: 1px solid #ff8b93;
+}
+.env-badge:global(.auto) b:last-child {
+  color: var(--amber);
+}
+.env-badge:global(.live):global(.auto) b:last-child {
+  color: #fff3c4;
+}
+.age-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font: var(--fs-xs) var(--mono);
+  color: #aebbc2;
+  white-space: nowrap;
+}
+.age-chip:global(.stale) {
+  color: #ffc9ca;
+  border-color: #7a2f36;
+  background: #2a1215;
+}
+.age-chip:global(.aging) {
+  color: #f0d492;
+  border-color: #6a5a2b;
+}
+.kill-button {
+  min-width: 96px;
+  font: 800 var(--fs-md) var(--mono);
+  letter-spacing: 0.12em;
+  color: #fff;
+  background: #b3262f;
+  border: 2px solid #ff6b74;
+  padding: 9px 16px;
+  border-radius: 5px;
+}
+.kill-button:hover:not(:disabled) {
+  background: #cf2f39;
+}
+.kill-button.is-on {
+  background: #3a1215;
+  border-color: #ff6b74;
+  color: #ffd9db;
+  letter-spacing: 0.04em;
+}
+.kill-button:focus-visible {
+  outline: 3px solid #ffd166;
+  outline-offset: 2px;
+}
+.button-flatten:focus-visible {
+  outline: 3px solid #ffd166;
+  outline-offset: 2px;
+}
+.button-flatten {
+  background: #2b1a1c;
+  border: 1px solid #7c4148;
+  color: #ffc9ca;
+}
+.button-flatten:hover:not(:disabled) {
+  background: #3c2023;
+}

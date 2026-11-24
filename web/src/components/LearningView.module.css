@@ -1,0 +1,63 @@
+/* LearningView styles (CSS Module). Shared primitives are global, in src/styles/. */
+
+.lessons-table {
+  font-size: 11px;
+}
+.lessons-table th {
+  font-size: 11px;
+}
+.lessons-table td {
+  font-size: 11px;
+  padding: 8px 9px;
+}
+
+.evidence-summary {
+  background: #0e151a;
+  border: 1px solid var(--line2);
+  border-radius: 4px;
+  padding: 10px;
+  font: 11px var(--mono);
+  color: #b8c5cc;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.autopsy-list {
+  display: grid;
+  gap: 4px;
+  font: 11px var(--mono);
+  color: var(--muted);
+}
+.lesson-detail {
+  width: min(800px, 100%);
+  max-height: 85vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  box-shadow: 0 24px 80px #0009;
+}
+.lesson-detail header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+.lesson-detail header h3 {
+  font: 700 16px var(--display);
+  margin: 0;
+}
+@media (max-width: 580px) {
+  .lesson-detail {
+    padding: 14px;
+  }
+}
+:global(.dialog-lg).lesson-detail {
+  max-height: none;
+  border-radius: 0;
+}

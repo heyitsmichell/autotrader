@@ -1,0 +1,33 @@
+/* HistoryTable styles (CSS Module). Shared primitives are global, in src/styles/. */
+.run-banner {
+  display: flex;
+  gap: 10px;
+  padding: 10px 11px;
+  background: #121d22;
+  border: 1px solid var(--line2);
+  border-radius: 4px;
+  margin-bottom: 9px;
+  align-items: flex-start;
+}
+.run-banner b {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+}
+.run-banner small {
+  display: block;
+  color: var(--muted);
+  font: 11px var(--mono);
+  margin-top: 3px;
+}
+.clickable {
+  cursor: pointer;
+}
+.clickable:hover td {
+  background: #172229;
+}
+.empty-cell {
+  text-align: center;
+  color: var(--muted);
+  padding: 20px;
+}

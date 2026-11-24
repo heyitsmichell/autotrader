@@ -1,0 +1,60 @@
+/* SettingsPanel styles (CSS Module). Shared primitives are global, in src/styles/. */
+.settings-panel {
+  margin-top: 14px;
+}
+.settings-panel summary {
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+}
+.settings-panel summary::-webkit-details-marker {
+  display: none;
+}
+.settings-panel summary span:first-child {
+  display: grid;
+  gap: 3px;
+}
+.settings-panel summary b {
+  font: 600 13px var(--display);
+}
+.settings-panel[open] summary {
+  padding-bottom: 15px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 15px;
+}
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+}
+.settings-grid textarea {
+  width: 100%;
+  resize: vertical;
+  background: #0e151a;
+  color: #d4dde1;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px;
+  font: 11px/1.6 var(--mono);
+}
+@media (max-width: 580px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.settings-foot {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line2);
+  color: var(--faint);
+  font: 11px var(--mono);
+}
+.subhead {
+  font: 700 var(--fs-md) var(--display);
+  margin: 14px 0 4px;
+}

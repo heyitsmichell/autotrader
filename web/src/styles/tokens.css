@@ -1,0 +1,36 @@
+/* Design tokens. Text colours meet WCAG AA (>= 4.5:1) on --bg, --panel and --panel2. */
+:root {
+  --bg: #0b1014;
+  --panel: #111820;
+  --panel2: #151e26;
+  --line: #23313b;
+  --line2: #1a2730;
+  --text: #e7edf0;
+  --muted: #82919c;
+  --faint: #7d8e99;
+  --green: #45c99a;
+  --red: #ef737a;
+  --amber: #e8b85c;
+  --blue: #6eaaff;
+  --mono: "Cascadia Code", Consolas, ui-monospace, monospace;
+  --sans: Inter, "Segoe UI", system-ui, sans-serif;
+  --display: Inter, "Segoe UI", system-ui, sans-serif;
+  /* status colours (lessons, autopsies) */
+  --color-proposed: #5d4a22;
+  --color-approved: #2d4962;
+  --color-active: #1f5a45;
+  --color-retired: #2a333a;
+  --color-rejected: #5a2328;
+  --color-process: #5a2328;
+  --color-good-process: #1f5a45;
+  --color-outcome: #453a68;
+  /* type scale: nothing below 11px */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  /* environment */
+  --live: #d64550;
+  --live-bg: #3a1215;
+  --paper: #9dc3ec;
+  --paper-bg: #101c27;
+}
