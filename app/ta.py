@@ -50,12 +50,13 @@ def _warn_v1_once() -> None:
 
 
 def model() -> str:
-    """Active scoring model. Only ``v2`` exists. ``TA_MODEL=v1`` (the old default, possibly
-    still in a saved .env) is accepted, mapped to v2, and warned about once."""
+    """Active scoring model: ``v2`` (default) or the opt-in ``v3`` (TA_MODEL=v3). ``TA_MODEL=v1``
+    (the old default, possibly still in a saved .env) is accepted, mapped to v2, and warned
+    about once."""
     raw = os.getenv("TA_MODEL", "").strip().lower()
     if raw == "v1":
         _warn_v1_once()
-    return "v2"
+    return "v3" if raw == "v3" else "v2"
 
 
 def score(f: dict, which: str | None = None) -> tuple[float, list[dict]]:
@@ -63,7 +64,8 @@ def score(f: dict, which: str | None = None) -> tuple[float, list[dict]]:
     maps to v2 with a one-time warning."""
     if which is not None and which.strip().lower() == "v1":
         _warn_v1_once()
-    return _score_v2(f)
+    chosen = which.strip().lower() if which is not None else model()
+    return _score_v3(f) if chosen == "v3" else _score_v2(f)
 
 
 def _score_v2(f: dict) -> tuple[float, list[dict]]:
@@ -166,6 +168,84 @@ def _score_v2(f: dict) -> tuple[float, list[dict]]:
             add("Volume confirmation", vol, -0.10, f"{vol:.1f}x volume behind a falling 5 days")
         else:
             add("Volume confirmation", vol, 0.0, "no unusual volume")
+
+    total = _clip(sum(c["points"] for c in comps))
+    return round(total, 3), comps
+
+
+def _score_v3(f: dict) -> tuple[float, list[dict]]:
+    """Opt-in (TA_MODEL=v3) chart-reading score built on what the research found robust:
+    medium/long-term momentum and relative strength, with a low-volatility tilt. Mean-reversion
+    (the oversold dip-buy bonus) is dropped. Each group is capped; the total is clipped to -1..+1.
+
+    Needs the long-horizon features from indicators.feature_series (sma200, ret_12_1, ret_126d,
+    vol60, ...); a group whose inputs are missing (short history) simply contributes nothing.
+    """
+    comps: list[dict] = []
+
+    def add(name: str, value, points: float, cap: float, note: str) -> None:
+        points = _clip(points, -cap, cap)
+        comps.append({"name": name, "value": value, "points": round(points, 3), "note": note})
+
+    # (a) long trend: price vs the 200-day average, and 50-day above/below 200-day. cap 0.20
+    d200, s50, s200 = f.get("pct_vs_sma200"), f.get("sma50"), f.get("sma200")
+    if d200 is not None:
+        pts = 0.15 * _clip(d200 / 20.0)
+        if s50 is not None and s200:
+            pts += 0.05 if s50 > s200 else -0.05
+        add("Long trend (vs SMA200)", round(d200, 2), pts, 0.20,
+            "above the 200-day average" + (" with the 50-day above it" if pts > 0.15 else "")
+            if pts > 0 else "below the 200-day average" if pts < 0 else "at the 200-day average")
+
+    # (b) medium-term momentum: 12-1 and 6-month returns divided by realised vol. cap 0.40
+    vol = f.get("vol60")
+    m121, m6 = f.get("ret_12_1"), f.get("ret_126d")
+    if vol and vol > 0 and (m121 is not None or m6 is not None):
+        pts, a, b = 0.0, None, None
+        if m121 is not None:
+            a = m121 / vol
+            pts += 0.25 * _clip(a / 1.5)
+        if m6 is not None:
+            b = m6 / (vol * 0.5 ** 0.5)
+            pts += 0.15 * _clip(b / 1.5)
+        add("Momentum (12-1 and 6m, vol-adjusted)", None if a is None else round(a, 2), pts, 0.40,
+            "strong, steady medium-term gains" if pts > 0.2 else "positive medium-term momentum"
+            if pts > 0 else "negative medium-term momentum" if pts < 0 else "flat")
+
+    # (c) relative strength vs the benchmark (SPY) over 6 months. cap 0.15
+    rs = f.get("rs_126d")
+    if rs is not None:
+        pts = 0.15 * _clip(rs / 20.0)
+        add("Relative strength vs SPY (6m)", round(rs, 2), pts, 0.15,
+            "outperforming the market" if pts > 0 else "lagging the market" if pts < 0 else "in line")
+
+    # (d) proximity to the 52-week high: near it is good, far below it is bad. cap 0.10
+    off = f.get("pct_from_high252")
+    if off is not None:
+        pts = 0.10 * (1.0 - min(-off, 30.0) / 7.5) if off <= 0 else 0.10
+        add("52-week high proximity", round(off, 2), pts, 0.10,
+            "near the 52-week high" if pts > 0.05 else "well below the 52-week high"
+            if pts < 0 else "middle of the yearly range")
+
+    # (e) volatility tilt: penalise very high 60-day vol vs its own past year. cap 0.10
+    rk = f.get("vol60_rank")
+    if rk is not None:
+        pts = -0.10 if rk >= 0.9 else -0.05 if rk >= 0.8 else 0.0
+        add("Volatility tilt", round(rk, 2), pts, 0.10,
+            "volatility in its top decile (penalised)" if pts <= -0.10
+            else "volatility elevated" if pts < 0 else "volatility not extreme")
+
+    # (f) v2's overbought penalty and volume confirmation (no oversold dip-buy bonus)
+    r = f.get("rsi14")
+    if r is not None:
+        pts = -0.15 if r > 75 else -0.05 if r > 65 else 0.0
+        add("RSI14", r, pts, 0.15, "overbought (> 75)" if r > 75 else "stretched (65-75)"
+            if r > 65 else "no overbought penalty")
+    v, c5 = f.get("vol_vs_20d_avg"), f.get("chg_5d_pct")
+    if v is not None and c5 is not None:
+        pts = 0.10 if v >= 1.5 and c5 > 0 else -0.10 if v >= 1.5 and c5 < 0 else 0.0
+        add("Volume confirmation", v, pts, 0.10, f"{v:.1f}x volume behind a {'rising' if pts > 0 else 'falling'} 5 days"
+            if pts else "no unusual volume")
 
     total = _clip(sum(c["points"] for c in comps))
     return round(total, 3), comps

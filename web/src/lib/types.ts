@@ -10,6 +10,7 @@ export interface GateCheck {
 
 export interface Signal {
   id?: number;
+  features?: { rsi14?: number | null; pct_from_high10?: number | null; high10?: number | null; adx14?: number | null; atr_pct?: number | null; [k: string]: unknown } | null;
   symbol: string;
   created_at?: string | null;
   close?: number | null;

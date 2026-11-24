@@ -1,36 +1,54 @@
-/* Design tokens. Text colours meet WCAG AA (>= 4.5:1) on --bg, --panel and --panel2. */
+/* Design tokens (docs/DESIGN_PLAN.md). Dark only. Text colours meet WCAG AA on --page and --raise. */
 :root {
-  --bg: #0b1014;
-  --panel: #111820;
-  --panel2: #151e26;
-  --line: #23313b;
-  --line2: #1a2730;
-  --text: #e7edf0;
-  --muted: #82919c;
-  --faint: #7d8e99;
-  --green: #45c99a;
-  --red: #ef737a;
-  --amber: #e8b85c;
-  --blue: #6eaaff;
-  --mono: "Cascadia Code", Consolas, ui-monospace, monospace;
-  --sans: Inter, "Segoe UI", system-ui, sans-serif;
-  --display: Inter, "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+  --page: #17191c;
+  --ink: #e6e8eb;
+  --ink-2: #9aa3ad;
+  --rule: #2a2e33;
+  --raise: #1e2125;
+  --gain: #3fb27f;
+  --loss: #e5675c;
+  --live: #e5675c;
+  --warn: #e0b35a;
+  --info: #7ba9e6;
+
+  /* old names, aliased so untouched components still render sensibly */
+  --bg: var(--page);
+  --panel: var(--raise);
+  --panel2: var(--raise);
+  --line: var(--rule);
+  --line2: var(--rule);
+  --text: var(--ink);
+  --muted: var(--ink-2);
+  --faint: var(--ink-2);
+  --green: var(--gain);
+  --red: var(--loss);
+  --amber: var(--warn);
+  --blue: var(--info);
+  --mono: var(--sans);
+  --sans: var(--font-plex), system-ui, "Segoe UI", sans-serif;
+  --display: var(--sans);
+  --live-bg: #3a1a18;
+  --paper: var(--ink-2);
+  --paper-bg: var(--raise);
+
   /* status colours (lessons, autopsies) */
   --color-proposed: #5d4a22;
   --color-approved: #2d4962;
   --color-active: #1f5a45;
-  --color-retired: #2a333a;
-  --color-rejected: #5a2328;
-  --color-process: #5a2328;
+  --color-retired: #2a2e33;
+  --color-rejected: #5a2823;
+  --color-process: #5a2823;
   --color-good-process: #1f5a45;
   --color-outcome: #453a68;
-  /* type scale: nothing below 11px */
-  --fs-xs: 11px;
+
+  /* type scale, ratio 1.2 */
+  --fs-xs: 12px;
   --fs-sm: 12px;
-  --fs-md: 13px;
-  /* environment */
-  --live: #d64550;
-  --live-bg: #3a1215;
-  --paper: #9dc3ec;
-  --paper-bg: #101c27;
+  --fs-md: 14px;
+  --fs-body: 14px;
+  --fs-lg: 17px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --radius: 6px;
 }

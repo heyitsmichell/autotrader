@@ -113,8 +113,19 @@ def _pct(a: float | None, b: float | None) -> float | None:
     return None if a is None or not b else (a / b - 1) * 100
 
 
-def feature_series(bars: list[dict]) -> list[dict]:
-    """Setup features for every bar (index i uses bars[0..i] only, no look-ahead)."""
+def _ret(closes: list[float], i: int, back: int, skip: int = 0) -> float | None:
+    """% return from closes[i-back] to closes[i-skip]; None when history is short."""
+    if i - back < 0 or skip >= back:
+        return None
+    a, b = closes[i - back], closes[i - skip]
+    return None if not a else (b / a - 1) * 100
+
+
+def feature_series(bars: list[dict], bench: list[dict] | None = None) -> list[dict]:
+    """Setup features for every bar (index i uses bars[0..i] only, no look-ahead).
+
+    ``bench`` (optional benchmark bars, e.g. SPY) enables rs_63d / rs_126d: the symbol's
+    return minus the benchmark's over the same dates (None where the benchmark lacks them)."""
     size = len(bars)
     if size < 2:
         return []
@@ -124,6 +135,24 @@ def feature_series(bars: list[dict]) -> list[dict]:
     logret = [0.0] + [math.log(closes[i] / closes[i - 1])
                       if closes[i] > 0 and closes[i - 1] > 0 else 0.0 for i in range(1, size)]
     atr_pct = [a / c * 100 if a and c else None for a, c in zip(a14, closes)]
+
+    s200 = sma(closes, 200)
+    # annualised 60-day realised vol (%); its trailing-252-day percentile feeds the v3 vol tilt
+    v60: list[float | None] = [
+        statistics.pstdev(logret[i - 59:i + 1]) * math.sqrt(252) * 100 if i >= 60 else None
+        for i in range(size)]
+    bclose: dict = {}
+    dkeys: list[str] = []
+    if bench:
+        bclose = {bar_day(b["time"]).isoformat(): b["close"] for b in bench}
+        dkeys = [bar_day(b["time"]).isoformat() for b in bars]
+
+    def rel(i: int, back: int) -> float | None:
+        if not bclose or i < back:
+            return None
+        b0, b1 = bclose.get(dkeys[i - back]), bclose.get(dkeys[i])
+        a = _ret(closes, i, back)
+        return None if not b0 or not b1 or a is None else a - (b1 / b0 - 1) * 100
 
     rows: list[dict] = []
     below = 0
@@ -151,7 +180,19 @@ def feature_series(bars: list[dict]) -> list[dict]:
             "chg_20d_pct": _pct(c, closes[i - 20]) if i >= 20 else None,
             "days_below_sma20": below,
             "vol_vs_20d_avg": (bars[i]["volume"] / (sum(vols) / len(vols))) if vols else None,
+            # ---- additive long-horizon features (TA v3); None when history is short ----
+            "sma200": s200[i], "pct_vs_sma200": _pct(c, s200[i]),
+            "ret_63d": _ret(closes, i, 63), "ret_126d": _ret(closes, i, 126),
+            "ret_252d": _ret(closes, i, 252), "ret_12_1": _ret(closes, i, 252, 21),
+            "high252": max(b["high"] for b in bars[i - 251:i + 1]) if i >= 251 else None,
+            "vol60": v60[i], "vol60_rank": None,
+            "rs_63d": rel(i, 63), "rs_126d": rel(i, 126),
         }
+        f["pct_from_high252"] = _pct(c, f["high252"])
+        if v60[i] is not None:
+            h = [v for v in v60[max(0, i - 251):i + 1] if v is not None]
+            if len(h) >= 120:
+                f["vol60_rank"] = sum(v <= v60[i] for v in h) / len(h)
         rows.append({k: (round(v, 4) if isinstance(v, float) else v) for k, v in f.items()})
     return rows
 

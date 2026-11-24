@@ -24,6 +24,19 @@ def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
     return v
 
 
+def _trusted_hosts(raw: str) -> tuple[str, ...]:
+    """TRUSTED_HOSTS: comma-separated host names (no ports, no wildcards). Names that look like a
+    catch-all ("*", "0.0.0.0", "::") are refused, since this app has no login."""
+    out = []
+    for h in (x.strip().lower().rstrip(".") for x in raw.split(",")):
+        if not h:
+            continue
+        if h in ("*", "0.0.0.0", "::", "[::]") or "*" in h or "/" in h or ":" in h:
+            raise ValueError(f"TRUSTED_HOSTS: refusing {h!r} (give exact host names, no ports or wildcards)")
+        out.append(h)
+    return tuple(out)
+
+
 def load_settings() -> Settings:
     broker_mode = _str("BROKER_MODE", "mock").lower()
     if broker_mode not in {"mock", "webull"}:
@@ -337,6 +350,7 @@ def load_settings() -> Settings:
         news_google_concurrency=max(1, min(4, _int("NEWS_GOOGLE_CONCURRENCY", 1))),
         news_rss_spacing_seconds=max(0.0, _float("NEWS_RSS_SPACING_SECONDS", 0.7)),
         news_google_cooldown_minutes=max(1.0, _float("NEWS_GOOGLE_COOLDOWN_MINUTES", 20.0)),
+        news_webull_enabled=_bool("NEWS_WEBULL_ENABLED", True),
         news_llm_batch_size=max(2, min(25, _int("NEWS_LLM_BATCH_SIZE", 10))),
         news_llm_max_batches=max(1, min(30, _int("NEWS_LLM_MAX_BATCHES", 6))),
         news_llm_cooldown_minutes=max(1.0, _float("NEWS_LLM_COOLDOWN_MINUTES", 10.0)),
@@ -347,10 +361,14 @@ def load_settings() -> Settings:
         exit_order_type=_choice("EXIT_ORDER_TYPE", "limit", ("limit", "market")),
         entry_order_type=_choice("ENTRY_ORDER_TYPE", "limit", ("limit", "marketable")),
         marketable_offset_bps=min(200.0, max(0.0, _float("MARKETABLE_OFFSET_BPS", 10.0))),
+        entry_session_all_day=_bool("ENTRY_SESSION_ALL_DAY", True),
+        overnight_size_factor=min(1.0, max(0.0, _float("OVERNIGHT_SIZE_FACTOR", 0.5))),
+        max_spread_pct_extended=max(0.0, _float("MAX_SPREAD_PCT_EXTENDED", 1.0)),
         entry_chase_seconds=max(0.0, _float("ENTRY_CHASE_SECONDS", 0.0)),
         market_notional_buffer_pct=min(10.0, max(0.0, _float("MARKET_NOTIONAL_BUFFER_PCT", 1.0))),
         # swing-strategy
         bracket_take_profit=_bool("BRACKET_TAKE_PROFIT", True),
+        trusted_hosts=_trusted_hosts(_str("TRUSTED_HOSTS", "")),
         size_from_risk=_bool("SIZE_FROM_RISK", False),
         risk_per_trade_pct=min(10.0, max(0.0, _float("RISK_PER_TRADE_PCT", 0.0))),
         backtest_live_exits=_bool("BACKTEST_LIVE_EXITS", False),

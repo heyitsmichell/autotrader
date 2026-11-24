@@ -1,12 +1,11 @@
 "use client";
 
 /**
- * Sticky header (QA §7): environment and mode badge, data-age chip, broker and market state,
- * Pause engine, Flatten, and the kill switch (Shift+K). It sits outside every error boundary.
+ * Sticky header: wordmark, tabs, and the always-visible safety controls
+ * (mode, pause, kill (Shift+K), flatten). It sits outside every error boundary.
  */
 
 import { useEffect } from "react";
-import { dateTime } from "@/lib/format";
 import type { Status } from "@/lib/types";
 import css from "./TopBar.module.css";
 
@@ -23,32 +22,28 @@ export function dataAgeTone(status: Status | null): "fresh" | "aging" | "stale" 
   return "fresh";
 }
 
-function ageText(seconds: number | null | undefined): string {
-  if (seconds == null) return "no data yet";
-  if (seconds < 60) return `${Math.round(seconds)}s old`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m old`;
-  return `${(seconds / 3600).toFixed(1)}h old`;
-}
+export type Tab = "today" | "options" | "research" | "learning" | "settings";
 
-export default function TopBar({ status, pendingCount, busy, streamConnected, onFlatten, onKill, onScheduler }: {
+export default function TopBar({ status, busy, tab, onTab, onMode, onFlatten, onKill, onScheduler }: {
   status: Status | null;
-  pendingCount: number;
   busy: boolean;
-  streamConnected: boolean;
+  tab: Tab;
+  onTab: (tab: Tab) => void;
+  onMode: (mode: "approve" | "auto") => void;
   onFlatten: () => void;
   onKill: () => void;
   /** Turn the analysis scheduler on (resume) or off (pause). */
   onScheduler: (on: boolean) => void;
 }) {
-  const session = status?.session;
-  const live = !!status?.is_live;
-  const env = live ? "LIVE" : "PAPER";
-  const envDetail = live ? "Real-money account"
-    : status?.broker_mode === "webull" ? "Webull UAT sandbox" : "Mock broker (simulated)";
-  const mode = status?.trading_mode === "auto" ? "AUTO" : "APPROVE";
-  const tone = dataAgeTone(status);
   const killOn = !!status?.kill_switch;
   const paused = !status?.scheduler_on;
+  const tabs: [Tab, string][] = [
+    ["today", "Today"],
+    ["research", "Research"],
+    ["learning", "Learning"],
+    ...(status?.settings?.options_enabled ? [["options", "Options"] as [Tab, string]] : []),
+    ["settings", "Settings"],
+  ];
 
   // Shift+K opens the kill-switch dialog from anywhere (not while typing in a field).
   useEffect(() => {
@@ -64,56 +59,44 @@ export default function TopBar({ status, pendingCount, busy, streamConnected, on
     return () => window.removeEventListener("keydown", onKey);
   }, [onKill]);
 
-  return <header className={`topbar ${css["sticky-top"]} ${live ? `${css["is-live"]}` : ""}`}>
-    <div className={`${css["brand-mark"]}`} aria-hidden="true">T</div>
-    <div className={`${css["brand-copy"]}`}><b>TRADER</b><span>MARKET INTELLIGENCE</span></div>
-
-    <span className={`${css["env-badge"]} ${live ? "live" : "paper"} ${mode === "AUTO" ? "auto" : ""}`}
-      title={`${envDetail} · ${status?.broker_label || "connecting"}`}>
-      <b>{env}</b><span aria-hidden="true">·</span><b>{mode}</b>
-    </span>
-
-    <span className={`${css["age-chip"]} ${tone}`} title={streamConnected ? "Live updates connected" : "Live updates down: polling"}>
-      <i className={`dot ${tone === "stale" ? "red" : tone === "aging" ? "amber" : tone === "fresh" ? "green" : ""}`} aria-hidden="true"/>
-      Data {ageText(status?.data_age_seconds)}{streamConnected ? "" : " · polling"}
-    </span>
-
-    {pendingCount > 0 && <a className={`${css["pending-badge"]}`} href="#action-queue" aria-label={`${pendingCount} proposals pending approval`}>
-      {pendingCount} pending
-    </a>}
-    <span className={`${css["state-tag"]} ${status?.connected ? "good" : "bad"}`}>
-      <i className={`dot ${status?.connected ? "green" : "red"}`} aria-hidden="true"/>
-      {status?.connected ? "Broker connected" : "Broker offline"}
-    </span>
-    <span className={`${css["state-tag"]} ${status?.market_open ? "good" : ""}`} title={session ? `Next open ${dateTime(session.next_open)}` : ""}>
-      <i className={`dot ${status?.market_open ? "green" : ""}`} aria-hidden="true"/>
-      {status?.market_open
-        ? `Market open${session?.early_close ? ` · closes ${session.close} ET` : ""}`
-        : session?.holiday ? `Closed · ${session.holiday}` : "Market closed"}
-    </span>
-    <div className={`${css["top-spacer"]}`}/>
-    <span className={`${css["clock"]}`} suppressHydrationWarning>{status?.now_et || "—"}</span>
-
-    <button
-      className="button button-quiet"
-      disabled={busy || !status || killOn}
-      aria-pressed={!paused}
-      title={paused ? "Start the automatic analysis scheduler" : "Stop automatic analysis (no new proposals; exits and the risk loop keep running)"}
-      onClick={() => onScheduler(paused)}
-    >{paused ? "▶ Resume engine" : "❚❚ Pause engine"}</button>
-    <button
-      className={`button ${css["button-flatten"]}`}
-      disabled={!status?.connected || busy || status?.flattening}
-      title="Kill switch + cancel every open order + sell every position"
-      onClick={onFlatten}
-    >{status?.flattening ? "Flattening…" : "Flatten all"}</button>
-    <button
-      className={`button ${css["kill-button"]} ${killOn ? `${css["is-on"]}` : ""}`}
-      disabled={busy}
-      title={killOn ? "Release the kill switch (Shift+K)" : "Stop all new orders now (Shift+K)"}
-      aria-pressed={killOn}
-      aria-keyshortcuts="Shift+K"
-      onClick={onKill}
-    >{killOn ? "KILL ON · release" : "KILL"}</button>
+  return <header className={`topbar ${css["bar"]}`}>
+    <b className={css["wordmark"]}>Trader</b>
+    <nav className={css["tabs"]} role="tablist" aria-label="Views">
+      {tabs.map(([t, label]) => <button
+        key={t}
+        role="tab"
+        aria-selected={tab === t}
+        className={`${css["tab"]} ${tab === t ? css["on"] : ""}`}
+        onClick={() => onTab(t)}
+      >{label}</button>)}
+    </nav>
+    <div className={css["controls"]}>
+      <div className={css["mode"]} role="group" aria-label="Execution mode">
+        <button aria-pressed={status?.trading_mode === "approve"} disabled={!status}
+          onClick={() => onMode("approve")}>Approve</button>
+        <button aria-pressed={status?.trading_mode === "auto"} disabled={!status}
+          onClick={() => onMode("auto")}>Auto</button>
+      </div>
+      <button
+        className="button"
+        disabled={busy || !status || killOn}
+        title={paused ? "Start the automatic analysis scheduler" : "Stop automatic analysis (exits and the risk loop keep running)"}
+        onClick={() => onScheduler(paused)}
+      >{paused ? "Resume" : "Pause"}</button>
+      <button
+        className={`button ${css["danger"]} ${killOn ? css["is-on"] : ""}`}
+        disabled={busy}
+        title={killOn ? "Release the kill switch (Shift+K)" : "Stop all new orders now (Shift+K)"}
+        aria-pressed={killOn}
+        aria-keyshortcuts="Shift+K"
+        onClick={onKill}
+      >{killOn ? "Release kill" : "Kill"}</button>
+      <button
+        className={`button ${css["danger"]}`}
+        disabled={!status?.connected || busy || status?.flattening}
+        title="Kill switch, cancel every open order, sell every position"
+        onClick={onFlatten}
+      >{status?.flattening ? "Flattening" : "Flatten"}</button>
+    </div>
   </header>;
 }

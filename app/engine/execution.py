@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..broker.market_data import fresh_positions
 import asyncio
 import json
 import logging
@@ -23,7 +24,7 @@ from ..market import (market_is_open, market_is_open_extended, now_et, now_utc, 
                       session_phase)
 from ..portfolio import ACTIVE, DONE_CANCELLED, parse_orders
 from ..risk import OptionRiskManager, RiskManager
-from ..sizing import max_allowed_qty, ml_size_factor, volatility_scaled_qty
+from ..sizing import max_allowed_qty, ml_size_factor, overnight_scaled_qty, volatility_scaled_qty
 from .util import (MAX_PROPOSALS_PER_RUN, _coid, _is_option_symbol, _session_rejection,
                    normalize_proposal)
 
@@ -310,6 +311,15 @@ class ExecutionMixin:
                 style = "marketable"
                 what = f"#{pid} {p['side']} {p['quantity']} {sym} @ {new_px}"
 
+        if not sell and session == "NIGHT":
+            night_qty = overnight_scaled_qty(self.s, float(p["quantity"]), session)
+            if night_qty != float(p["quantity"]):
+                self.db.log("info", f"{sym}: overnight size factor {self.s.overnight_size_factor:g}: "
+                                    f"qty {p['quantity']:g} -> {night_qty:g}")
+                p["quantity"] = night_qty
+                self.db.update_proposal(pid, quantity=night_qty)
+                what = f"#{pid} {p['side']} {night_qty:g} {sym}"
+
         # For fractional orders, use AMOUNT entrust type with total_cash_amount
         entrust_type = "AMOUNT" if is_frac and not sell else "QTY"
         total_cash_amount = p["quantity"] * p["limit_price"] if is_frac and not sell else None
@@ -352,7 +362,7 @@ class ExecutionMixin:
             try:
                 if self.portfolio is not None:
                     await self.portfolio.sync_statuses()
-                held_before = (await self.broker.positions()).get(sym, 0.0)
+                held_before = (await fresh_positions(self.broker)).get(sym, 0.0)
                 stops = await self._cancel_protective(sym, coids["entry"])
             except BrokerError as e:
                 stops = None
@@ -367,7 +377,7 @@ class ExecutionMixin:
             # risk check and held_before snapshot then no longer reflect the position we can
             # safely sell. Refresh after cancellation and fail closed if that read is stale.
             try:
-                held_now = (await self.broker.positions()).get(sym, 0.0)
+                held_now = (await fresh_positions(self.broker)).get(sym, 0.0)
             except BrokerError as e:
                 self.db.update_proposal(pid, status="failed", decided_by=actor,
                                         reason=f"could not recheck {sym} holdings after clearing "
@@ -511,7 +521,7 @@ class ExecutionMixin:
             return None
         # Re-run the order-value / stop / target / risk-per-trade / position checks at the NEW price.
         try:
-            held = (await self.broker.positions()).get(sym, 0.0)
+            held = (await fresh_positions(self.broker)).get(sym, 0.0)
         except BrokerError:
             return None
         why = reprice_violation(self.s, qty=float(p["quantity"]), px=px, sl=p.get("sl"),
@@ -563,7 +573,10 @@ class ExecutionMixin:
                     kind = "stop" if o["kind"] == "sl" else "target"
                     self.db.log("error", f"Cancel of the {symbol} {kind} got no reply: {e}")
                     return None
-                # The broker refused: the order is already filled or cancelled there.
+                # The broker refused the cancel: it may be filled, cancelled or still live. Leave
+                # the row tracked (reconcile settles it from the broker's status) rather than
+                # marking it cancelled unconfirmed.
+                continue
             self.db.set_protective(o["id"], "cancelled", "cancelled before a sell",
                                    sell_coid=sell_coid if o["kind"] == "sl" else None)
             if o["kind"] == "sl":

@@ -1,110 +1,21 @@
-/* MarketChart styles (CSS Module). Shared primitives are global, in src/styles/. */
-.chart-head {
-  align-items: center;
-}
-.chart-head h2 {
-  font-size: 16px;
-}
-.chart-price {
-  font: 500 12px var(--mono);
-  color: var(--green);
-  margin-left: 8px;
-}
-.chart-controls {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-.chart-controls select {
-  background: #0d1419;
-  border: 1px solid var(--line);
-  color: var(--text);
-  padding: 6px;
-  border-radius: 4px;
-}
-.frame-tabs {
-  display: flex;
-  gap: 2px;
-}
-.frame-tabs button {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  font: 11px var(--mono);
-  padding: 5px 7px;
-  cursor: pointer;
-  border-radius: 3px;
-}
-.frame-tabs button:global(.selected) {
-  background: #20302f;
-  color: var(--green);
-}
-.chart-legend {
-  display: flex;
-  gap: 15px;
-  align-items: center;
-  color: var(--muted);
-  font: 11px var(--mono);
-  margin: 3px 0 0;
-}
-.chart-legend span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.legend-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-.legend-dot.blue {
-  background: var(--blue);
-}
-.legend-dot.gold {
-  background: var(--amber);
-}
-.live-label {
-  margin-left: auto;
-}
-.chart-host {
-  height: 280px;
-  width: 100%;
-  margin-top: 6px;
-}
-.chart-foot {
-  display: flex;
-  justify-content: space-between;
-  color: var(--faint);
-  font: 11px var(--mono);
-  padding-top: 6px;
-  border-top: 1px solid var(--line2);
-}
-@media (max-width: 580px) {
-  .chart-head {
-    align-items: flex-start;
-  }
-  .chart-head :global(.panel-head) {
-    gap: 5px;
-  }
-  .chart-controls {
-    flex-direction: column;
-    align-items: flex-end;
-  }
-  .frame-tabs button {
-    padding: 4px;
-  }
-  .chart-host {
-    height: 230px;
-  }
-}
-.ext-toggle {
-  margin-left: 6px !important;
-  border-color: #2a3a46 !important;
-  color: #7e8e9c !important;
-  font-weight: 700 !important;
-}
-.ext-toggle:global(.selected) {
-  background: #2a2512 !important;
-  border-color: #e4b85a !important;
-  color: #e4b85a !important;
-}
+.wrap { display: grid; gap: 10px; min-width: 0; }
+.head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.head h2 { font-size: 16px; margin: 0; }
+.price { font-size: 13px; color: var(--ink-2); margin-left: 8px; font-weight: 400; }
+.controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.controls select { background: var(--page); border: 1px solid var(--rule); color: var(--ink); padding: 6px; border-radius: 4px; font: inherit; }
+.tabs { display: flex; gap: 2px; flex-wrap: wrap; }
+.tabs button, .chip { border: 0; background: transparent; color: var(--ink-2); font: inherit; font-size: 12px; padding: 5px 8px; cursor: pointer; border-radius: 4px; }
+.tabs button:global(.selected) { background: var(--rule); color: var(--ink); }
+.tabs button:focus-visible, .chip:focus-visible, .controls select:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+.legend { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 6px; opacity: 0.6; }
+.chip i { width: 8px; height: 8px; border: 1px solid; border-radius: 50%; display: inline-block; }
+.chipOn { opacity: 1; color: var(--ink); }
+.live { margin-left: auto; font-size: 12px; color: var(--ink-2); }
+.body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
+.chartCol { min-width: 0; }
+.host { height: 420px; width: 100%; }
+.foot { color: var(--ink-2); font-size: 12px; padding-top: 6px; border-top: 1px solid var(--rule); }
+@media (max-width: 900px) { .body { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 580px) { .host { height: 300px; } }

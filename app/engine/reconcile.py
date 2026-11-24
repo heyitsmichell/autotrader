@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..broker.market_data import fresh_positions
 import asyncio
 import logging
 from datetime import datetime
@@ -205,7 +206,7 @@ class ReconcileMixin:
             return 0
         if summary is None:
             summary = {"unprotected": []}
-        positions = await self.broker.positions()
+        positions = await fresh_positions(self.broker)
         held = {s: q for s, q in positions.items() if q > 0 and not _is_option_symbol(s)}
         self._stop_alerts_clear(set(held))                  # closed positions reset their alerts
         if not held:

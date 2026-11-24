@@ -80,3 +80,15 @@ def cancel_reply_confirmed(reply) -> bool:
     have been filled or already cancelled", "Permission denied...") but do not look like errors."""
     low = str(reply or "").strip().lower()
     return not low.startswith(("order not found", "permission denied"))
+
+
+def extended_spread_pct(snap: dict | None, session: str | None) -> float | None:
+    """(ask - bid) / mid in percent from a parsed snapshot: OVN bid/ask in NIGHT, regular bid/ask
+    otherwise. None when the snapshot has no usable two-sided quote."""
+    if not snap:
+        return None
+    pre = "ovn_" if session == "NIGHT" else ""
+    bid, ask = snap.get(pre + "bid"), snap.get(pre + "ask")
+    if not bid or not ask or bid <= 0 or ask <= 0 or ask < bid:
+        return None
+    return (ask - bid) / ((ask + bid) / 2.0) * 100.0

@@ -535,11 +535,13 @@ class MLFilter:
             log.info("ML training on universe: %s", ", ".join(universe_symbols))
 
             bars = {}
+            from .broker.market_data import fetch_bars_many
+            got = await fetch_bars_many(broker, universe_symbols, self.s.ml_history_bars)
             for sym in universe_symbols:
-                try:
-                    bars[sym] = await broker.daily_bars(sym, self.s.ml_history_bars)
-                except BrokerError as e:
-                    log.warning("training bars for %s failed: %s", sym, e)
+                if sym.upper() in got:
+                    bars[sym] = got[sym.upper()]
+                else:
+                    log.warning("training bars for %s failed (no data)", sym)
             # Filter symbols by minimum bars requirement
             min_bars = self.s.ml_min_bars
             filtered_bars = {sym: b for sym, b in bars.items() if len(b) >= min_bars}

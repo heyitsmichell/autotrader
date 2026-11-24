@@ -217,6 +217,16 @@ def parse_snapshot(text: str) -> dict[str, dict]:
     out: dict[str, dict] = {}
     current = None
     for line in text.splitlines():
+        if current:
+            # Quote lines: "Bid: x x N  Ask: y x M" (regular) and "OVN Bid: ... OVN Ask: ..."
+            for key, rx in (("bid", r"(?<!OVN )(?<!OVN  )Bid:\s*([\d.]+)"),
+                            ("ask", r"(?<!OVN )(?<!OVN  )Ask:\s*([\d.]+)"),
+                            ("ovn_bid", r"OVN\s+Bid:\s*([\d.]+)"),
+                            ("ovn_ask", r"OVN\s+Ask:\s*([\d.]+)")):
+                bm = re.search(rx, line)
+                if bm:
+                    v = _num(bm.group(1))
+                    out[current][key] = v if v and v > 0 else None
         for tag, key in (("ExtHr", "ext"), ("OVN", "ovn")):
             em = re.match(rf"\s*{tag}\s+Price:\s*(\S+)", line)
             if em:
@@ -234,7 +244,8 @@ def parse_snapshot(text: str) -> dict[str, dict]:
                 prev_close = _num(pre_m.group(1)) if pre_m else None
                 px = _num(m.group(2))
                 out[current] = {"price": px, "regular_price": px, "ext_price": None,
-                                "ovn_price": None, "volume": None, "prev_close": prev_close}
+                                "ovn_price": None, "volume": None, "prev_close": prev_close,
+                                "bid": None, "ask": None, "ovn_bid": None, "ovn_ask": None}
                 continue
             if current and out[current]["volume"] is None and "Vol:" in line:
                 v = re.search(r"Vol:\s*(\S+)", line)
@@ -328,6 +339,34 @@ def parse_bars(text: str) -> list[dict]:
         bars[t] = {"time": t, "open": o, "high": h, "low": low, "close": c,
                    "volume": _num(fields.get("Vol", "")) or 0.0}
     return [bars[t] for t in sorted(bars)]
+
+
+_BAR_GROUP_RE = re.compile(r"^\s*-{2,}\s*(\S+?)\s*-{2,}\s*$")
+
+
+def parse_bars_by_symbol(text: str) -> dict[str | None, list[dict]]:
+    """Per-symbol bars from a (batch) get_stock_bars reply, oldest first.
+
+    Handles the grouped layout (``--- SYM ---`` header then bar lines; real MCP and mock) and the
+    flat layout (symbol as line prefix). Bars with no symbol at all land under key ``None``.
+    """
+    lines: dict[str | None, list[str]] = {}
+    cur: str | None = None
+    for line in text.splitlines():
+        m = _BAR_GROUP_RE.match(line)
+        if m:
+            cur = m.group(1).upper()
+            lines.setdefault(cur, [])
+            continue
+        if "O:" not in line or "C:" not in line:
+            continue
+        key = cur
+        if key is None:
+            head = line.split("O:", 1)[0].split()
+            if len(head) > 1 and parse_bar_time(" ".join(head)) is None:
+                key = head[0].upper()
+        lines.setdefault(key, []).append(line)
+    return {k: parse_bars("\n".join(v)) for k, v in lines.items()}
 
 
 def bar_day(t: datetime) -> date:

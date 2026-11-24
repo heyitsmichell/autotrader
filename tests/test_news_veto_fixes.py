@@ -172,3 +172,37 @@ async def test_google_waiters_do_not_hold_shared_news_slots(test_settings, test_
     assert held == ["A"] and outer._value == 1             # B queues behind Google WITHOUT a shared slot
     await asyncio.gather(t1, t2)
     assert held == ["A", "B"] and outer._value == 2
+
+
+# --- Webull news: off switch and escalating breaker (UAT search_news is always 404) -------------
+@pytest.mark.asyncio
+async def test_webull_news_can_be_disabled(test_settings, test_db):
+    e = _engine(test_settings, test_db, news_webull_enabled=False)
+    called = []
+
+    async def wb(sym):
+        called.append(sym)
+        return []
+
+    async def none(*a, **k):
+        return []
+    e._fetch_webull, e._fetch_google = wb, none
+    await e.refresh(["NVDA"], with_llm=False)
+    assert called == []
+
+
+def test_webull_breaker_pause_doubles_and_resets(test_settings, test_db):
+    e = _engine(test_settings, test_db)
+    err = RuntimeError("search_news: Server error (HTTP 404)")
+    pauses = []
+    for _ in range(3):
+        for _ in range(e.WEBULL_BREAKER_THRESHOLD):
+            e._webull_breaker_record(err)
+        pauses.append(round(e._wb_breaker_until - __import__("time").monotonic()))
+    assert pauses[0] == pytest.approx(1800, abs=5)
+    assert pauses[1] == pytest.approx(3600, abs=5)
+    assert pauses[2] == pytest.approx(7200, abs=5)
+    e._webull_breaker_record(None)                      # one success resets the escalation
+    for _ in range(e.WEBULL_BREAKER_THRESHOLD):
+        e._webull_breaker_record(err)
+    assert round(e._wb_breaker_until - __import__("time").monotonic()) == pytest.approx(1800, abs=5)

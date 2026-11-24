@@ -5,30 +5,27 @@ import ApproveDrawer from "./ApproveDrawer";
 import AutopsyView from "./AutopsyView";
 import BannerRail from "./BannerRail";
 import CommandBar from "./CommandBar";
+import Today from "./Today";
 import ConfirmModal, { ConfirmProvider, type ConfirmRequest } from "./ConfirmModal";
 import DecisionModal from "./DecisionModal";
 import ErrorBoundary from "./ErrorBoundary";
 import HistoryTable from "./HistoryTable";
 import LearningView from "./LearningView";
 import MarketChart from "./MarketChart";
-import { GateSummary, MetricGrid } from "./MetricGrid";
 import MLScorecard from "./MLScorecard";
 import OptionChain from "./OptionChain";
 import OptionsStatus from "./OptionsStatus";
-import PerformancePanel from "./PerformancePanel";
 import ProposalQueue, { type ApproveRequest } from "./ProposalCard";
 import ResearchPanel from "./ResearchPanel";
 import SettingsPanel from "./SettingsPanel";
-import { AccountPanel, ActivityFeed, HealthPanel, OrdersPanel } from "./SidePanels";
+import { AccountPanel, HealthPanel, OrdersPanel } from "./SidePanels";
 import SignalsTable from "./SignalsTable";
-import TopBar from "./TopBar";
+import TopBar, { type Tab } from "./TopBar";
 import TradeLedgerView from "./TradeLedgerView";
 import YahooFinancePanel from "./YahooFinancePanel";
 import { useDashboardData } from "@/lib/useDashboardData";
 import type { Proposal, ProposalDetail } from "@/lib/types";
 import css from "./Dashboard.module.css";
-
-type Tab = "market" | "options" | "research" | "learning";
 
 const Panel = ({ name, children }: { name: string; children: ReactNode }) =>
   <ErrorBoundary name={name}>{children}</ErrorBoundary>;
@@ -36,7 +33,7 @@ const Panel = ({ name, children }: { name: string; children: ReactNode }) =>
 export default function Dashboard() {
   const {
     mounted, status, portfolio, signals, proposals, runs, events, research, ml, learning, performance,
-    strategy, setStrategy, lessons, setLessons, refresh, refreshMl, api, error, pendingCount,
+    strategy, setStrategy, lessons, setLessons, refresh, refreshMl, api, error, 
     duplicateInstance, streamConnected, strategyLoaded, lessonsLoaded,
   } = useDashboardData();
 
@@ -46,7 +43,7 @@ export default function Dashboard() {
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>("market");
+  const [activeTab, setActiveTab] = useState<Tab>("today");
 
   const pending = useMemo(() => proposals.filter(p => p.status === "pending"), [proposals]);
   const positions = portfolio?.positions || [];
@@ -166,15 +163,35 @@ export default function Dashboard() {
   };
 
   const lastRun = runs[0];
+  const commandBar = <CommandBar
+    status={status}
+    lastRun={lastRun}
+    busy={!!busy}
+    onReconnect={() => void perform("Broker reconnected", () => api("/api/broker/reconnect", "POST"))}
+    onRunNow={() => void perform("Analysis run started", () => api("/api/run", "POST"))}
+    onTestAlert={() => void perform("Test alert sent", () => api("/api/alerts/test", "POST"))}
+  />;
+  const queue = <ProposalQueue
+    kind="all"
+    compact
+    proposals={pending}
+    status={status}
+    api={api}
+    busy={!!busy}
+    onAction={perform}
+    onOpen={p => void openProposal(p)}
+    onApprove={setApproving}
+  />;
   const chartSymbol = (symbol: string) => window.dispatchEvent(new CustomEvent("chart-symbol", { detail: symbol }));
 
   return <ConfirmProvider busy={!!busy}>
     <main className={`app-shell ${live ? `${css["live-frame"]}` : ""}`}>
       <TopBar
         status={status}
-        pendingCount={pendingCount}
         busy={!!busy}
-        streamConnected={streamConnected}
+        tab={activeTab}
+        onTab={setActiveTab}
+        onMode={setMode}
         onFlatten={startFlatten}
         onKill={toggleKill}
         onScheduler={setScheduler}
@@ -183,57 +200,38 @@ export default function Dashboard() {
         duplicateInstance={duplicateInstance}/>
       {notice && <div className={`${css["toast"]}`} role="status">{notice}</div>}
 
-      <Panel name="Command bar">
-        <CommandBar
-          status={status}
-          lastRun={lastRun}
-          busy={!!busy}
-          onMode={setMode}
-          onReconnect={() => void perform("Broker reconnected", () => api("/api/broker/reconnect", "POST"))}
-          onRunNow={() => void perform("Analysis run started", () => api("/api/run", "POST"))}
-        />
-      </Panel>
-      <Panel name="Metrics"><MetricGrid status={status} portfolio={portfolio} pendingCount={pending.length}/></Panel>
-      <Panel name="Performance"><PerformancePanel performance={performance}/></Panel>
-      <Panel name="Gate summary"><GateSummary signals={signals} status={status}/></Panel>
-
-      <nav className={`${css["dashboard-nav"]}`} role="tablist" aria-label="Dashboard views">
-        {([
-          ["market", "Market & Execution"],
-          ...(status?.settings?.options_enabled ? [["options", "Options Trading"]] : []),
-          ["research", "Research & Yahoo Finance"],
-          ["learning", "Learning & ML Scorecard"],
-        ] as [Tab, string][]).map(([tab, label]) => <button
-          key={tab}
-          role="tab"
-          aria-selected={activeTab === tab}
-          className={`${css["dash-tab"]} ${activeTab === tab ? "active" : ""}`}
-          onClick={() => setActiveTab(tab)}
-        ><span>{label}</span></button>)}
-      </nav>
-
       <div className={`${css["main-grid"]}`}>
         <div className={`${css["primary-column"]}`}>
-          {activeTab === "market" && <>
-            <Panel name="Chart"><MarketChart symbols={status?.watchlist || []} api={api}/></Panel>
+          {activeTab === "today" && <Panel name="Today">
+            <Today
+              status={status}
+              portfolio={portfolio}
+              performance={performance}
+              events={events}
+              pendingCount={pending.length}
+              onSymbol={sym => { setActiveTab("research"); window.setTimeout(() => chartSymbol(sym), 50); }}
+              needsYou={queue}
+              controls={commandBar}
+            />
+          </Panel>}
+
+          {activeTab === "research" && <>
+            <Panel name="Chart"><MarketChart symbols={status?.watchlist || []} api={api} signals={signals}/></Panel>
             <Panel name="Signals">
               <SignalsTable signals={signals} status={status} ml={ml} onSelectSymbol={chartSymbol}/>
             </Panel>
             <Panel name="History">
               <HistoryTable proposals={proposals.slice(0, 10)} lastRun={lastRun} onOpen={p => void openProposal(p)}/>
             </Panel>
+            <Panel name="Yahoo Finance">
+              <YahooFinancePanel symbols={status?.watchlist || ["AAPL", "MSFT", "NVDA", "SPY", "QQQ"]} api={api}/>
+            </Panel>
+            <Panel name="Research"><ResearchPanel research={research}/></Panel>
           </>}
 
           {activeTab === "options" && status?.settings?.options_enabled && <>
             <Panel name="Option chain"><OptionChain status={status} api={api} onSymbolSelect={chartSymbol}/></Panel>
             <Panel name="Options status"><OptionsStatus status={status} api={api}/></Panel>
-          </>}
-
-          {activeTab === "research" && <>
-            <Panel name="Yahoo Finance">
-              <YahooFinancePanel symbols={status?.watchlist || ["AAPL", "MSFT", "NVDA", "SPY", "QQQ"]} api={api}/>
-            </Panel>
-            <Panel name="Research"><ResearchPanel research={research}/></Panel>
           </>}
 
           {activeTab === "learning" && <>
@@ -246,58 +244,41 @@ export default function Dashboard() {
             </Panel>
             <Panel name="Trade ledger"><section className={`panel ${css["learning-panel"]}`}><TradeLedgerView/></section></Panel>
           </>}
-        </div>
 
-        <div className={`${css["queue-column"]}`}>
-          <Panel name="Action queue">
-            <ProposalQueue
-              kind="all"
-              compact
-              proposals={pending}
-              status={status}
-              api={api}
-              busy={!!busy}
-              onAction={perform}
-              onOpen={p => void openProposal(p)}
-              onApprove={setApproving}
-            />
-          </Panel>
+          {activeTab === "settings" && <>
+            <Panel name="Engine"><section className="panel"><h2>Engine</h2>{commandBar}</section></Panel>
+            <Panel name="Account"><AccountPanel portfolio={portfolio} status={status} onRefresh={() => void refresh()}/></Panel>
+            <Panel name="Orders"><OrdersPanel portfolio={portfolio}/></Panel>
+            <Panel name="Health">
+              <HealthPanel
+                status={status}
+                pendingCount={pending.length}
+                busy={!!busy}
+                onTestAlert={() => void perform("Test alert sent", () => api("/api/alerts/test", "POST"))}
+              />
+            </Panel>
+            <Panel name="Reviewer notes">
+              <SettingsPanel
+                status={status}
+                learning={learning}
+                strategy={strategy}
+                lessons={lessons}
+                busy={!!busy}
+                onStrategy={setStrategy}
+                onLessons={setLessons}
+                onAction={perform}
+                api={api}
+                strategyLoaded={strategyLoaded}
+                lessonsLoaded={lessonsLoaded}
+              />
+            </Panel>
+          </>}
         </div>
-
-        <aside className={`${css["side-column"]}`}>
-          <Panel name="Account"><AccountPanel portfolio={portfolio} status={status} onRefresh={() => void refresh()}/></Panel>
-          <Panel name="Orders"><OrdersPanel portfolio={portfolio}/></Panel>
-          <Panel name="Health">
-            <HealthPanel
-              status={status}
-              pendingCount={pending.length}
-              busy={!!busy}
-              onTestAlert={() => void perform("Test alert sent", () => api("/api/alerts/test", "POST"))}
-            />
-          </Panel>
-          <Panel name="Activity"><ActivityFeed events={events}/></Panel>
-        </aside>
       </div>
 
-      <Panel name="Reviewer notes">
-        <SettingsPanel
-          status={status}
-          learning={learning}
-          strategy={strategy}
-          lessons={lessons}
-          busy={!!busy}
-          onStrategy={setStrategy}
-          onLessons={setLessons}
-          onAction={perform}
-          api={api}
-          strategyLoaded={strategyLoaded}
-          lessonsLoaded={lessonsLoaded}
-        />
-      </Panel>
-
       <footer className={`${css["app-footer"]}`}>
-        <span>Local dashboard · US market data via Webull · times shown in your local timezone</span>
-        <span>{mounted ? status?.model || "AI analyst" : "AI analyst"} · DB timestamps are UTC · Shift+K: kill switch</span>
+        <span>Times are in your local timezone. Shift+K opens the kill switch.</span>
+        <span>{mounted ? status?.model || "AI analyst" : "AI analyst"}</span>
       </footer>
 
       {selected && <DecisionModal

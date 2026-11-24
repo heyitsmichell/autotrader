@@ -7,10 +7,9 @@ html {
 }
 body {
   margin: 0;
-  background:
-    radial-gradient(ellipse at 44% -24%, #17252d 0, transparent 44%), var(--bg);
+  background: var(--page);
   color: var(--text);
-  font: 13px/1.5 var(--sans);
+  font: 400 14px/1.5 var(--sans);
   font-variant-numeric: tabular-nums;
 }
 button {
@@ -1008,4 +1007,59 @@ td small {
 /* ---- error boundaries ------------------------------------------------------------- */
 .fatal-error {
   padding-top: 40px;
+}
+
+
+/* === Redesign pass 1: overrides (no cards, no shadows, sentence case) ===== */
+*, *::before, *::after {
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+.panel, .metric-card {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 16px 0;
+}
+.panel + .panel { border-top: 1px solid var(--rule); }
+.eyebrow {
+  font: 500 12px var(--sans);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-2);
+}
+.button {
+  background: transparent;
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  border-radius: var(--radius);
+  padding: 7px 12px;
+  font-size: 14px;
+  font-weight: 500;
+  min-height: 34px;
+}
+.button:hover:not(:disabled) { background: var(--raise); border-color: var(--ink-2); }
+.button-primary { background: var(--ink); border-color: var(--ink); color: var(--page); }
+.button-primary:hover:not(:disabled) { background: #fff; border-color: #fff; }
+.button-danger { background: transparent; border-color: var(--loss); color: var(--loss); }
+.button-danger:hover:not(:disabled) { background: var(--raise); }
+.dot.green, .dot.red { box-shadow: none; }
+.positive { color: var(--gain) !important; }
+.negative { color: var(--loss) !important; }
+.muted { color: var(--ink-2); }
+h1, h2, h3 { font-weight: 600; letter-spacing: 0; }
+h2 { font-size: 17px; margin: 0; }
+button, input, select, textarea { border-radius: var(--radius); }
+table { font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+.app-shell { max-width: 1280px; padding: 0 24px 32px; }
+@media (max-width: 580px) { .app-shell { padding: 0 16px 24px; } }
+.table-scroll { overflow-x: auto; max-width: 100%; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

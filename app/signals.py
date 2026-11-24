@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 
 from . import consensus, indicators, ta
 from .broker import Broker, BrokerError, bar_day
+from .broker.market_data import fetch_bars_many
 from .config import Settings
 from .db import DB, decode
 from .market import market_is_open, market_is_open_extended, now_utc, order_session
@@ -37,6 +38,10 @@ class SignalService:
         self._bars_cache: dict[str, tuple[datetime, list[dict]]] = {}
         self._bars_full_at: dict[str, datetime] = {}     # last full (not incremental) download
         self._invalid: dict[str, float] = {}              # symbol -> time.time() until skipped
+        # Batch prefetch results for the refresh in progress (see _prefetch_bars).
+        self._pre_full: dict[str, list[dict]] = {}
+        self._pre_inc: dict[str, list[dict]] = {}
+        self._pre_err: dict[str, Exception] = {}
 
     # Daily bars barely change: reuse them for BARS_TTL_SECONDS, then fetch only the last few
     # bars and merge, with a full download every BARS_FULL_SECONDS.
@@ -82,8 +87,49 @@ class SignalService:
             pass
         return self.BARS_TTL_SECONDS
 
+    async def _one_bars(self, sym: str, count: int) -> list[dict]:
+        """One symbol's bars, bypassing the broker's shared cache (the engine has its own TTL)."""
+        errs: dict = {}
+        got = await fetch_bars_many(self.broker, [sym], count, errors=errs, use_cache=False)
+        if sym.upper() in errs:
+            raise errs[sym.upper()]
+        return got.get(sym.upper(), [])
+
+    def _bars_mode(self, sym: str, now: datetime) -> str:
+        """"cached" (fresh enough), "inc" (incremental merge) or "full" download."""
+        hit = self._bars_cache.get(sym)
+        if hit and len(hit[1]) >= 60:
+            if (now - hit[0]).total_seconds() < self._bars_ttl():
+                return "cached"
+            full_at = self._bars_full_at.get(sym)
+            if full_at and (now - full_at).total_seconds() < self.BARS_FULL_SECONDS:
+                return "inc"
+        return "full"
+
+    async def _prefetch_bars(self, symbols: list[str], timeout: float) -> None:
+        """Download the bars every symbol will need in batches (one call per ~20 symbols instead
+        of one per symbol). Results land in _pre_* as each chunk completes, so a timeout keeps
+        the partial result; symbols not covered fall back to the per-symbol path."""
+        self._pre_full, self._pre_inc, self._pre_err = {}, {}, {}
+        now = now_utc()
+        modes = {s: self._bars_mode(s, now) for s in symbols}
+        try:
+            for mode, count, sink in (("inc", self.BARS_INCREMENT, self._pre_inc),
+                                      ("full", BARS, self._pre_full)):
+                todo = [s for s, m in modes.items() if m == mode]
+                if todo:
+                    await asyncio.wait_for(
+                        fetch_bars_many(self.broker, todo, count, errors=self._pre_err,
+                                        sink=sink, use_cache=False), timeout=timeout)
+        except asyncio.TimeoutError:
+            log.warning("batch bars prefetch hit the deadline; falling back per symbol")
+        except BrokerError as e:
+            log.warning("batch bars prefetch failed: %s", e)
+
     async def _load_bars(self, sym: str) -> list[dict]:
         now = now_utc()
+        if sym in self._pre_err:
+            raise self._pre_err[sym]
         hit = self._bars_cache.get(sym)
         if hit and len(hit[1]) >= 60:
             age = (now - hit[0]).total_seconds()
@@ -91,14 +137,18 @@ class SignalService:
                 return hit[1]
             full_at = self._bars_full_at.get(sym)
             if full_at and (now - full_at).total_seconds() < self.BARS_FULL_SECONDS:
-                recent = await self.broker.daily_bars(sym, self.BARS_INCREMENT)
+                recent = self._pre_inc.get(sym)
+                if recent is None:
+                    recent = await self._one_bars(sym, self.BARS_INCREMENT)
                 # One bar per trading day: today's partial bar may return with another stamp.
                 merged = {self._day_key(b): b for b in hit[1]}
                 merged.update({self._day_key(b): b for b in recent})
                 out = [merged[k] for k in sorted(merged)][-BARS:]
                 self._bars_cache[sym] = (now, out)
                 return out
-        out = await self.broker.daily_bars(sym, BARS)
+        out = self._pre_full.get(sym)
+        if out is None:
+            out = await self._one_bars(sym, BARS)
         self._bars_cache[sym] = (now, out)
         self._bars_full_at[sym] = now
         return out
@@ -148,8 +198,16 @@ class SignalService:
 
                 # Own deadline, shorter than the caller's wait_for: a cancelled refresh would
                 # throw away every bar already downloaded; this keeps the partial result.
-                tasks = {s: asyncio.create_task(load(s)) for s in symbols}
                 news_task = asyncio.create_task(news())
+                prefetch_started = time.monotonic()
+                try:
+                    await self._prefetch_bars(symbols, remaining)
+                except BaseException:
+                    news_task.cancel()
+                    await asyncio.gather(news_task, return_exceptions=True)
+                    raise
+                remaining = max(1.0, remaining - (time.monotonic() - prefetch_started))
+                tasks = {s: asyncio.create_task(load(s)) for s in symbols}
                 try:
                     _, pending = await asyncio.wait([news_task, *tasks.values()],
                                                     timeout=remaining)

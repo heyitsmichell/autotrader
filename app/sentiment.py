@@ -290,6 +290,7 @@ class SentimentEngine:
         self._wb_breaker_fails = 0
         self._wb_breaker_error = ""
         self._wb_breaker_until = 0.0                   # monotonic time the breaker closes
+        self._wb_breaker_trips = 0                     # consecutive trips with no success between
         # Google News: paced requests + a 429 breaker (same idea as the Webull one).
         self._google_sem: asyncio.Semaphore | None = None
         self._google_until = 0.0                       # monotonic time the 429 breaker closes
@@ -403,6 +404,7 @@ class SentimentEngine:
 
     WEBULL_BREAKER_THRESHOLD = 5
     WEBULL_BREAKER_COOLDOWN = 30 * 60.0
+    WEBULL_BREAKER_MAX = 12 * 3600.0
 
     def _webull_breaker_open(self) -> bool:
         return time.monotonic() < self._wb_breaker_until
@@ -410,6 +412,7 @@ class SentimentEngine:
     def _webull_breaker_record(self, err: Exception | None) -> None:
         if err is None:
             self._wb_breaker_fails, self._wb_breaker_error = 0, ""
+            self._wb_breaker_trips = 0
             return
         # Normalise away per-symbol text so "same error" is compared on its shape.
         sig = re.sub(r"[(]?\b[A-Z]{1,5}\b[)]?", "", str(err))[:120]
@@ -418,10 +421,16 @@ class SentimentEngine:
         else:
             self._wb_breaker_error, self._wb_breaker_fails = sig, 1
         if self._wb_breaker_fails >= self.WEBULL_BREAKER_THRESHOLD:
-            self._wb_breaker_until = time.monotonic() + self.WEBULL_BREAKER_COOLDOWN
+            # Each consecutive trip doubles the pause (30 min, 1 h, 2 h ... capped at 12 h), so a
+            # source that never works (Webull UAT search_news returns 404 for everything) stops
+            # costing calls and stops filling the feed. Only the first trip is a warning.
+            self._wb_breaker_trips += 1
+            pause = min(self.WEBULL_BREAKER_MAX, self.WEBULL_BREAKER_COOLDOWN * 2 ** (self._wb_breaker_trips - 1))
+            self._wb_breaker_until = time.monotonic() + pause
             self._wb_breaker_fails = 0
-            self.db.log("warn", f"Webull news is failing ({err}); pausing Webull news calls for "
-                                f"{self.WEBULL_BREAKER_COOLDOWN / 60:.0f} min, using the other sources")
+            level = "warn" if self._wb_breaker_trips == 1 else "info"
+            self.db.log(level, f"Webull news is failing ({err}); pausing Webull news calls for "
+                               f"{pause / 60:.0f} min, using the other sources")
 
     async def _fetch_webull(self, sym: str) -> list[dict]:
         if self._webull_breaker_open():
@@ -478,8 +487,10 @@ class SentimentEngine:
             # All sources run side by side. Before, they were a serial fallback chain
             # (Webull -> keyword -> Google), so Google/Yahoo were only ever used when Webull
             # was down, and Yahoo was not used for headlines at all.
-            names = ["webull"]
-            jobs = [source_call("webull", sym, lambda: self._fetch_webull(sym))]
+            names, jobs = [], []
+            if getattr(self.s, "news_webull_enabled", True):
+                names.append("webull")
+                jobs.append(source_call("webull", sym, lambda: self._fetch_webull(sym)))
             if self.s.sentiment_rss_fallback:
                 names.append("google")
                 jobs.append(source_call("google", sym, lambda: self._fetch_google(sym, sem), gated=False))

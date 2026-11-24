@@ -192,3 +192,29 @@ async def test_nonempty_text_saved(app, tmp_path, monkeypatch):
     async with make_client(app) as c:
         r = await c.put("/api/strategy", json={"text": "  buy dips  "}, headers=HDR)
     assert r.status_code == 200 and f.read_text(encoding="utf-8") == "buy dips\n"
+
+
+# --- TRUSTED_HOSTS (remote access via a private name, e.g. Tailscale) ------------------------
+@pytest.mark.asyncio
+async def test_trusted_host_is_allowed_and_still_needs_the_token(app):
+    app.state.trusted_hosts = frozenset({"mypc.tailnet.ts.net"})
+    async with make_client(app) as c:
+        h = {"host": "mypc.tailnet.ts.net"}
+        assert (await c.get("/api/status", headers=h)).status_code == 200
+        # a write without the token is still refused
+        assert (await c.post("/api/alerts/test", headers={**h, "X-Trader": "1"})).status_code == 403
+        # any other non-loopback name is still forbidden
+        assert (await c.get("/api/status", headers={"host": "evil.example"})).status_code == 403
+
+
+def test_trusted_hosts_parsing(monkeypatch):
+    from app.config.loader import _trusted_hosts
+    assert _trusted_hosts("") == ()
+    assert _trusted_hosts(" MyPC.tailnet.ts.net. , other.ts.net") == ("mypc.tailnet.ts.net", "other.ts.net")
+    for bad in ("*", "0.0.0.0", "*.ts.net", "mypc.ts.net:8000", "::"):
+        with pytest.raises(ValueError):
+            _trusted_hosts(bad)
+
+
+def test_default_has_no_trusted_hosts(test_settings):
+    assert test_settings.trusted_hosts == ()
