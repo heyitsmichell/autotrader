@@ -12,7 +12,7 @@ import logging
 import re
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .broker import Broker, BrokerError, _num
 from .config import Settings
@@ -439,6 +439,12 @@ class Portfolio:
         if qty <= 0 or not ref or ref <= 0:
             return False
         key = f"core_exit:{sym}"
+        # N-1: per-symbol exponential backoff after a rejected exit (2.5 -> 5 -> ... 30 min),
+        # reset on success; the verify pass would otherwise retry and alert on every pass.
+        backoff = self.__dict__.setdefault("_exit_backoff", {})
+        bk = backoff.get(sym)
+        if bk and time.time() < bk["next"]:
+            return False
         prev = self.db.get_kv(key)
         if isinstance(prev, dict) and time.time() - float(prev.get("at", 0)) < EXIT_RETRY_SECONDS:
             return False
@@ -458,10 +464,14 @@ class Portfolio:
                 return True
             self.db.set_protective(row, "closed", f"exit rejected: {e}")
             self.db.set_kv(key, None)
+            fails = (bk["fails"] if bk else 0) + 1
+            backoff[sym] = {"fails": fails,
+                            "next": time.time() + min(1800.0, 150.0 * 2 ** (fails - 1))}
             self.db.log("error", f"{sym}: exit sell rejected ({e}) - {why}. Sell it in Webull.",
                         alert=True)
             return False
         self.db.set_protective(row, "active", f"exit: {why}")
+        backoff.pop(sym, None)
         kind = "MARKET" if market else f"LIMIT {limit:.2f}"
         self.db.log("warn", f"{sym}: EXIT {qty:g} sent ({kind}): {why}", alert=True)
         self.invalidate()
@@ -680,6 +690,52 @@ class Portfolio:
         except Exception:  # noqa: BLE001 - protection bookkeeping must not break fill tracking
             log.exception("could not protect the filled entry for %s", trade.get("symbol"))
 
+    @staticmethod
+    def _ts(value) -> datetime | None:
+        try:
+            d = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+    def _find_exit_order(self, trade: dict, orders: dict) -> tuple[dict | None, str | None, float | None]:
+        """(order, reason, stop/target price) that closed ``trade``. Preference: the trade's own
+        protective sl/tp row (by proposal_id) whose order filled; else the newest filled SELL of
+        the symbol filled after the trade's entry (reason from its protective row, if any)."""
+        sym, pid = trade["symbol"].upper(), trade["proposal_id"]
+        entry_at = self._ts(trade.get("entry_fill_time"))
+        rows = self.db.protective(trade["symbol"], open_only=False)
+        by_coid = {r.get("client_order_id"): r for r in rows}
+
+        def filled_sell(o: dict | None) -> bool:
+            return bool(o) and (o.get("side") or "").upper() == "SELL"                 and (o.get("status") or "").upper() == "FILLED"
+
+        def reason_of(r: dict | None) -> tuple[str | None, float | None]:
+            if not r or str(r.get("note") or "").startswith("exit:"):
+                return None, None
+            return ("stop" if r["kind"] == "sl" else "target"), r["price"]
+
+        for r in rows:                                   # 1. the trade's own protective order
+            if r.get("proposal_id") == pid and r["kind"] in ("sl", "tp"):
+                o = orders.get(r.get("client_order_id"))
+                if filled_sell(o):
+                    return (o, *reason_of(r))
+        cands = []
+        for o in orders.values():                        # 2. newest filled SELL after the entry
+            if (o.get("symbol") or "").upper() != sym or not filled_sell(o):
+                continue
+            at = self._ts(o.get("filled_at"))
+            if entry_at and at and at < entry_at:
+                continue
+            r = by_coid.get(o.get("client_order_id"))
+            if r and r.get("proposal_id") not in (None, pid):
+                continue                                 # another trade's protective order
+            cands.append((at or datetime.min.replace(tzinfo=timezone.utc), o))
+        if not cands:
+            return None, None, None
+        o = max(cands, key=lambda c: c[0])[1]
+        return (o, *reason_of(by_coid.get(o.get("client_order_id"))))
+
     async def track_trade_fills(self) -> int:
         """Track entry fills and exits for the trade ledger."""
         changed = 0
@@ -785,21 +841,11 @@ class Portfolio:
                 # Check if position is still held
                 held_qty = positions.get(trade["symbol"], 0.0)
                 if held_qty == 0:
-                    # Position closed - find exit fill in history
-                    # Look for SELL order for this symbol
-                    for o in orders.values():
-                        if (o.get("symbol", "").upper() == trade["symbol"] and
-                            (o.get("side") or "").upper() == "SELL" and
-                            (o.get("status") or "").upper() == "FILLED"):
-                            # Determine exit reason from protective orders
-                            exit_reason = "manual"
-                            exit_ref_price = None  # stop or target price for slippage calc
-                            for po in self.db.protective(trade["symbol"]):
-                                if po.get("proposal_id") == proposal_id and po["status"] == "filled":
-                                    exit_reason = "stop" if po["kind"] == "sl" else "target"
-                                    exit_ref_price = po["price"]
-                                    break
-
+                    # Position closed: find the order that closed THIS trade (not just any
+                    # filled SELL in the symbol: an earlier trade's exit is also in history).
+                    for o, exit_reason, exit_ref_price in [self._find_exit_order(trade, orders)]:
+                        if o is not None:
+                            exit_reason = exit_reason or "manual"
                             # Prefer average fill price for accuracy, fall back to filled_price
                             fill_price = o.get("avg_fill_price") or o.get("filled_price") or 0.0
                             fill_time = o.get("filled_at") or _now()

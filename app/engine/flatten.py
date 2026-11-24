@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..broker.market_data import fresh_positions
 import asyncio
 import json
 import logging
@@ -89,7 +90,7 @@ class FlattenMixin:
                 try:
                     result["cancelled"] = await self.cancel_open_orders(True, f"flatten: {reason}")
                     await asyncio.sleep(1)          # let the cancels settle at the broker
-                    held = await self.broker.positions()
+                    held = await fresh_positions(self.broker)
                 except BrokerError as e:
                     msg = f"Flatten stopped: could not read orders or positions: {e}"
                     self.db.log("error", msg)

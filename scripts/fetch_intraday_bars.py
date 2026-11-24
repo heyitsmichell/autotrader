@@ -63,11 +63,15 @@ async def fetch_symbol(tr, sym: str, ts: str, days: int) -> dict[datetime, dict]
 
 
 async def main() -> None:
+    global GAP
     ap = argparse.ArgumentParser()
     ap.add_argument("--timespan", required=True, choices=["M5", "M15"])
     ap.add_argument("--symbols", default="")
     ap.add_argument("--days", type=int, default=730)
+    ap.add_argument("--gap", type=float, default=2.0, help="seconds between MCP calls")
+    ap.add_argument("--pause", type=float, default=180.0, help="seconds to wait after a rate limit")
     a = ap.parse_args()
+    GAP = a.gap
     syms = [s.strip().upper() for s in a.symbols.split(",") if s.strip()] or \
         sorted(p.stem for p in (ROOT / "data" / "bars_yahoo").glob("*.csv"))
     out = ROOT / "data" / "bars_intraday" / a.timespan
@@ -81,13 +85,25 @@ async def main() -> None:
             if done.exists():
                 print(f"[{i}/{len(syms)}] {sym} skip", flush=True)
                 continue
-            try:
-                got = await fetch_symbol(tr, sym, a.timespan, a.days)
-            except Exception as e:
-                print(f"[{i}/{len(syms)}] {sym} ERROR {str(e)[:150]}", flush=True)
-                if "429" in str(e) or "rate" in str(e).lower():
-                    print("rate limited; stopping", flush=True)
+            got, stop = None, False
+            for attempt in range(1, 4):
+                try:
+                    got = await fetch_symbol(tr, sym, a.timespan, a.days)
                     break
+                except Exception as e:
+                    print(f"[{i}/{len(syms)}] {sym} ERROR {str(e)[:150]}", flush=True)
+                    if "429" in str(e) or "rate" in str(e).lower():
+                        if attempt == 3:
+                            print("still rate limited after 3 pauses; stopping", flush=True)
+                            stop = True
+                        else:
+                            print(f"rate limited; pausing {a.pause:g}s (attempt {attempt}/3)", flush=True)
+                            await asyncio.sleep(a.pause)
+                        continue
+                    break
+            if stop:
+                break
+            if got is None:
                 continue
             rows = [got[t] for t in sorted(got) if regular(t)]
             with open(f, "w", newline="") as fh:

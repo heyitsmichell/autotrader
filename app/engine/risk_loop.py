@@ -198,8 +198,11 @@ class RiskLoop:
             return []
         now = self._clock()
         by_sym: dict[str, list[dict]] = {}
+        sym_cache: dict = {}
         for t in trades:
-            if eng.db.get_kv(f"soft_stop:{t['id']}") or self._soft_retry_at.get(t["id"], 0.0) > now:
+            if self._soft_retry_at.get(t["id"], 0.0) > now:
+                continue
+            if eng.db.get_kv(f"soft_stop:{t['id']}") and not self._soft_stop_reusable(t, sym_cache):
                 continue
             sym = t["symbol"]
             if _is_option_symbol(sym):
@@ -243,6 +246,25 @@ class RiskLoop:
                 fired.append(t["id"])
                 self._below.pop(sym, None)
         return fired
+
+    def _soft_stop_reusable(self, t: dict, cache: dict) -> bool:
+        """N-2: a settled soft stop (its sell ended cancelled/expired/rejected, or never showed)
+        no longer blocks a new one once the CORE stop is restored: an active sl row (not a soft
+        stop / exit) covers the symbol and no soft-stop or exit sell is still working."""
+        eng = self.eng
+        v = eng.db.get_kv(f"soft_stop:{t['id']}")
+        if not (isinstance(v, dict) and v.get("settled")):
+            return False
+        sym = t["symbol"]
+        if sym not in cache:
+            rows = eng.db.protective(sym)
+            live_sell = any(str(x.get("note") or "").startswith(("extended-hours soft stop", "exit:"))
+                            for x in rows)
+            core = any(x["kind"] == "sl" and x["status"] in ("active", "unknown")
+                       and not str(x.get("note") or "").startswith(("extended-hours soft stop", "exit:"))
+                       for x in rows)
+            cache[sym] = core and not live_sell
+        return cache[sym]
 
     async def _fire_soft_stop(self, t: dict, held: float, ref: float, stop: float,
                               session: str, group: list[dict] | None = None) -> bool:

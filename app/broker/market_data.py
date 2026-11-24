@@ -9,10 +9,29 @@ import time
 from ..market import order_session
 from ..quotes import Quote
 from .errors import BrokerError
-from .parsers import (STOCK_ACCOUNT_CLASSES, parse_accounts, parse_bars, parse_day_pnl,
+from .parsers import (STOCK_ACCOUNT_CLASSES, parse_accounts, parse_bars, parse_bars_by_symbol, parse_day_pnl,
                       live_price_for_session, parse_positions, parse_snapshot)
 
 log = logging.getLogger(__name__)
+
+
+async def fetch_bars_many(broker, symbols, count: int, *, errors: dict | None = None,
+                          sink: dict | None = None, use_cache: bool = True) -> dict[str, list[dict]]:
+    """Batch daily bars via ``broker.daily_bars_many``; brokers without it (test fakes, backtest
+    adapters) get one ``daily_bars`` call per symbol."""
+    many = getattr(broker, "daily_bars_many", None)
+    if many is not None:
+        return await many(list(symbols), count, errors=errors, sink=sink, use_cache=use_cache)
+    out = sink if sink is not None else {}
+    for sym in dict.fromkeys(s.upper() for s in symbols):
+        try:
+            out[sym] = await broker.daily_bars(sym, count)
+        except BrokerError as e:
+            if errors is None:
+                log.warning("bars for %s failed: %s", sym, e)
+            else:
+                errors[sym] = e
+    return out
 
 
 class MarketDataMixin:
@@ -22,6 +41,16 @@ class MarketDataMixin:
         self._snapshot_cache_ttl = 10
         # Serialises snapshot fetches so simultaneous callers share one request via the cache.
         self._snapshot_lock: asyncio.Lock | None = None
+        self._init_load_caches()
+
+    def _init_load_caches(self) -> None:
+        # Positions: short TTL + single-flight. Fills are invisible to this class, so the 3 s TTL
+        # is what bounds staleness after a fill; orders call invalidate_positions() explicitly.
+        self._pos_cache: tuple[float, str] | None = None
+        self._pos_gen = 0
+        self._pos_lock: asyncio.Lock | None = None
+        # Shared daily-bars cache: symbol -> (monotonic ts, requested count, bars).
+        self._bars_shared: dict[str, tuple[float, int, list[dict]]] = {}
 
     async def _fetch_snapshots(self, symbols: list[str]) -> dict[str, dict]:
         """Fetch snapshots for multiple symbols in a single batch call.
@@ -57,7 +86,11 @@ class MarketDataMixin:
                 return result
             symbols_str = ",".join(dict.fromkeys(uncached))
             try:
-                text = await self.call("get_stock_snapshot", symbols=symbols_str)
+                # Without these flags Webull returns only the regular-session lines, so outside
+                # CORE every quote looked stale: extended-hours BUYs were all refused and the
+                # soft stop (which needs a fresh quote) could never fire. Verified live 2026-11-24.
+                text = await self.call("get_stock_snapshot", symbols=symbols_str,
+                                       extend_hour_required=True, overnight_required=True)
                 snaps = parse_snapshot(text)
                 stamp = time.time()
                 session = order_session()
@@ -129,22 +162,117 @@ class MarketDataMixin:
         from ..portfolio import parse_balance
         return parse_balance(await self.balance_text())
 
-    async def positions_text(self) -> str:
-        return await self.call("get_account_positions", account_id=await self.account_id())
+    POSITIONS_TTL_SECONDS = 3.0
+    BARS_SHARED_TTL_SECONDS = 900.0
+    BARS_BATCH_SIZE = 20     # SDK documents no cap for get_batch_history_bar; 20 x 260 bars is small
+
+    def invalidate_positions(self) -> None:
+        """Drop the cached positions (called around every order/cancel/stop)."""
+        d = self.__dict__
+        d["_pos_gen"] = d.get("_pos_gen", 0) + 1
+        d["_pos_cache"] = None
+
+    async def positions_text(self, fresh: bool = False) -> str:
+        """Raw positions. Cached POSITIONS_TTL_SECONDS with single-flight; ``fresh=True`` bypasses
+        the cache (the result is still stored for others) for callers that need post-fill truth."""
+        d = self.__dict__
+        if "_pos_lock" not in d:
+            self._init_load_caches()
+        if d["_pos_lock"] is None:
+            d["_pos_lock"] = asyncio.Lock()
+
+        def _hit() -> str | None:
+            c = d["_pos_cache"]
+            if not fresh and c and time.monotonic() - c[0] < self.POSITIONS_TTL_SECONDS:
+                return c[1]
+            return None
+
+        if (text := _hit()) is not None:
+            return text
+        async with d["_pos_lock"]:
+            if (text := _hit()) is not None:
+                return text
+            gen = d["_pos_gen"]
+            text = await self.call("get_account_positions", account_id=await self.account_id())
+            if gen == d["_pos_gen"]:      # an order invalidated mid-flight: do not cache
+                d["_pos_cache"] = (time.monotonic(), text)
+            return text
 
     async def open_orders_text(self) -> str:
         return await self.call("get_open_orders", account_id=await self.account_id())
 
-    async def positions(self) -> dict[str, float]:
-        text = await self.positions_text()
+    async def positions(self, fresh: bool = False) -> dict[str, float]:
+        text = await self.positions_text(fresh=fresh)
         return {} if text.startswith("No data") else parse_positions(text)
 
     async def day_pnl(self) -> float | None:
         return parse_day_pnl(await self.balance_text())
 
-    async def daily_bars(self, symbol: str, count: int = 120) -> list[dict]:
-        return parse_bars(await self.call("get_stock_bars", symbols=symbol, timespan="D",
+    def _shared_bars_get(self, sym: str, count: int) -> list[dict] | None:
+        hit = self.__dict__.get("_bars_shared", {}).get(sym)
+        if hit and hit[1] >= count and time.monotonic() - hit[0] < self.BARS_SHARED_TTL_SECONDS:
+            return hit[2][-count:]
+        return None
+
+    def _shared_bars_put(self, sym: str, count: int, bars: list[dict]) -> None:
+        cache = self.__dict__.setdefault("_bars_shared", {})
+        old = cache.get(sym)
+        expired = not old or time.monotonic() - old[0] >= self.BARS_SHARED_TTL_SECONDS
+        if bars and (expired or count >= old[1]):     # a small incremental fetch never shrinks it
+            cache[sym] = (time.monotonic(), count, bars)
+
+    async def daily_bars(self, symbol: str, count: int = 120, *, use_cache: bool = True) -> list[dict]:
+        sym = symbol.upper()
+        if use_cache and (hit := self._shared_bars_get(sym, count)) is not None:
+            return hit
+        bars = parse_bars(await self.call("get_stock_bars", symbols=symbol, timespan="D",
                                           count=count))
+        self._shared_bars_put(sym, count, bars)
+        return bars
+
+    async def daily_bars_many(self, symbols: list[str], count: int = 120, *,
+                              use_cache: bool = True, errors: dict | None = None,
+                              sink: dict | None = None) -> dict[str, list[dict]]:
+        """Daily bars for many symbols using the batch endpoint (BARS_BATCH_SIZE per call).
+
+        Symbols missing from a batch reply (or whose batch failed) are fetched singly. Per-symbol
+        failures go to ``errors`` (symbol -> exception) when given, else are logged and skipped.
+        ``sink`` receives results as each chunk completes (partial results survive a deadline).
+        """
+        out = sink if sink is not None else {}
+        syms = list(dict.fromkeys(s.upper() for s in symbols))
+        need = []
+        for sym in syms:
+            hit = self._shared_bars_get(sym, count) if use_cache else None
+            if hit is not None:
+                out[sym] = hit
+            else:
+                need.append(sym)
+        n = max(1, self.BARS_BATCH_SIZE)
+        for i in range(0, len(need), n):
+            chunk = need[i:i + n]
+            groups: dict = {}
+            try:
+                groups = parse_bars_by_symbol(await self.call(
+                    "get_stock_bars", symbols=",".join(chunk), timespan="D", count=count))
+            except BrokerError as e:
+                log.info("batch bars for %d symbols failed (%s); falling back to single calls",
+                         len(chunk), e)
+            if None in groups and len(chunk) == 1 and chunk[0] not in groups:
+                groups[chunk[0]] = groups.pop(None)
+            for sym in chunk:
+                if sym in groups:
+                    out[sym] = groups[sym]
+                    self._shared_bars_put(sym, count, groups[sym])
+                    continue
+                try:
+                    out[sym] = await self.daily_bars(sym, count, use_cache=False)
+                except BrokerError as e:
+                    if errors is None:
+                        log.warning("bars for %s failed: %s", sym, e)
+                    else:
+                        errors[sym] = e
+        return out
 
     async def intraday_bars(self, symbol: str, timespan: str = "5m", count: int = 390) -> list[dict]:
         """timespan: "1m", "5m", "15m", "30m", "60m"; count: number of bars (max 1000)."""
@@ -153,3 +281,13 @@ class MarketDataMixin:
 
     async def order_history_text(self) -> str:
         return await self.call("get_order_history", account_id=await self.account_id())
+
+
+async def fresh_positions(broker) -> dict[str, float]:
+    """Positions straight from the broker, bypassing the short TTL cache, for callers that size or
+    verify orders (flatten, exits, chase, reconcile, risk). Falls back to a plain call for brokers
+    (fakes, adapters) whose positions() takes no ``fresh`` argument."""
+    try:
+        return await broker.positions(fresh=True)
+    except TypeError:
+        return await broker.positions()

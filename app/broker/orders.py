@@ -48,6 +48,19 @@ def resolve_session(requested: str, *, entrust_type: str = "QTY", at=None,
     return req
 
 
+def entry_all_day(settings, symbol: str, side: str, order_type: str, entrust_type: str,
+                  session: str) -> bool:
+    """True when a BUY limit entry resolved to ALL/NIGHT should be sent as ALL_DAY (Webull's
+    8pm-8pm ET session) so it does not expire at each session boundary. Never for MARKET orders,
+    fractional/AMOUNT orders, SELLs or stops, CORE, or symbols outside OVERNIGHT_SYMBOLS."""
+    return bool(settings is not None
+                and getattr(settings, "entry_session_all_day", False)
+                and getattr(settings, "overnight_trading", False)
+                and str(side).upper() == "BUY" and str(order_type).upper() == "LIMIT"
+                and entrust_type == "QTY" and session in ("ALL", "NIGHT")
+                and str(symbol).upper() in {x.upper() for x in settings.overnight_symbols})
+
+
 def _check_order_type(order_type: str, session: str) -> str:
     """LIMIT or MARKET. MARKET only in the CORE session (never sent otherwise)."""
     ot = str(order_type).upper()
@@ -65,6 +78,9 @@ class OrdersMixin:
                             trading_session: str = "AUTO", order_type: str = "LIMIT") -> str:
         mapped_session = resolve_session(trading_session, entrust_type=entrust_type)
         order_type = _check_order_type(order_type, mapped_session)
+        if entry_all_day(getattr(self, "settings", None), symbol, side, order_type, entrust_type,
+                         mapped_session):
+            mapped_session = "ALL_DAY"
         args = {
             "account_id": await self.account_id(), "symbol": symbol,
             "side": side, "order_type": order_type, "time_in_force": "DAY",
@@ -76,6 +92,16 @@ class OrdersMixin:
             args["entrust_type"] = "AMOUNT"
             args["total_cash_amount"] = total_cash_amount
         return await self.call("preview_stock_order", **args)
+
+    async def _submit_inval(self, tool: str, **args) -> str:
+        """``_submit`` that drops the positions cache before and after (success or failure): a
+        failed/timed-out order may still have been accepted. Fills are not visible here; the
+        short positions TTL covers them."""
+        self.invalidate_positions()
+        try:
+            return await self._submit(tool, **args)
+        finally:
+            self.invalidate_positions()
 
     async def place_order(self, symbol: str, side: str, quantity: float, limit_price: float,
                           client_order_id: str, entrust_type: str = "QTY",
@@ -107,6 +133,9 @@ class OrdersMixin:
                     allow_when_killed=allow_when_killed)
         mapped_session = resolve_session(trading_session, entrust_type=entrust_type)
         order_type = _check_order_type(order_type, mapped_session)
+        if entry_all_day(getattr(self, "settings", None), symbol, side, order_type, entrust_type,
+                         mapped_session):
+            mapped_session = "ALL_DAY"      # entry limit rests across ALL/NIGHT boundaries
 
         args = {
             "account_id": await self.account_id(), "symbol": symbol,
@@ -119,7 +148,7 @@ class OrdersMixin:
         if entrust_type == "AMOUNT" and total_cash_amount is not None:
             args["entrust_type"] = "AMOUNT"
             args["total_cash_amount"] = total_cash_amount
-        return await self._submit("place_stock_order", **args)
+        return await self._submit_inval("place_stock_order", **args)
 
     async def place_bracket(self, symbol: str, quantity: int, limit_price: float,
                             take_profit: float, stop_loss: float, coids: dict[str, str],
@@ -146,7 +175,7 @@ class OrdersMixin:
             {**leg, "combo_type": "STOP_LOSS", "side": "SELL", "order_type": "STOP_LOSS",
              "stop_price": stop_loss, "time_in_force": "GTC", "client_order_id": coids["sl"]},
         ]
-        return await self._submit("place_stock_combo_order", account_id=await self.account_id(),
+        return await self._submit_inval("place_stock_combo_order", account_id=await self.account_id(),
                                   orders=orders, client_combo_order_id=combo_id)
 
     async def place_stop(self, symbol: str, quantity: float, stop_price: float,
@@ -165,7 +194,7 @@ class OrdersMixin:
                                   queue_for_core=True)
 
         async def send(sess: str) -> str:
-            return await self._submit(
+            return await self._submit_inval(
                 "place_stock_order", account_id=await self.account_id(), symbol=symbol,
                 side="SELL", order_type="STOP_LOSS", time_in_force="GTC", quantity=quantity,
                 stop_price=stop_price, trading_session=sess, client_order_id=client_order_id)
@@ -179,5 +208,5 @@ class OrdersMixin:
 
     async def cancel_order(self, client_order_id: str) -> str:
         # Cancels reduce risk: not guarded, and never negative-cached (see transport).
-        return await self._submit("cancel_order", account_id=await self.account_id(),
+        return await self._submit_inval("cancel_order", account_id=await self.account_id(),
                                   client_order_id=client_order_id)

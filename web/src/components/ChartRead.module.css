@@ -1,0 +1,10 @@
+.read { display: grid; gap: 16px; font-size: 13px; line-height: 1.5; min-width: 0; }
+.read h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
+.read p { margin: 0; }
+.muted { color: var(--ink-2); }
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.row { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--rule); padding: 3px 0; }
+.row span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.pos { color: var(--gain); }
+.neg { color: var(--loss); }
+.warn { color: var(--warn); }

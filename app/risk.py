@@ -14,6 +14,7 @@ guard for brackets.
 
 from __future__ import annotations
 
+from .broker.market_data import fresh_positions
 import logging
 import math
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from datetime import datetime, timedelta
 from .broker import Broker, BrokerError
 from .config import Settings
 from .db import DB
+from .order_style import extended_spread_pct
 from .market import market_is_open, now_et, now_utc, order_session, session_phase
 from .portfolio import parse_position_rows
 
@@ -263,6 +265,22 @@ class RiskManager:
                     "(no quote/snapshot); opening orders fail closed")
                 return verdict()
 
+        cur_session = order_session()
+        max_spread = float(getattr(s, "max_spread_pct_extended", 0.0) or 0.0)
+        if side == "BUY" and cur_session not in (None, "CORE") and max_spread > 0                 and hasattr(broker, "get_snapshot"):
+            # Exits are never blocked by this guard; no bid/ask = allowed (and noted).
+            try:
+                spread = extended_spread_pct(await broker.get_snapshot(symbol), cur_session)
+            except BrokerError:
+                spread = None
+            if spread is None:
+                add("Spread", True, f"no bid/ask for {symbol}; spread guard skipped")
+            else:
+                add("Spread", spread <= max_spread,
+                    f"bid/ask spread {spread:.2f}% (limit {max_spread:.2f}%)" if spread <= max_spread
+                    else f"bid/ask spread {spread:.2f}% exceeds MAX_SPREAD_PCT_EXTENDED "
+                         f"{max_spread:.2f}% outside regular hours")
+
         sl_level = p.get("sl")
         if side == "BUY" and isinstance(sl_level, (int, float)) and sl_level > 0:
             add("Stop vs price", last > sl_level,
@@ -275,7 +293,7 @@ class RiskManager:
             f"(max {s.price_band_pct}%)")
 
         try:
-            held = (await broker.positions()).get(symbol, 0.0)
+            held = (await fresh_positions(broker)).get(symbol, 0.0)
         except BrokerError as e:
             add("Positions", False, f"could not read positions: {e}")
             return verdict(last)

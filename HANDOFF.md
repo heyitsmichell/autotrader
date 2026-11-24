@@ -1,29 +1,36 @@
 # HANDOFF
 
-> **State (2026-11-24 10:10 ET): the app runs the new code with VARIANT D exits** (UAT, auto). It was restarted at 10:06 ET. The `.env` changes were made with the user's OK; backup in `data/backups/.env.pre_variant_d_2026-11-24`. Next: watch the live feed; then §7 items 5-8.
+> **State (2026-11-24 13:12 ET): the app runs everything on disk** (UAT paper, auto). It includes the snapshot/soft-stop fix, 24h trading (56 overnight symbols, ALL_DAY entries, night size/spread guards), the ledger exit fix, and the N-1/N-2/N-4 nits. **Last restart 13:11 ET; the user asked to skip the full suite for this restart.** The last full suite before these edits was 899 passed; the targeted runs after them all passed. DB backup: `data/backups/trader_pre_24h_restart_2026-11-24.db`. Dashboard: http://127.0.0.1:8000 and https://desktop-6ou6g6r.tailfb89fa.ts.net (Tailscale, tailnet only). No agents running.
 > History: the completed QA programme is archived in `docs/HANDOFF_QA_PROGRAMME_2026-11-24.md`. Per-finding status for it is in `REMEDIATION.md`.
 
 ---
 
 ## 0. Read this first (TL;DR for whoever takes over)
 
-1. **The running app is OLDER than the code on disk.**
-   - The app (UAT sandbox, `TRADING_MODE=auto`) was restarted at 20:35 local (07:35 ET) and runs the **wave-1 code only** (§2).
-   - Everything in §3 is **on disk but not loaded**: waves 2a, 2b and 2c, market orders, the stale-price fix, stop re-anchoring, and the swing settings.
-   - The **6 `.env` edits** (§5) and DB migrations **0005/0006** also take effect only at the next restart.
-2. **Nothing in §3 has had the independent Opus verification yet.** Wave 1 did.
-   - The plan was: Opus-verify §3, then restart, then watch the live feed (§7, steps 1-3).
-   - **Two pieces were stopped mid-work** and are the least trustworthy:
-     - stop re-anchoring (§3.6);
-     - the swing-strategy backtests (§3.7).
-3. **A critical live bug is fixed on disk, but the running app still has it:** premarket prices are stale (§3.5).
-   - Until the restart, premarket BUYs are priced off **yesterday's close**. ADI was bought at limit $378.75 and filled at $343, below its own $348.45 stop.
-   - The user chose **not** to pause entries.
-4. **The preliminary backtests say the current strategy loses money after costs** (§3.7).
-   - They are unverified, but the signal is strong. Look at it before turning on any aggressive sizing.
-5. **Test suite on the current disk state (wrap-up run):** see §6. Last fully green run before the two stopped agents: 766 passed, 0 failed.
-
----
+1. **Everything on disk is live** since the 13:11 ET restart. **Run a full suite next session.** The user skipped it for this restart; targeted tests all passed.
+2. **Strategy:**
+   - **Live exits are variant d:** 2-ATR stop + 20-day time stop.
+   - **Entries are the v2 consensus gate.** `TA_MODEL=v3` exists, but it showed no significant gain and is **not** enabled.
+   - **In backtests, variant d trails buy-and-hold SPY** (Sharpe 0.87 vs 1.06, 2022-2025).
+3. **Research (§7 items 5-5h):**
+   - About 650 trials logged in `data/experiments/trials_registry.csv` and the rotation leaderboard.
+   - **The only robust idea is cross-sectional momentum** (12-1 or 3/6-month, top-N, weekly or monthly). It is survivorship-inflated, and the user declined a point-in-time S&P test.
+   - Everything else showed no edge after deflation: ML, TA v3, the 38 catalog strategies, the 25 social/Reddit strategies, and the leveraged ETFs.
+   - **The locked holdout (after 2025-11-23) is still unused.**
+4. **24/5 trading:**
+   - `OVERNIGHT_SYMBOLS` = 56. BUY limits outside CORE use `ALL_DAY`. NIGHT BUYs are half size. BUYs outside CORE are refused when the spread exceeds 1%.
+   - **Protection outside CORE is only the app-side soft stop,** so the app and PC must stay on. The PC never sleeps on AC, but sleeps after 10 min on battery.
+   - **`ALL_DAY` is not yet verified on Webull UAT:** watch the first after-hours BUY after 16:00 ET.
+5. **Fixed today:**
+   - the snapshot never requested ExtHr/OVN lines, so the soft stop couldn't fire outside CORE;
+   - the ledger exit-price bug (the ADI row was corrected in the DB);
+   - the rate-limit load (batched bars, positions cache);
+   - the `app/research/` package name clash, now `app/strategy_lab/`.
+6. **UI:**
+   - Redesign pass 1 is live (dark graphite, Today view). The chart has SMA20/50/200 and a "What the strategy sees" panel.
+   - **Pass 2 is pending:** Research, Learning and Settings still have ALL-CAPS labels.
+   - Rollback copies: `web/out_prev_2026-11-24` and `web/out_prev_chart`.
+7. **Open:** see §7 "Open items".
 
 ## 1. Quick reference
 
@@ -67,7 +74,7 @@
 
 ---
 
-## 2. LIVE NOW: wave 1 (loaded since the 20:35 restart; Opus-verified)
+## 2. Wave 1 (live since 2026-11-24 07:35 ET; Opus-verified)
 
 | Problem in the feed/logs | Root cause | Fix |
 |---|---|---|
@@ -88,7 +95,7 @@ Tests: `tests/test_autotrade_fixes.py`, `test_stop_session_fixes.py`, `test_data
 
 ---
 
-## 3. ON DISK, NOT LIVE, NOT YET OPUS-VERIFIED
+## 3. Waves 2a-2c, market orders, stale prices, re-anchor, swing part A (LIVE since 09:42 ET; verified, see §3A)
 
 ### 3.1 Wave 2a: correctness follow-ups (complete; suite 643 passed at the time)
 - **`reconcile.py`:**
@@ -171,7 +178,7 @@ Tests: `tests/test_autotrade_fixes.py`, `test_stop_session_fixes.py`, `test_data
 - **Limitation:** the snapshot text has no print timestamps. Before the first premarket print, yesterday's after-hours ExtHr price looks current. Exposing the MCP `last_trade_time` would fix it.
 - Tests: `tests/test_extended_hours_prices.py`.
 
-### 3.6 STOPPED MID-WORK: stop re-anchoring after a bad fill
+### 3.6 Stop re-anchoring after a bad fill (finished and rewritten as two-phase in wave F; see §3A F-A)
 - **Goal:**
   - When an entry fills at or below its planned stop (the ADI case), or the live price is at or below it, re-anchor the stop and target from the fill with `ta.levels(fill, atr)`.
   - Never re-anchor upward.
@@ -188,7 +195,7 @@ Tests: `tests/test_autotrade_fixes.py`, `test_stop_session_fixes.py`, `test_data
   - That a failure can never leave a position with no stop.
 - **Live case:** ADI (1 share) still has a resting CORE stop at **348.45**, above the market (about $328). Unless the re-anchor code fixes it at restart, or someone changes it in Webull, it will **sell ADI at the 09:30 ET open**.
 
-### 3.7 STOPPED MID-WORK: swing strategy part A (payoff and risk sizing, with backtests)
+### 3.7 Swing strategy part A (payoff and risk sizing; superseded by the v2 backtest in §7 4a)
 - **Code on disk** (new settings, all default to today's behaviour, `# swing-strategy` block in `settings.py`/`loader.py`):
   - `BRACKET_TAKE_PROFIT` (default true; false means a stop-only bracket and code-managed exits). Used in `execution.py:331` and the backtester.
   - `SIZE_FROM_RISK` (default false). `RISK_PER_TRADE_PCT` (default 0). Both in `app/sizing.py`.
@@ -224,7 +231,7 @@ Tests: `tests/test_autotrade_fixes.py`, `test_stop_session_fixes.py`, `test_data
 
 ---
 
-## 3A. Opus verification results (step 2, 2026-11-24 evening)
+## 3A. Verification and fix results (2026-11-24, 08:55-09:40 ET)
 
 ### Verifier C: news, consensus, migrations (done; 83 related tests pass)
 - **`CONSENSUS_MIN_NEWS=3`:** a symbol with fewer than 3 headlines is treated as **NEUTRAL (it passes)**, not blocked (`consensus.py:100-103`).
@@ -413,26 +420,32 @@ Not verified: whether cancelling a bracket master leg cancels the whole combo.
 
 ---
 
-## 4. Live positions and state (at ~08:30 ET, UAT sandbox, $2M paper account)
+## 4. Live positions and state (11:42 ET, UAT sandbox, $2M paper account)
 
-| Symbol | Qty | Avg cost | Last | Stop at Webull (CORE GTC) | Note |
-|---|---|---|---|---|---|
-| ADI | 1 | 343.00 | ~328 | **348.45 (above market!)** | Stale-price entry; see §3.6 |
-| TXN | 1 | 280.41 | ~276 | 267.89 | Stale-price entry |
-| SNPS | 1 | 426.00 | ~418 | 392.83 | |
-| NXPI | 1 | 251.90 | ~255 | 235.55 | |
-| XLF | 8 | 55.63 | ~55.5 | 53.64 | |
-| XLY | 20 | 116.82 | ~116.5 | 111.78 | 5× duplicate buy from before wave 1. The user chose to keep it (risk ≈ $101 < $200 cap). |
-| MSFT | 1 | 491.92 | ~488 | 458.56 | |
-| AAPL | 1 | 348.85 | ~347 | 333.65 | |
-| AMZN | **2** | 254.23 | ~251 | 236.12 | **Unexplained:** the ledger shows 1 BUY (#3) and 1 flatten SELL (#5). Investigate with Webull order history. |
+| Symbol | Qty | Avg cost | Last |
+|---|---|---|---|
+| SWKS | 6 | 76.90 | 79.48 |
+| XLV | 2 | 179.42 | 183.79 |
+| SNPS | 1 | 426.00 | 411.00 |
+| NXPI | 2 | 245.67 | 236.08 |
+| TXN | 1 | 276.06 | 260.19 |
+| XLF | 8 | 55.63 | 55.85 |
+| MSFT | 1 | 491.92 | 495.55 |
+| XLY | 20 | 116.82 | 116.61 |
+| AAPL | 1 | 348.85 | 351.29 |
+| AMZN | **2** | 254.23 | 251.14 |
+| TLT | 6 | 81.69 | 81.96 |
 
-- **Working BUY orders:** XLV 2 @ 179.42, TLT 6 @ 81.69, SWKS 6 @ 77.12. These are stale-priced premarket limits.
-- **Day:** day P&L about −$38, 21 trades.
+- **ADI:**
+  - The first position was stopped out at the open at 328.00.
+  - The re-buy (#54, user-approved) was stopped at 308.24 at 11:01 ET. The ledger P&L for it is wrong (§0 item 6).
+- **Day:** P&L −$78.67, 30 trades. The kill switch is off.
+- **Bracket legs:** positions opened before 10:06 ET still have their broker take-profit legs. New entries get a stop only.
+- **AMZN 2 shares:** still unexplained. The ledger shows 1 BUY (#3) and a flatten SELL (#5). Check the Webull order history.
 
 ---
 
-## 5. `.env` changes made (all with the user's explicit OK; backups were saved in the session scratchpad, which may be gone)
+## 5. `.env` changes made (all with the user's explicit OK; backups in `data/backups/`)
 
 | Setting | Old | New | Why |
 |---|---|---|---|
@@ -442,37 +455,262 @@ Not verified: whether cancelling a bracket master leg cancels the whole combo.
 | `CONSENSUS_MIN_NEWS` | 0 | 3 | `n` now counts relevant, scored headlines |
 | `CONSENSUS_SENT_MIN` | −0.80 | −0.30 | −0.80 never blocked |
 | `EXIT_ORDER_TYPE`, `ENTRY_ORDER_TYPE`, `MARKETABLE_OFFSET_BPS`, `ENTRY_CHASE_SECONDS` | (unset) | `market`, `marketable`, `10`, `45` | User asked for market orders in regular hours (appended at the end of `.env`) |
+| `TRUSTED_HOSTS` | (unset) | `desktop-6ou6g6r.tailfb89fa.ts.net` | Private Tailscale access to the UI (user OK 12:40 ET). Not live until the next restart |
+| `PROFIT_GIVEBACK_PCT`, `BRACKET_TAKE_PROFIT`, `PROFIT_SCALE_OUT`, `PROFIT_BREAKEVEN_R`, `PROFIT_RSI_EXHAUSTION` | 20, true, (default true), (default 0.75), 78 | `0`, `false`, `false`, `0`, `0` | Variant d (user OK 10:06 ET). Backup: `data/backups/.env.pre_variant_d_2026-11-24` |
 
-**None of these are live until the next restart.** `.env.example` is regenerated, and `gen_env_example.py --check` exits 0.
+**All of these are live** (last restart 10:06 ET). `gen_env_example.py --check` exits 0.
 
 ---
 
-## 6. Test status at wrap-up
+## 6. Test status
 
 - **2026-11-24 ~09:05 ET (resume run): 773 passed, 0 failed** (12 min, full suite on the current disk state, including `tests/test_stop_reanchor.py`). Step 1 is done for the code that has tests. The swing settings in §3.7 still have no tests.
 - `gen_env_example.py --check` exits 0.
+- **After fix wave F: 839 passed, 0 failed** (~09:40 ET).
+- **Added since, each run on its own (no full-suite run yet):**
+  - orchestrator S-1/Q3 edits: 52 passed;
+  - `test_reentry_hwm.py`: 2;
+  - `-k exit/profit/proposal/determin` sweep: 60;
+  - `test_ml_candles.py`: 6;
+  - `test_swing_strategy.py` + `test_backtest.py`: 31;
+  - `test_research_harness.py`: 7.
+- **Run a full suite next session.**
 
 ---
 
-## 7. Next steps (in order)
+## 7. Next steps
 
-1. **Make the suite green.** Finish or roll back §3.6 (re-anchor) and §3.7 (swing settings and backtester) as needed; both were stopped mid-work.
-2. **Opus verification of everything in §3** (read-only, adversarial, the same style as the wave-1 verifier). Focus on:
-   - the re-anchor cancel/replace safety;
-   - soft-stop single-print triggering;
-   - the stale-price guard vs closing orders;
-   - market-order and chase interactions with the working-entry guard and the kill switch;
-   - the effect of `CONSENSUS_MIN_NEWS=3`;
-   - migrations 0005/0006 on the live DB (back up `data/trader.db` first).
-3. **Restart, then watch the feed.** Before 09:30 ET, decide what to do about ADI's 348.45 stop (§3.6/§4). After the restart, confirm:
-   - migrations applied;
-   - ExtHr prices used premarket;
-   - no stale-price BUYs;
-   - Google news arriving with no 429;
-   - headlines scored;
-   - the event veto/earnings blackout firing;
-   - the first MARKET exit and marketable entry after 09:30 ET;
-   - 429 levels on `get_stock_bars`.
+### Open items, in priority order (updated 2026-11-24 13:15 ET)
+0. **Next session first:**
+   - **(a)** run the full suite;
+   - **(b)** after 16:00 ET, confirm Webull accepts an `ALL_DAY` LIMIT BUY and that the soft stop sees fresh ExtHr/OVN quotes;
+   - **(c)** watch the night spread guard and the half sizing.
+0b. **From the V24 verifier (no blockers):**
+   - **should-fix:** with two open trades in one symbol, an unowned manual or `exit:` SELL is attributed to both ledger rows (the one-starter rule prevents this today);
+   - **should-fix:** a rejected stop-breach exit's backoff (up to 30 min) can also suppress a different exit reason for that symbol;
+   - **nits:** bot `exit:` sells get the reason "manual"; the backoff is lost on restart; crossed quotes skip the spread check.
+0c. **UI pass 2** (Research, Learning, Settings re-layout and ALL-CAPS cleanup). The chart panel needs real-browser review.
+0d. **Intraday ML test C** didn't run: the M15 data lies wholly inside the locked holdout. It needs the user's OK as exploratory.
+1. ~~Ledger exit-price bug~~: **fixed and live; the ADI row was corrected** (§7 5i FL).
+2. **Full suite run** on the current disk state. It was skipped at the 13:11 restart by the user's request.
+3. ~~No entries since 10:06 ET~~: **not a bug.** The downtrend regime blocks every symbol; that is by design (§7 5i).
+4. **Rate limits** (analysed 2026-11-24 ~12:00 ET):
+   - **Where the 429s come from:** `get_stock_bars` (1,046) and `get_account_positions` (311).
+     - The static spacer (`transport.DEFAULT_MIN_INTERVALS`: bars 0.35 s, positions 1.0 s) holds per process only. The intraday fetcher is a second process on the same account.
+     - The retry backoff (`_rate_limit_wait`) is reactive.
+   - **Proposed fixes, highest yield first:**
+     - **(a)-(c) being built (user OK ~12:05 ET)** by a Sonnet-low agent.
+       - Files: `market_data.py`, `parsers.py`, `orders.py` (invalidation only), `signals.py`, `eligibility.py`, `universe.py`, `ml.py`, `benchmark.py`, `execution_quality.py` and the new `tests/test_rate_limit_load.py`.
+       - It must finish with a full-suite run. The restart needs the user's OK.
+     - **(a)-(c) DONE (~13:05 ET).** Full suite: **874 passed** (after the strategy_lab rename). New `tests/test_rate_limit_load.py` (8).
+       - **Batch bars:** `parsers.parse_bars_by_symbol`, `market_data.Broker.daily_bars_many` (20 symbols per call, with a per-symbol fallback), and `fetch_bars_many`. `signals._prefetch_bars` batches the full and incremental downloads and keeps partial results under the 100 s deadline. ml.py and universe.py are batched too. A refresh makes ceil(n/20) calls instead of n.
+       - **Positions cache:** 3 s TTL with single-flight. `Broker.invalidate_positions()` runs before and after every place, bracket, stop and cancel (`orders._submit_inval`).
+       - **Shared bars cache:** 900 s, per symbol and count.
+       - **Orchestrator:** new `market_data.fresh_positions(broker)` (bypasses the cache; falls back for fakes). Wired into `flatten.py:93`, `execution.py:356/371/515`, `chase.py:109`, `reconcile.py:209`, `rebalance.py:193/211` and `risk.py:279`. The full re-run is pending (~13:10 ET).
+     - (a) **Batch bars.** `get_stock_bars` is a batch endpoint (`get_batch_history_bar`, comma-separated `symbols`), but `signals.py:94/101`, `eligibility.py:330`, `universe.py:193` and `ml.py:540` call it once per symbol. About 56 calls per refresh could become about 3.
+     - (b) **Cache `positions()`.** There are about 20 call sites and no cache. Add a 3-5 s TTL with single-flight (concurrent callers share one request), invalidated after any order, fill, cancel or flatten.
+     - (c) **Reuse the signal bar cache** in eligibility (20-day dollar volume), benchmark and execution_quality.
+     - (d) **Adaptive per-tool spacing (AIMD).** Widen the interval ×1.5 on a 429 and shrink it 5% per success, persisted in kv, replacing the fixed intervals.
+     - (e) **Priority lanes.** Order, cancel, stop and position calls jump ahead of research and bars calls; refreshes yield when the budget is short.
+     - (f) **Cross-process budget** for background scripts: a lock file, or route the fetchers through the app's API, or run them outside market hours.
+     - (g) **Google News:** a longer `NEWS_RSS_SPACING_SECONDS`, and fetch only symbols whose news is older than N min.
+     - (h) **Webull `search_news` 404 on UAT:** disable it in UAT instead of breaker-cycling.
+   - Google News 429s (the breaker trips every 30-50 min);
+   - Webull `search_news` 404.
+4a. **After the 12:24 ET restart:**
+   - **Full suite before the restart: 878 passed** (rate-limit fixes + `fresh_positions` + TRUSTED_HOSTS).
+   - **Tailscale:** `https://desktop-6ou6g6r.tailfb89fa.ts.net/api/status` returns HTTP 200.
+   - **429s:** 6 in the first 4 min (all `get_account_positions`; 0 `get_stock_bars`), against about 48 per 4 min before.
+   - **Webull news (user asked about the feed warning, 12:28 ET):** UAT `search_news` returns 404 for every symbol.
+     - **On disk, not yet live:** new setting `NEWS_WEBULL_ENABLED` (default true; false = Google/Yahoo only).
+     - **Breaker:** it now escalates. The pause doubles each consecutive trip (30 min → 1 h → 2 h … max 12 h) and resets on a success. Only the first trip logs a warning, the later ones log at info.
+     - Tests: 2 new in `tests/test_news_veto_fixes.py`, 92 news tests pass. `gen_env_example --check` exits 0.
+     - **To decide:** set `NEWS_WEBULL_ENABLED=false` in `.env` (needs the user's OK) and restart.
+5. **Wide strategy sweep: DONE (~13:20 ET).** 118 trials. The 87-symbol universe, research folds 2022-07 → 2025-11, no holdout. Results in `data/experiments/search_20261125_012249.json`.
+   - **Benchmarks:** SPY CAGR 17.7%, Sharpe 1.06, DD 18.8%. Equal-weight universe 29.8% / 1.03 / 30.6%. **The live champion d: 14.1% / 0.87 / 14.1%, so it trails buy-and-hold SPY.**
+   - **Best: `xsmom_w`.** Weekly rebalance into the top 10 by 12-1 momentum, no regime filter, time40 or SL 1.5 exits, optionally the ML filter.
+     - Sharpe 1.4-1.85, MAR 1.3-3.1, all 5 folds positive, penalized score 0.30-0.41.
+     - **But CAGR is only 3-8%,** because the engine's risk-based sizing leaves most of the cash idle.
+     - The top 10 are near-duplicates of one idea. The ML variants have only about 130 trades.
+   - **Other families:** Connors (Sharpe 1.07), dual MA, NR7 and monthly xsmom are weak. tsmom, Donchian 55, the 52-week high and breakout20 are negative.
+5a. **Rotation sweep: DONE (~13:25 ET).** 304 trials, 2011-2025, 523 symbols in `data/bars_yahoo_ext/`. Report: `data/experiments/rotation/REPORT.md` + `leaderboard.csv`.
+   - **SPY:** 13.7% / Sharpe 0.86 / DD −32%.
+   - **The alphaground rules over 2011-2025:**
+     - A claude: 22.8% / 1.01 / −34% (DSR 0.93).
+     - B chatgpt: 5.8% / 0.49 / −22%.
+     - C gemini: 36.0% / 0.98 / **−52%**.
+     - **D grok: 28.6% / 1.10 / −42% (DSR 0.97).**
+   - **Top configs:** 67 of 304 have DSR > 0.95. All are stock universes (S&P 500 or the app's 87).
+     - Example: sp500, mean(3m, 6m), top 5, monthly, IEF risk-off, abs-momentum filter: Sharpe 1.39, CAGR 59%.
+     - The vol-targeted top-10 versions: Sharpe 1.30-1.35, DD only −16 to −20%.
+   - **SURVIVORSHIP:** the S&P 500 list is today's, so the stock-universe numbers are upper bounds; the 59% is mostly bias. **The survivorship-free test, sectors only, finds nothing that beats SPY after deflation** (best Sharpe 0.85, DSR 0.82).
+   - **Both sweeps agree:** cross-sectional momentum (12-1, or 3/6-month) in a fully invested, monthly or weekly rebalanced top-N portfolio is the only consistently strong idea.
+   - **Next step before trusting it:** re-test on point-in-time S&P 500 membership (historical constituents, including delisted names) to remove survivorship bias. Only then spend the locked holdout.
+5b-old. **Wide strategy sweep (user, ~12:45 ET), Sonnet low, research only, no holdout.**
+   - Files: `app/strategy_lab/*`, `scripts/experiments.py`, `tests/test_research_harness.py`, `data/experiments/`.
+   - **Entry families (published strategies):** cross-sectional 12-1 momentum, time-series momentum, Connors RSI(2), 52-week high, Donchian 55 (turtle), 20/50 MA cross, NR7/inside-bar breakout, plus the existing families.
+   - **Other dimensions:** regime filters (none / SPY > 200d / > 50d), exit styles, position caps 5/10/20, ML filter on/off.
+   - **Staged search** to limit trials. The penalty uses the total trial count, plus a block-bootstrap CI.
+   - **Benchmarks:** buy-and-hold SPY, equal-weight universe, and the champion d.
+   - **The user's reference "analog bench · Claude-4.8" is an Engo Arena book** (https://engo.capital, data in `/board.json`; snapshot in scratchpad `engo/board.json`, as of 2026-11-23).
+     - **It is a community paper book,** not live, not real money. It holds 18 stocks and is marked daily against SPY.
+     - **Result:** 75 days (2026-08-05 → 11-23), **+36.9%**, IR 2.73, max DD −15.6%. Over the board's period (07-02 → 11-23), SPY returned −3.0%.
+     - **Its own backtest version:** +17.9%, IR 0.82.
+     - **The same "analog bench" with DeepSeek was rejected:** −14.7%.
+     - **Its Holm-adjusted p is 1.0 (not significant). The board has 0 significant survivors out of 79 candidates.**
+     - **The site publishes no rules for it.** The name suggests an LLM picking stocks from historical analogs or precedents. It can't be replicated without its rules; at best we can test analog or nearest-neighbour pattern matching as a harness family.
+5b. **Rotation sweep, started ~13:15 ET** (Sonnet low, research only, no holdout). The idea comes from https://alphaground.ai/ai_race (Q4-2026 AI race; 4 paper agents since 2026-10-20, about 5 weeks).
+   - **The four agents' rules, and their results as of 11-24:**
+     - **claude-26q4 (−8.7%, max DD −13.2%, 44 trades):** if SPY > 200d, hold the top 25 by 12-1 momentum, vol-capped; otherwise 100% SPY. Evaluated daily.
+     - **chatgpt-26q4 (−1.2%):** 11 sector SPDRs. A fund is eligible if its 63d return > 0 and it is above its 100d SMA. Hold the top 3 by mean(3m, 6m) return, 1/3 each, swapped weekly.
+     - **gemini-26q4 (−2.0%):** S&P 500, top 5 by YTD return, idle cash in SGOV.
+     - **grok-26q4 (−29.0%, DD −34.5%):** S&P 500, top 10 by 12-1 momentum / volatility, monthly rebalance.
+   - **Files:** `app/rotation_lab/`, `scripts/fetch_ext_bars.py`, `scripts/rotation_sweep.py`, `tests/test_rotation_lab.py`.
+   - **Data:** `data/bars_yahoo_ext/`, about 15 years: S&P 500 (today's list), the 11 sectors, SPY/QQQ/IWM/TLT/IEF/GLD/BIL/SHV/SGOV.
+   - **Output:** `data/experiments/rotation/` (`leaderboard.csv`, `REPORT.md`).
+   - **Method:**
+     - Reproduce A-D, then randomly sample about 300 configs across: universe, score, top-N, rebalance, regime filter, risk-off asset, absolute-momentum filter and vol targeting.
+     - The research period is 2010 → 2025-11-23. **The last 12 months are a locked holdout.**
+     - **Scoring:** deflated Sharpe ratio (flag DSR > 0.95). Benchmarks: SPY, 60/40, and equal-weight sectors.
+5d. **Continuous strategy research (user, ~13:40 ET): "keep running all sorts of strategy against past data and perform some algorithm training/ML; look at online strategies".**
+   - **User decisions (13:40 ET):** no `NEWS_WEBULL_ENABLED=false` in `.env`, and no point-in-time (survivorship-free) S&P test. Keep reporting the survivorship caveat.
+   - **Shared trial log:** `data/experiments/trials_registry.csv`, append-only, one row per trial. Deflated Sharpe uses the total.
+   - **Agent CAT (Sonnet low):**
+     - **Work:** an online catalog of about 30 published strategies, with rules and source links, in `docs/STRATEGY_CATALOG.md`. Covers TAA (GTAA/IVY, GEM dual momentum, VAA/DAA/BAA/HAA, ADM, Permanent, All-Weather, Golden Butterfly), price-only anomalies (momentum, reversal, low-vol/BAB, 52-week high, residual momentum, turn-of-month, pre-holiday, overnight, Halloween, window dressing, vol-managed) and trend/CTA.
+     - **Files:** extra ETFs into `data/bars_yahoo_ext/`; implemented in `app/rotation_lab/catalog.py`. Report: `data/experiments/rotation/REPORT_CATALOG.md`.
+   - **Agent ML (Sonnet low):** `app/ml_lab/`, `scripts/ml_lab.py`, `tests/test_ml_lab.py`, output in `data/experiments/ml/`.
+     - (A) monthly cross-sectional ranking (ridge / LightGBM-or-MLP / ensemble) vs plain 12-1 momentum;
+     - (B) a weekly SPY timing classifier vs the 200d rule;
+     - (C) 15-min entry timing on the M15 data (exploratory).
+     - It may pip-install sklearn/lightgbm into the scratch testvenv only.
+   - **ML agent DONE (~13:55 ET).** 6 tests pass, 22 trials logged to the registry. Report: `data/experiments/ml/REPORT.md`.
+     - **(A) Ranking:** plain 12-1 momentum top-10 got Sharpe 1.19 (DSR 0.979; survivorship-inflated CAGR 42.8%). LightGBM got 0.95, ridge 0.65 and the ensemble 0.71. Every model's IC was about 0 (t ≤ 0.5), the sign flipped yearly, and turnover doubled. **ML adds nothing over plain momentum.**
+     - **(B) SPY timing:** no model beats buy-and-hold (Sharpe 0.82). The 200d rule cut drawdown from −32% to −20/−24% but lowered Sharpe. The classifiers' AUC was 0.41-0.48.
+     - **(C) Not run.** The orchestrator's brief was contradictory: the M15 data (2026-05-28 → 11-24) lies wholly inside the locked holdout period. Ask the user whether to allow it as exploratory.
+   - **Both:** the evaluation window is 2011-01-03 → 2025-11-23. Neither may load data after 2025-11-23 (locked holdout).
+5e. **24-hour trading (user, 13:50 ET: "I prefer to be trading 24 hours straight in ETFs/stocks").**
+   - **Already on:** `.env` has `MARKET_HOURS_ONLY=false` and `OVERNIGHT_TRADING=true`.
+     - Every symbol trades 04:00-20:00 ET (pre-market, regular, after-hours).
+     - Only the 16 `OVERNIGHT_SYMBOLS` (SPYM, QQQM, IWM, XLK, XLF, XLE, XLV, XLY, IEFA, IAU, TLT, AAPL, MSFT, NVDA, AMZN, GOOGL) trade 20:00-04:00 (NIGHT).
+     - Stocks are closed from Friday 20:00 to Sunday 20:00 ET, so the limit is 24/5.
+   - **Webull also offers an `ALL_DAY` session** ("overnight 8pm-8pm ET", `stock_order.py:447`). The app doesn't use it: it sends CORE, ALL or NIGHT, so a limit entry expires at each session boundary.
+   - **Protection outside CORE:** the app-side soft stop only (Webull rejects STOP orders in extended hours), so the app and PC must run 24/5.
+   - **Options offered to the user:**
+     - expand `OVERNIGHT_SYMBOLS`, after checking eligibility with non-executing `preview_stock_order` calls in NIGHT;
+     - `ALL_DAY` time-in-force for entries;
+     - overnight liquidity guards (smaller size, spread cap);
+     - Windows sleep/power settings.
+5f. **Strategy catalog: DONE (~14:00 ET).** 38 strategies in `docs/STRATEGY_CATALOG.md`. Many rules come from memory (tagged [M]); verified sources: Faber, Keller and Moreira-Muir.
+   - **230 trials.** The registry plus prior trials give N=556 for deflation. **No strategy has DSR > 0.95** (best 0.46).
+   - **Top:**
+     - low-beta/BAB long: Sharpe 1.24, CAGR 15.7%, DD −28%;
+     - residual momentum: 1.09;
+     - 12-1 momentum: about 1.08;
+     - Permanent Portfolio: 1.08 with DD −13% but CAGR 6.5%.
+     - The stock factors use today's S&P list (survivorship).
+   - **Failed:** every TAA (GTAA 0.62, GEM 0.55, VAA/BAA/PAA/HAA/ADM; DAA 0.88 and vol-managed SPY 0.89 come closest), trend, Halloween, calendar effects (about 0 after costs), and overnight-vs-intraday round trips (−16 to −19%/yr).
+   - **Metals/FX:** GEM with GLD is best at about 0.67, GLD trend ≤ 0.63, FX trend negative, gold/silver switch about 0. None near SPY (0.86) or 60/40 (0.99).
+   - Report: `data/experiments/rotation/REPORT_CATALOG.md`.
+5g. **24h work, 13:55-14:10 ET:**
+   - **CRITICAL BUG FOUND AND FIXED (on disk; needs a restart):** `market_data._fetch_snapshots` called `get_stock_snapshot` without `extend_hour_required`/`overnight_required`. Webull then returns NO ExtHr/OVN lines (verified live).
+     - So outside CORE every quote was stale: all extended and overnight BUYs were refused, and **the soft stop could never fire** (it needs a non-stale quote).
+     - **This also means the §3.5 "stale premarket price fix" never had ExtHr data live.**
+     - **Fix:** the flags are now passed. The mock `get_stock_snapshot` accepts them. Test: `test_snapshot_requests_extended_and_overnight_lines`. 67 related tests pass. The full suite was running at 14:00 ET.
+   - **Overnight eligibility:** `scripts/check_overnight_eligibility.py` (read-only snapshot; eligible = an OVN print with volume last night) → `data/overnight_eligibility.json`. **86 of the 87 bars_yahoo symbols traded overnight; only SKYY didn't.**
+     - The UAT `preview_stock_order` accepts any symbol in NIGHT, so it isn't an eligibility test.
+   - **The snapshot also returns `OVN Bid/Ask`.** Example: AAPL bid 349.33 / ask 355.00 (1.6% spread) at night. That feeds the overnight spread guard.
+5h. **Social-media strategy hunt (user, ~14:05 ET)** (Sonnet low).
+   - **Sources:** Reddit (algotrading, quant, LETFs, Bogleheads…), QuantConnect, Composer, TradingView, Substack/Seeking Alpha, leaderboards. About 25 strategies with explicit rules.
+   - **Data:** leveraged ETFs plus synthetic history to 2005. Benchmarked against variant d, 12-1 momentum, SPY and 60/40, with the same costs and deflation.
+   - **Files:** `docs/SOCIAL_STRATEGIES.md`, `app/rotation_lab/social.py`, `app/strategy_lab/social_families.py`, `tests/test_social_strategies.py`, `data/experiments/social/`.
+5i. **User, ~12:50 ET: "Fix any issues you see" + "enhance our chart reading analysis that fits our strategy".**
+   - **"No entries since 10:06" is NOT a bug.** Since about 11:00 ET there have been 0 `long` signals: the market is in a downtrend, and `TA regime` blocks it (3,729 blocks; e.g. SPYM, XLK and NVDA trend down). Earlier longs were held symbols, which the one-starter rule skips.
+   - **UI chart agent (Sonnet low) started:** `MarketChart.tsx`, new `ChartRead.tsx`, `lib/indicators.ts`.
+     - Overlays: SMA 20/50/200, entry/stop lines, volume, trade markers.
+     - A "chart read" panel in plain words: regime, TA components, consensus, risk/reward, ML, and momentum context (3/6/12-month return, relative strength vs SPY, vs SMA200).
+     - Backup: `web/out_prev_chart`.
+   - **UI chart agent DONE and LIVE.** tsc, lint and build pass. Not yet viewed in a browser.
+     - **MarketChart:** daily by default, SMA 20/50/200, a volume pane, entry/stop/target lines, trade markers (also on the daily timeframe), overlay toggles.
+     - **ChartRead ("What the strategy sees"):** regime, TA components in plain words, the consensus decision with the first failing check, ML, stop/target, risk per share, R:R, and momentum context (3/6/12-month return, relative strength, distance to SMA200).
+     - **Orchestrator follow-up:** the benchmark falls back to **SPYM** when SPY isn't on the watchlist (`/api/chart/history` 404s off-watchlist), and the panel now shows RSI and the distance to the 10-day high from `signal.features` (added to `types.ts`). Rebuilt OK.
+   - **Full suite after the snapshot fix: 899 passed.** Restarted at 12:58 ET (DB backup `data/backups/trader_pre_snapshot_fix_2026-11-24.db`). **The snapshot / soft-stop fix is LIVE.**
+   - **Social-media hunt: DONE.**
+     - **Coverage:** 25 strategies found, 14 families implemented as 83 trials, 11 skipped. Registry N = 639 for deflation. **0 with DSR > 0.95.**
+     - **Top:** FTLT approximation (44.5%, Sharpe 0.98, DD −55%), 9Sig (0.97, DD −52%), TQQQ with a 200-SMA filter (0.87, DD −48%). All are 3x leverage with −47 to −67% drawdowns, and **none beats 12-1 momentum** (1.16-1.23).
+     - **60/40 matches the best of them on Sharpe** (0.99) with a −22% drawdown.
+     - **Hyped failures:** Hedgefundie (Sharpe 0.81, DD −71%, −62% in 2022), TQQQ buy-and-hold (DD −94%), VIX switches, SVXY, LETF rotation, RSI(2)/IBS on SPY/QQQ (decayed).
+     - **Files:** `docs/SOCIAL_STRATEGIES.md` (the results summary; the harness refused a separate REPORT.md), `data/experiments/social/results.csv`, `yearly_returns.csv`, `app/rotation_lab/social.py`, `app/strategy_lab/social_families.py`, `scripts/run_social.py`, `scripts/fetch_social_bars.py`, `data/bars_yahoo_ext/social/`.
+   - **Backend fixers started 13:00 ET (Sonnet low, exclusive files):**
+     - **F24:** `orders.py`, `parsers.py`, `order_style.py`, `execution.py`, `sizing.py`, `risk.py`, `market.py`, `config/*`, the `.env` OVERNIGHT_SYMBOLS line (user-approved; backup first).
+       - ALL_DAY entries, plus `OVERNIGHT_SIZE_FACTOR` and `MAX_SPREAD_PCT_EXTENDED` guards.
+       - Also N-4. Tests: `tests/test_24h_trading.py`.
+     - **FL:** `portfolio.py`, `reconcile.py`, `risk_loop.py`, `db/ledger.py`, `db/protective.py`.
+       - The ledger exit-price bug, plus `scripts/fix_ledger_exit_2026-11-24.py` (run on a copy only; `--apply` needs the orchestrator).
+       - Also N-1 and N-2. Tests: `tests/test_ledger_exit_fixes.py`.
+     - **TA3:** `ta.py`, `indicators.py`, `strategy_lab/ta_v3_eval.py`, `scripts/experiments.py`.
+       - Opt-in `TA_MODEL=v3` (long trend, 12-1/6-month momentum, relative strength vs SPY, 52-week high, vol tilt), backtested against v2.
+       - Tests: `tests/test_ta_v3.py`.
+   - **FL: DONE.** 63 tests pass (7 new in `tests/test_ledger_exit_fixes.py`).
+     - **Root cause:** `portfolio.track_trade_fills` took the FIRST filled SELL for the symbol, and read the reason with `protective(open_only=True)`, so filled stops looked like "manual".
+     - **Fix:** `_find_exit_order` matches the trade's own sl/tp row by proposal_id, otherwise the newest SELL filled after entry that doesn't belong to another trade. The reason string stays "stop", which ml.py and autopsy.py rely on.
+     - **N-1:** an exit backoff in `exit_position`, 150 s doubling to 1800 s.
+     - **N-2:** `risk_loop._soft_stop_reusable`.
+     - **ADI row corrected in the LIVE DB** at 13:15 ET with `scripts/fix_ledger_exit_2026-11-24.py --apply`, after a backup to `data/backups/trader_pre_adi_fix_2026-11-24.db`.
+       - Exit price 328.00 → **308.24**, reason manual → stop, P&L −3.52 → **−23.28** (−7.02%), hold −103 s → 5369 s.
+     - **The running app still has the old exit-lookup code** until the next restart.
+   - **F24: DONE.** 104 tests pass (9 new in `tests/test_24h_trading.py`). The full suite hasn't run yet.
+     - **`.env` OVERNIGHT_SYMBOLS:** 16 → **56** (the full effective watchlist incl. `WATCHLIST_UNIVERSES=tech_semis`; all eligible). Backup: `data/backups/.env.pre_overnight_2026-11-24`.
+     - **New settings:** `ENTRY_SESSION_ALL_DAY=true`, `OVERNIGHT_SIZE_FACTOR=0.5`, `MAX_SPREAD_PCT_EXTENDED=1.0`.
+     - **Parsing:** `parse_snapshot` now returns bid/ask/ovn_bid/ovn_ask.
+     - **`orders.entry_all_day()`:** ALL_DAY only for a BUY LIMIT QTY order outside CORE on an overnight symbol. Stops, SELLs, MARKET, fractional and bracket orders are unchanged.
+     - **Spread check:** `risk.py` has a "Spread" check for BUYs outside CORE. `execution._send` halves the BUY qty in NIGHT (floor, at least 1).
+     - **N-4:** a refused cancel keeps the row tracked. The SELL still proceeds; Webull rejects shorts (`OPENAPI_GENERATE_NEW_SHORT_POSITION`), so there is no oversell.
+     - **ALL_DAY is not yet verified against live Webull UAT.** Watch the first overnight entry after the restart.
+   - **TA3: DONE, not enabled.** `TA_MODEL=v3` is opt-in; v2 is unchanged. 6 new tests; 27 pass. 12 trials, so the registry has 347 rows (1 duplicate).
+     - **What it scores** (each group capped): SMA200 trend; vol-adjusted 12-1 + 6-month momentum; 6-month RS vs SPY; proximity to the 52-week high; a high-vol penalty; v2's overbought RSI and volume confirmation (no dip bonus).
+     - **Gate (live threshold 0.15, research folds 2022-07 → 2025-11):**
+       - with exit d, v2 vs v3: exp R +0.151 vs +0.150, Sharpe 0.72 vs 0.89, MAR 0.76 vs 0.83, penalized 0.087 vs 0.078;
+       - with time40, v2 still leads: penalized 0.104 vs 0.079.
+       - Fold 4 is negative for both.
+     - **As a ranker:** v3 top-10 weekly (Sharpe 1.12, DD 27%) trails plain 12-1 momentum (1.22, DD 40%).
+     - **Deflated Sharpe:** near 0 for the gate runs, 0.19-0.24 for the rankers. **No significant gain, so don't enable it.**
+     - **Live gap:** `feature_series` gets no benchmark bars, so v3's RS group would be empty live.
+     - Results: `data/experiments/ta_v3/ta_v3_results.json`.
+   - **Then:** a full suite (running 13:25 ET) and a Sonnet-low verifier (V24, read-only: F24 + FL), then the restart.
+   - **Original queue:**
+     - (1) the 24h items: ALL_DAY entries, overnight guards, `OVERNIGHT_SYMBOLS` from `data/overnight_eligibility.json`, nit N-4;
+     - (2) the ledger exit-price bug, N-1 and N-2;
+     - (3) TA v3 (momentum/relative-strength scoring), opt-in and backtested against v2.
+5c. **Dashboard redesign pass 1: DONE and LIVE (~13:35 ET).** tsc, lint and build pass. Nobody has reviewed it in a browser yet.
+   - **Backup:** `web/out_prev_2026-11-24`. To roll back: copy it over `web/out`. `web/eslint.config.mjs` now ignores `out_prev*/**`.
+   - **New files:** `Today.tsx`, `Today.module.css`, `EquityChart.tsx`. TopBar and tokens rewritten. `base.css` overrides appended. IBM Plex Sans via `next/font`. The Settings tab holds engine, account, orders and health.
+   - **Gaps:**
+     - The Stop column needs `portfolio.protective` in the payload.
+     - The chart is cumulative % from `performance.series`.
+     - Learning, Research and Settings panels still have ALL-CAPS labels and hard-coded colours (pass 2).
+   - Original plan: Sonnet low, owns `web/src/` only.
+   - **Agreed plan:** `docs/DESIGN_PLAN.md`. Dark only (graphite `#17191C`), IBM Plex Sans with tabular figures, no cards or shadows.
+   - **Today view:** a plain-language status sentence, then the equity-vs-SPY chart first, then positions, with a "Needs you" + Activity rail. Tabs: Today / Research / Learning / Settings.
+   - **Based on:** Anthropic's `frontend-design` skill (github.com/anthropics/skills).
+   - **Live-safety:** the app serves `web/out/` from disk, so a build changes the live UI at once. The agent first backs up to `web/out_prev_2026-11-24`. To roll back, copy that folder over `web/out`.
+6. **ML programme (§7 4c):**
+   - **M15 fetch DONE:** 87 of 87 symbols, about 6 months each, in `data/bars_intraday/M15/`;
+   - add 15-min entry-timing variants to the harness;
+   - ask the user before spending the locked holdout on a short list (`consensus_ml_q80`, `consensus_time30` + the champion).
+6. **Open nits from the wave-F verifiers (§3A):**
+   - N-1: a rejected exit is re-tried every pass with no backoff;
+   - N-2: the settled `soft_stop` kv blocks a second soft stop;
+   - N-4: `execution.py:567` marks rows cancelled before the broker confirms;
+   - VMware-style targets outside the alias list get no veto.
+7. **AMZN 2 shares** (§4).
+8. **Swing steps 3-5:** pyramiding at +1R, breakout entries, top-N/sector caps, as harness variants.
+9. **Open question for the user:** the live account size and the risk % per trade. Until it's answered, the cap is `MAX_RISK_PER_TRADE_USD=200`.
+
+### Completed steps (history)
+1. ~~Make the suite green~~: 773 passed at 09:05 ET.
+2. ~~Opus verification of §3~~: done, see §3A.
+3. ~~Restart and watch the feed~~: done at 09:42, 09:50 and 10:06 ET (§3A, "Restart").
+   - ADI was sold at the open by its old stop, as the user chose.
 4. **NEW, user's direction (09:45 ET): "It will be best if the ML can read candles and find opportunities to enter."**
    - The user prefers this over a simple re-entry cooldown.
    - Build an ML candle-entry model: multi-bar OHLCV/candle features, a triple-barrier label, and walk-forward evaluation net of realistic costs.
@@ -538,7 +776,11 @@ Not verified: whether cancelling a bracket master leg cancels the whole combo.
        - **Findings so far:** Webull M15 depth is about **6 months** (2026-05-28 → today, 3,244 bars/symbol, regular session).
        - **Saved:** 13 of 87 symbols in `data/bars_intraday/M15/`. The rest is unfetched. The script `scripts/fetch_intraday_bars.py` exists and is meant to be resumable (skips completed symbols).
        - **M5 depth:** not established.
-       - **To resume:** `.venv\Scripts\python.exe scriptsetch_intraday_bars.py --timespan M15 --days 180`. Ideally run it outside market hours to avoid starving the live app.
+       - **RESUMED 2026-11-24 ~11:50 ET** (user's request; PID 25492).
+         - The command: `.venv\Scripts\python.exe -u scripts\fetch_intraday_bars.py --timespan M15 --days 180 --gap 4`.
+         - The log is in `data/bars_intraday/m15_resume.log` (and `.err`).
+         - It takes about 15 s per symbol, so roughly 18 min for the remaining 69.
+         - The script gained `--gap` (seconds between calls) and `--pause` (default 180 s). On a 429 it now pauses and retries up to 3 times, instead of stopping at the first one.
      - **Original plan:** probes the M5/M15 depth and paging, then fetches M15 for the universe (and M5 for the top 20 if depth ≥ 60 days).
      - Files: `scripts/fetch_intraday_bars.py`. Output: `data/bars_intraday/<timespan>/`.
      - Rules: market data only, paced at ≥ 1.5 s per call (the live app shares the account), no auth flows.
@@ -568,20 +810,17 @@ Not verified: whether cancelling a bracket master leg cancels the whole combo.
        - The champion's fold 4 is also negative (2024-25 period).
        - Caveats: the SE is optimistic (correlated trades), and the universe has survivorship bias.
      - **Next (needs the user):** spend the one-shot holdout on a short list (`consensus_ml_q80`, `consensus_time30` + the champion), then add the 15-min entry-timing variants once agent I's data is in.
-     - **Design:** Files: `app/research/` (variants, harness, leaderboard), `scripts/experiments.py`, `tests/test_research_harness.py`. Output: `data/experiments/leaderboard.csv`.
+     - **Design:** Files: `app/strategy_lab/` (variants, harness, leaderboard; **renamed from `app/research/`**, see below), `scripts/experiments.py`, `tests/test_research_harness.py`. Output: `data/experiments/leaderboard.csv`.
      - **Variants:** a library of entry families (rules, pullback, breakout+volume, momentum, mean-reversion) × exit styles × an optional `ml_candles` MLP filter. Variant d is the champion.
      - **Testing:** walk-forward with embargo. **The last 365 days is a locked holdout** (needs `--holdout`; every peek is logged). The score is penalized for the number of variants tried.
      - **Promotion:** a challenger qualifies only if it beats the champion on the penalized score, is positive in every fold, and beats it on the holdout. The rule is reported, never auto-applied; the user approves.
    - **Then:** use 15-min candles to time daily-setup entries (an intraday trigger plus a tighter stop) as harness variants.
-5. **Swing steps 3-5,** with backtests each time (pyramiding is now best done as a harness variant).
-6. **Investigate AMZN 2 shares.**
 7. **DONE (10:20 ET):** `strategy.md` was updated (backup: `data/backups/strategy.md.pre_2026-11-24`).
    - Goal: aggressive swing; let winners run.
    - Variant d exits.
    - Soft stop, re-anchoring, MARKET exits / marketable entries / chase.
    - Stale-price guard, event veto, news gate.
    - Enforcement table rows.
-8. **Open question for the user:** the live account size and the risk % per trade. Until answered, the risk budget is `MAX_RISK_PER_TRADE_USD=200`.
 
 ---
 
@@ -589,6 +828,15 @@ Not verified: whether cancelling a bracket master leg cancels the whole combo.
 - **Aggressive swing trading is the priority.** DCA was rejected; pyramiding into winners replaces it.
 - **XLY 20 shares is kept** as one full-size position.
 - **The user declined to pause entries** while the stale-price fix was pending.
+- **Variant d exits** ("let winners run") are live from 10:06 ET (user OK, after seeing the v2 backtest).
+- **ML direction:** build an experiment harness plus intraday (15-min) entry timing, instead of a plain re-entry cooldown. The daily candle MLP alone showed no edge.
+- **Orders #54 (ADI BUY) and #56 (NXPI SELL)** were approved manually by the user, so they are not an auto-mode bug.
+- **Subagents** run on Sonnet 5.5 at low effort. Only the orchestrator uses Opus 5.5 High.
+- **Free options only** for hosting, so remote access is via Tailscale serve (tailnet only), never funnel.
+- **The user declined:** `NEWS_WEBULL_ENABLED=false`, and a point-in-time (survivorship-free) S&P test.
+- **The user wants 24/5 trading in stocks and ETFs.** No futures or spot FX: Webull's API has no spot FX, and futures would add leverage plus rolls.
+- **Approved:** expanding `OVERNIGHT_SYMBOLS` to all eligible symbols, ALL_DAY entries, and the night guards ("Run everything where it fits").
+- **The user asked to skip the full suite** for the 13:11 ET restart.
 - **Market orders:** true MARKET is for exits only, in regular hours. Entries are marketable limits.
 - **CORE GTC protective stops plus an app-side soft stop** cover extended hours.
 - **The completed QA programme was moved out of this file** (at the user's request).

@@ -18,6 +18,7 @@ Safety rules (each one has a test):
 
 from __future__ import annotations
 
+from ..broker.market_data import fresh_positions
 import asyncio
 import logging
 import time
@@ -105,7 +106,7 @@ class EntryChaser:
             return None
         # re-run the per-order / risk-per-trade / position / target checks at the NEW price
         try:
-            held = (await eng.broker.positions()).get(sym, 0.0)
+            held = (await fresh_positions(eng.broker)).get(sym, 0.0)
         except BrokerError:
             return None
         why = reprice_violation(eng.s, qty=float(prop["quantity"]), px=px, sl=prop.get("sl"),

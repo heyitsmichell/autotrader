@@ -147,3 +147,19 @@ async def test_proposal_levels_anchor_to_live_price(test_settings):
     px = await b.last_price("ADI")
     sl, tp = ta.levels(round(px, 2), 6.0, test_settings)
     assert sl < px < tp and abs(px - sl) < 0.2 * px     # anchored to 328.06, not 378.75
+
+
+@pytest.mark.asyncio
+async def test_snapshot_requests_extended_and_overnight_lines(test_settings):
+    """Webull only returns the ExtHr/OVN lines when asked; without them every quote outside CORE
+    looked stale and the soft stop could never fire (found live 2026-11-24)."""
+    seen = {}
+
+    class B(SnapBroker):
+        async def call(self, tool, **kw):
+            seen.update(kw)
+            return self.text
+
+    b = B(test_settings, SNAP_EXT)
+    await b.last_price("AAPL")
+    assert seen.get("extend_hour_required") is True and seen.get("overnight_required") is True

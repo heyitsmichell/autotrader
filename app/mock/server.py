@@ -116,7 +116,8 @@ async def get_account_positions(account_id: str) -> str:
 
 @mcp.tool(description="Get real-time stock/ETF snapshot. Supports multiple symbols "
                       "(comma-separated).", annotations=READ_ONLY)
-async def get_stock_snapshot(symbols: str, category: str = "US_STOCK") -> str:
+async def get_stock_snapshot(symbols: str, category: str = "US_STOCK", extend_hour_required: bool = False,
+                             overnight_required: bool = False) -> str:
     lines = ["=== Stock Snapshot ==="]
     now = time.time()
     for sym in [s.strip().upper() for s in symbols.split(",") if s.strip()]:

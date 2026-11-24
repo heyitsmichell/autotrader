@@ -57,7 +57,8 @@ def token_ok(request: Request) -> bool:
 def install_auth(app: FastAPI) -> None:
     @app.middleware("http")
     async def local_only(request: Request, call_next):
-        if request_hostname(request) not in LOOPBACK_HOSTS:
+        host = request_hostname(request)
+        if host not in LOOPBACK_HOSTS and host not in getattr(request.app.state, "trusted_hosts", ()):
             return JSONResponse({"detail": "forbidden host"}, status_code=403)
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             if request.url.path.startswith("/api/"):

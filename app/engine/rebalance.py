@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..broker.market_data import fresh_positions
 import asyncio
 import json
 import logging
@@ -189,7 +190,7 @@ class RebalanceMixin:
     async def _satellite_headroom_usd(self) -> float:
         """USD still available for new satellite buys (BrokerError propagates: callers fail closed)."""
         bal = await self.broker.account_balance()
-        positions = await self.broker.positions()
+        positions = await fresh_positions(self.broker)
         core = self.s.core_symbol.upper()
         sat_value = 0.0
         for sym, qty in positions.items():
@@ -207,7 +208,7 @@ class RebalanceMixin:
     async def _flatten_satellite(self, core_symbol: str, reason: str) -> dict:
         """Flatten all satellite positions (everything except core)."""
         try:
-            positions = await self.broker.positions()
+            positions = await fresh_positions(self.broker)
         except BrokerError as e:
             return {"action": "failed", "reason": f"could not read positions: {e}"}
 

@@ -188,9 +188,15 @@ async def fetch_symbol_info(
     info = {}
     delay = getattr(settings, 'backtest_fetch_delay_seconds', 1.0)
 
+    from .broker.market_data import fetch_bars_many
+    fetch_errors: dict = {}
+    all_bars = await fetch_bars_many(broker, symbols, min_history_days + 10, errors=fetch_errors)
+
     for i, sym in enumerate(symbols):
         try:
-            bars = await broker.daily_bars(sym, min_history_days + 10)
+            if sym.upper() in fetch_errors:
+                raise fetch_errors[sym.upper()]
+            bars = all_bars.get(sym.upper(), [])
             if len(bars) < min_history_days:
                 log.debug("Symbol %s has only %d bars (need %d)", sym, len(bars), min_history_days)
                 info[sym] = SymbolInfo(symbol=sym, history_days=len(bars))
@@ -220,10 +226,6 @@ async def fetch_symbol_info(
         except Exception as e:  # noqa: BLE001
             log.warning("Unexpected error fetching %s: %s", sym, e)
             info[sym] = SymbolInfo(symbol=sym)
-
-        # Rate limit
-        if i < len(symbols) - 1 and delay > 0:
-            await asyncio.sleep(delay)
 
     return info
 

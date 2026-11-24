@@ -1,0 +1,73 @@
+.today {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-areas:
+    "head head"
+    "chart needs"
+    "positions activity"
+    "secondary secondary";
+  column-gap: 40px;
+  row-gap: 28px;
+  align-items: start;
+}
+.head { grid-area: head; }
+.chart-area { grid-area: chart; min-width: 0; }
+.needs { grid-area: needs; min-width: 0; }
+.positions { grid-area: positions; min-width: 0; }
+.activity { grid-area: activity; min-width: 0; }
+.secondary { grid-area: secondary; border-top: 1px solid var(--rule); padding-top: 16px; }
+
+.sentence {
+  margin: 0 0 8px;
+  font-size: 24px;
+  line-height: 1.25;
+  font-weight: 600;
+  max-width: 40ch;
+}
+.figures {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.figures b { color: var(--ink); font-weight: 500; margin-left: 4px; }
+.figures b:global(.positive) { color: var(--gain); }
+.figures b:global(.negative) { color: var(--loss); }
+
+.today h2 { font-size: 17px; margin: 0 0 12px; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.legend { color: var(--ink-2); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px; }
+.key-solid, .key-dash { display: inline-block; width: 16px; height: 0; margin-left: 10px; }
+.key-solid { border-top: 2px solid var(--ink); margin-left: 0; }
+.key-dash { border-top: 1px dashed var(--ink-2); }
+.chart { width: 100%; height: 260px; }
+
+.table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.table th, .table td { padding: 9px 12px 9px 0; border-bottom: 1px solid var(--rule); text-align: left; font-weight: 400; white-space: nowrap; }
+.table thead th { color: var(--ink-2); font-size: 12px; font-weight: 500; }
+.table tbody th { font-weight: 500; }
+.table .num { text-align: right; padding-right: 0; padding-left: 16px; }
+.table small { color: inherit; opacity: 0.8; font-size: 12px; }
+.table td:global(.positive) { color: var(--gain); }
+.table td:global(.negative) { color: var(--loss); }
+.sym { background: none; border: 0; padding: 0; color: var(--ink); font-weight: 500; cursor: pointer; border-radius: 0; }
+.sym:hover { text-decoration: underline; }
+
+.events { list-style: none; margin: 0; padding: 0; }
+.events li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--rule); font-size: 14px; overflow-wrap: anywhere; }
+.events time { color: var(--ink-2); }
+
+/* Needs-you proposals: the one raised surface, flattened to hairlines */
+.needs :global(.panel) { padding: 0; }
+
+@media (max-width: 760px) {
+  .today {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "head" "needs" "chart" "positions" "activity" "secondary";
+    row-gap: 24px;
+  }
+  .sentence { font-size: 20px; }
+  .chart { height: 220px; }
+}

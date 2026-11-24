@@ -349,6 +349,7 @@ class Settings:
     news_google_concurrency: int = 1           # NEWS_GOOGLE_CONCURRENCY: parallel Google News requests
     news_rss_spacing_seconds: float = 0.7      # NEWS_RSS_SPACING_SECONDS: minimum gap between Google/Yahoo RSS requests
     news_google_cooldown_minutes: float = 20.0 # NEWS_GOOGLE_COOLDOWN_MINUTES: pause Google News after a 429
+    news_webull_enabled: bool = True           # NEWS_WEBULL_ENABLED: fetch Webull news (get_stock_news/search_news). false = Google/Yahoo only (Webull UAT returns 404 for news)
     news_llm_batch_size: int = 10              # NEWS_LLM_BATCH_SIZE: headlines per LLM scoring call (keeps JSON untruncated)
     news_llm_max_batches: int = 6              # NEWS_LLM_MAX_BATCHES: LLM scoring calls per refresh
     news_llm_cooldown_minutes: float = 10.0    # NEWS_LLM_COOLDOWN_MINUTES: pause LLM scoring after a provider failure
@@ -361,6 +362,9 @@ class Settings:
     entry_order_type: str = "limit"            # ENTRY_ORDER_TYPE: limit | marketable (limit at ask + offset, capped at the price band)
     marketable_offset_bps: float = 10.0        # MARKETABLE_OFFSET_BPS: marketable BUY limit = ask (or last) x (1 + bps/10000)
     entry_chase_seconds: float = 0.0           # ENTRY_CHASE_SECONDS: 0 = off; re-send an unfilled entry once as marketable (CORE only)
+    entry_session_all_day: bool = True         # ENTRY_SESSION_ALL_DAY: BUY limit entries outside CORE for OVERNIGHT_SYMBOLS use Webull's ALL_DAY session (no expiry at each session boundary)
+    overnight_size_factor: float = 0.5         # OVERNIGHT_SIZE_FACTOR: BUY quantity multiplier in the NIGHT session (1 = off)
+    max_spread_pct_extended: float = 1.0       # MAX_SPREAD_PCT_EXTENDED: reject a BUY outside CORE when (ask-bid)/mid exceeds this % (0 = off)
     market_notional_buffer_pct: float = 1.0    # MARKET_NOTIONAL_BUFFER_PCT: guard notional for a MARKET order = last x qty x (1 + this %)
 
     # swing-strategy
@@ -368,6 +372,8 @@ class Settings:
     size_from_risk: bool = False               # SIZE_FROM_RISK: size a BUY from the risk budget (budget / (entry - stop)); MAX_ORDER_USD no longer shrinks it (MAX_POSITION_USD, MAX_ORDER_QTY and buying power still cap it)
     risk_per_trade_pct: float = 0.0            # RISK_PER_TRADE_PCT: risk budget as % of equity (0 = use MAX_RISK_PER_TRADE_USD); needs the caller to pass equity
     backtest_live_exits: bool = False          # BACKTEST_LIVE_EXITS: backtester models the live profit rules (scale-outs, break-even, give-back, trailing, RSI exhaustion, no-TP bracket)
+    # remote access
+    trusted_hosts: tuple[str, ...] = ()        # TRUSTED_HOSTS: extra Host names the UI/API answer to besides localhost (e.g. a private Tailscale name like mypc.tailnet.ts.net). The app still binds to 127.0.0.1 and has no login: only list names reachable by you alone
 
     @property
     def is_live(self) -> bool:

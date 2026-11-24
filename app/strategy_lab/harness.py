@@ -19,7 +19,8 @@ import numpy as np
 import pandas as pd
 
 from .. import ml_candles
-from .variants import CUSTOM_ENTRIES, REGISTRY, Variant
+from . import families
+from .variants import CUSTOM_ENTRIES, NEW_FAMILIES, REGISTRY, Variant
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 EXP_DIR = ROOT / "data" / "experiments"
@@ -117,7 +118,22 @@ def entry_hook(variant: Variant, bars_dir: Path, ml_keys: set | None):
     from ..backtest import engine, signals
     from .. import ta
     orig = engine.signal_at
+    orig_pbl, orig_can = engine.Portfolio.process_bar_live, engine.Portfolio.can_enter
     bars = ml_candles.load_bars(str(bars_dir))
+    tables = families.build_tables(variant.entry, bars) if variant.entry in NEW_FAMILIES else {}
+    reg = families.regime_map(bars, variant.regime)
+    native = tables if variant.exit_style == "native" else None
+    chand = families.chandelier_exit(bars) if variant.exit_style == "chand3" else None
+    sym_cache: dict = {}
+
+    def sym_of(blist):
+        k = id(blist)
+        if k not in sym_cache:
+            b0, b1 = blist[0], blist[-1]
+            sym_cache[k] = next((s for s, df in bars.items() if len(df) == len(blist)
+                                 and abs(float(df.open.iloc[0]) - b0["open"]) < 1e-6
+                                 and abs(float(df.close.iloc[-1]) - b1["close"]) < 1e-6), None)
+        return sym_cache[k]
     mom_thr, key_to_sym = {}, {}
     if variant.entry == "momentum":
         r20 = pd.DataFrame({s: df.close.pct_change(20) for s, df in bars.items() if s != "SPY"})
@@ -136,7 +152,9 @@ def entry_hook(variant: Variant, bars_dir: Path, ml_keys: set | None):
         if not ok_el:
             return {"ok": False, "eligible": False, "reason": why}
         c, sma50 = f["close"], f.get("sma50")
-        fam, hit = variant.entry, False
+        fam, hit, score = variant.entry, False, None
+        if reg and not reg.get(blist[index]["time"].date(), False):
+            return {"ok": False, "reason": "regime"}
         if sma50 is None or f.get("atr14") is None:
             return {"ok": False, "reason": "no features"}
         if fam == "breakout20_vol":
@@ -150,11 +168,15 @@ def entry_hook(variant: Variant, bars_dir: Path, ml_keys: set | None):
             m200 = sum(b["close"] for b in blist[index - 199:index + 1]) / 200
             rsi = f.get("rsi14")
             hit = rsi is not None and rsi < 30 and c > m200
+        elif fam in NEW_FAMILIES:
+            row = tables.get(sym_of(blist), {}).get(blist[index]["time"].date())
+            hit = bool(row and row[0])
+            score = row[1] if row else None
         if not hit:
             return {"ok": False, "reason": fam}
         a = ta.analyze(f, settings)
         sl, tp = ta.levels(c, f["atr14"], settings)
-        sig = {"symbol": "", "close": c, "atr": a.get("atr"), "ta_score": a.get("ta_score"),
+        sig = {"symbol": "", "close": c, "atr": a.get("atr"), "ta_score": score if score is not None else a.get("ta_score"),
                "trend": a.get("trend"), "ml_p": None, "features": f}
         return {"ok": sl is not None, "eligible": True, "signal": sig, "sl": sl, "tp": tp, "gate": {}}
 
@@ -168,11 +190,30 @@ def entry_hook(variant: Variant, bars_dir: Path, ml_keys: set | None):
                 return {"ok": False, "reason": "ML filter"}
         return res
 
+    def pbl(self, symbol, bar, day, *a, **kw):
+        orig_pbl(self, symbol, bar, day, *a, **kw)
+        pos = self.positions.get(symbol)
+        if pos is None or pos.get("pending_exit"):
+            return
+        d = day if isinstance(day, date) else day.date()
+        if native is not None and native.get(symbol, {}).get(d, (0, 0, False))[2]:
+            pos["pending_exit"] = "native_exit"
+        elif chand is not None and chand.get(symbol, {}).get(d):
+            pos["pending_exit"] = "chandelier"
+
+    def can_enter(self, symbol, *a, **kw):
+        if variant.max_pos and len(self.positions) >= variant.max_pos:
+            return 0, "max positions"
+        return orig_can(self, symbol, *a, **kw)
+
     engine.signal_at = hooked
+    engine.Portfolio.process_bar_live = pbl
+    engine.Portfolio.can_enter = can_enter
     try:
         yield
     finally:
         engine.signal_at = orig
+        engine.Portfolio.process_bar_live, engine.Portfolio.can_enter = orig_pbl, orig_can
 
 
 # ---- metrics --------------------------------------------------------------------------------
@@ -192,6 +233,39 @@ def segment_metrics(res, start: date, end: date) -> dict:
             "win_rate": sum(1 for t in tr if t.pnl > 0) / len(tr) if tr else 0.0,
             "exp_R": float(np.mean(rs)) if rs else 0.0, "r_sum": float(sum(rs)),
             "r_sq": float(sum(r * r for r in rs)), "ret": ret, "max_dd": dd}
+
+
+def perf_from_equity(dates, eq) -> dict:
+    """CAGR, max drawdown, daily Sharpe (rf=0, sqrt(252)), MAR from a close-to-close equity series."""
+    eq = np.asarray(eq, dtype=float)
+    if len(eq) < 3 or eq[0] <= 0:
+        return {"cagr": 0.0, "max_dd": 0.0, "sharpe": 0.0, "mar": 0.0}
+    yrs = max((pd.Timestamp(dates[-1]) - pd.Timestamp(dates[0])).days / 365.25, 1e-9)
+    cagr = (eq[-1] / eq[0]) ** (1 / yrs) - 1 if eq[-1] > 0 else -1.0
+    dd = float(np.max(1 - eq / np.maximum.accumulate(eq)))
+    r = np.diff(eq) / eq[:-1]
+    sh = float(r.mean() / r.std(ddof=1) * math.sqrt(252)) if r.std(ddof=1) > 0 else 0.0
+    return {"cagr": float(cagr), "max_dd": dd, "sharpe": sh, "mar": float(cagr / dd) if dd > 0 else 0.0}
+
+
+def equity_perf(res, start: date, end: date) -> dict:
+    pr = [(d, e) for d, e in zip(res.equity_dates, res.equity_curve) if start <= d <= end]
+    return perf_from_equity([p[0] for p in pr], [p[1] for p in pr])
+
+
+def benchmark_perf(start: date, end: date, bars_dir: Path) -> dict:
+    """Buy-and-hold SPY and equal-weight (daily-rebalance-free: equal $ at start, never rebalanced) universe."""
+    bars = ml_candles.load_bars(str(bars_dir))
+    close = pd.DataFrame({s: b.close for s, b in bars.items()})
+    close.index = [pd.Timestamp(x).date() for x in close.index]
+    w = close[(close.index >= start) & (close.index <= end)]
+    spy = w["SPY"].dropna()
+    out = {"SPY_buyhold": perf_from_equity(list(spy.index), spy.values)}
+    ok = w.dropna(axis=1, how="any")
+    ew = (ok / ok.iloc[0]).mean(axis=1)
+    out["EW_universe_buyhold"] = perf_from_equity(list(ew.index), ew.values)
+    out["EW_universe_buyhold"]["n_symbols"] = int(ok.shape[1])
+    return out
 
 
 def penalized_score(n: int, r_sum: float, r_sq: float, n_trials: int, k: float = 1.0):
@@ -258,6 +332,10 @@ def run_variant(variant: Variant | str, scope: str = "research", data_dir: Path 
         out.update(folds=folds, trades=n, exp_R=m, se=se, penalized=pen,
                    all_positive=all(f["exp_R"] > 0 and f["trades"] > 0 for f in folds),
                    max_dd=max(f["max_dd"] for f in folds))
+        out.update(r_sum=sum(f["r_sum"] for f in folds), r_sq=sum(f["r_sq"] for f in folds),
+                   perf=equity_perf(res, make_folds(rd)[0][1], rd[-1]),
+                   trade_rs=[(str(t.entry_day)[:7], round(t.r_multiple, 4)) for t in res.trades
+                             if t.exit_day and t.risk_usd > 0 and make_folds(rd)[0][1] <= t.entry_day <= rd[-1]])
     else:
         h = segment_metrics(res, cutoff, all_dates[-1])
         out.update(holdout=h, trades=h["trades"], exp_R=h["exp_R"], se=0.0, penalized=0.0, max_dd=h["max_dd"])

@@ -202,6 +202,14 @@ class TokenStaticFiles(StaticFiles):
 def create_app(lifespan=lifespan, web_dir: Path | None = None, token: str | None = None) -> FastAPI:
     app = FastAPI(title="AI Trader", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.api_token = token or new_token()
+    try:
+        app.state.trusted_hosts = frozenset(load_settings().trusted_hosts)
+    except ValueError:
+        raise
+    except Exception:  # noqa: BLE001 - settings problems surface at startup elsewhere
+        app.state.trusted_hosts = frozenset()
+    if app.state.trusted_hosts:
+        log.warning("UI/API also answer to TRUSTED_HOSTS: %s", ", ".join(sorted(app.state.trusted_hosts)))
     install_auth(app)
     for r in (auth.router, status.router, portfolio.router, proposals.router, options.router,
               learning.router, ml.router, research.router, controls.router, chart.router,

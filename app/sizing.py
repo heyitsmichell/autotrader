@@ -66,6 +66,19 @@ def max_allowed_qty(settings: Settings, *, limit_price: float, last_price: float
     return max(max_qty, 0.0)
 
 
+def overnight_scaled_qty(settings: Settings, qty: float, session: str | None) -> float:
+    """BUY quantity in the NIGHT session x OVERNIGHT_SIZE_FACTOR (thin overnight books); other
+    sessions and factor >= 1 leave it unchanged. Whole shares floor but never below 1 (a 1-share
+    order stays 1); fractional quantities keep FRACTIONAL_DECIMALS."""
+    f = float(getattr(settings, "overnight_size_factor", 1.0))
+    if session != "NIGHT" or f >= 1.0 or qty <= 0:
+        return qty
+    scaled = qty * f
+    if float(qty) == int(qty):
+        return float(max(1, int(scaled)))
+    return round(scaled, settings.fractional_decimals)
+
+
 def volatility_scaled_qty(settings: Settings, base_qty: float, atr: float | None,
                           limit_price: float) -> float:
     """Scale quantity by volatility (ATR) to target consistent risk per position.

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from app.research import harness, leaderboard, variants
+from app.strategy_lab import harness, leaderboard, variants
 
 
 def _dates(n=1500):
@@ -85,3 +85,54 @@ def test_registry_has_champion_and_unique_hashes():
     assert variants.CHAMPION in variants.REGISTRY
     hs = [v.config_hash() for v in variants.REGISTRY.values()]
     assert len(set(hs)) == len(hs)
+
+
+# ---- published-strategy families -------------------------------------------------------------
+def _bars(closes, spread=0.5):
+    idx = pd.bdate_range("2020-01-01", periods=len(closes))
+    c = pd.Series(closes, index=idx, dtype=float)
+    return pd.DataFrame({"open": c, "high": c + spread, "low": c - spread, "close": c, "volume": 1e6})
+
+
+def test_family_signals_are_causal():
+    from app.strategy_lab import families
+    r = np.random.default_rng(1)
+    df = _bars(100 + np.cumsum(r.normal(0.2, 1.0, 600)))
+    for fam in ("tsmom", "connors", "high52", "donchian55", "dualma", "nr7", "inside"):
+        full = families.family_table(fam, df)
+        cut = families.family_table(fam, df.iloc[:400])
+        assert (full.iloc[:400].values == cut.values).all(), fam   # row t unchanged when future rows are dropped
+    bars = {"SPY": df, "A": df, "B": _bars(100 + np.cumsum(r.normal(0.1, 1.0, 600)))}
+    t_full = families.xsmom_tables(bars, False)["A"]
+    t_cut = families.xsmom_tables({k: v.iloc[:450] for k, v in bars.items()}, False)["A"]
+    assert (t_full.iloc[:440].hit.values == t_cut.iloc[:440].hit.values).all()
+
+
+def test_connors_entry_and_exit_rule():
+    from app.strategy_lab import families
+    up = list(np.linspace(100, 200, 260))
+    df = _bars(up + [190, 180, 172, 166])             # sharp 4-day dip in a long uptrend
+    t = families.family_table("connors", df)
+    assert t.hit.iloc[-1] and not t.exit.iloc[-1]      # RSI2 < 10 above 200d SMA; still below 5d SMA
+    t2 = families.family_table("connors", _bars(up + [190, 180, 172, 166, 199]))
+    assert t2.exit.iloc[-1]                            # close back above the 5d SMA -> exit (fills next open)
+
+
+def test_donchian_breakout_and_20d_low_exit():
+    from app.strategy_lab import families
+    flat = [100.0 + (i % 3) * 0.1 for i in range(80)]
+    t = families.family_table("donchian55", _bars(flat + [110.0]))
+    assert t.hit.iloc[-1] and not t.hit.iloc[-2]       # close above prior 55-day high
+    t2 = families.family_table("donchian55", _bars(flat + [110.0] * 25 + [90.0]))
+    assert t2.exit.iloc[-1]                            # close below the prior 20-day low
+    assert not t2.exit.iloc[-2]
+
+
+def test_regime_filter_spy_sma():
+    from app.strategy_lab import families
+    up = _bars(list(np.linspace(100, 300, 260)))
+    down = _bars(list(np.linspace(100, 300, 220)) + list(np.linspace(300, 120, 40)))
+    assert all(list(families.regime_map({"SPY": up}, "spy200").values())[-30:])
+    assert not list(families.regime_map({"SPY": down}, "spy50").values())[-1]
+    assert families.regime_map({"SPY": up}, "none") == {}
+    assert len(list(families.regime_map({"SPY": up}, "spy200").values())) == 260

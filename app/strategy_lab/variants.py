@@ -18,6 +18,13 @@ EXIT_STYLES["d_trail3"] = {**EXIT_STYLES["d"], "trailing_stop_enabled": True, "t
                            "trailing_stop_activation_r": 1.0}
 EXIT_STYLES["d_time30"] = {**EXIT_STYLES["d"], "backtest_max_hold_days": 30, "exit_max_hold_days": 30}
 EXIT_STYLES["d_sl2.5"] = {**EXIT_STYLES["d"], "sl_atr_mult": 2.5}
+EXIT_STYLES["d_sl1.5"] = {**EXIT_STYLES["d"], "sl_atr_mult": 1.5}
+EXIT_STYLES["d_sl3"] = {**EXIT_STYLES["d"], "sl_atr_mult": 3.0}
+EXIT_STYLES["d_time10"] = {**EXIT_STYLES["d"], "backtest_max_hold_days": 10, "exit_max_hold_days": 10}
+EXIT_STYLES["d_time40"] = {**EXIT_STYLES["d"], "backtest_max_hold_days": 40, "exit_max_hold_days": 40}
+EXIT_STYLES["chand3"] = dict(EXIT_STYLES["d"])     # + close < 22d highest close - 3 ATR, next open (harness)
+EXIT_STYLES["native"] = dict(EXIT_STYLES["d"])     # family-native exit (harness); hold days per family below
+NATIVE_HOLD_DAYS = {"connors": 14, "donchian55": 150, "dualma": 150}   # calendar days (engine counts calendar)
 
 ENTRY_FAMILIES: dict[str, dict] = {
     "consensus": {},                                   # current live consensus rules
@@ -26,7 +33,11 @@ ENTRY_FAMILIES: dict[str, dict] = {
     "momentum": {},                                    # custom hook: top-quintile 20d return
     "meanrev": {},                                     # custom hook: RSI<30 in uptrend
 }
-CUSTOM_ENTRIES = {"breakout20_vol", "momentum", "meanrev"}
+from .families import NEW_FAMILIES  # noqa: E402
+
+for _f in NEW_FAMILIES:
+    ENTRY_FAMILIES[_f] = {}
+CUSTOM_ENTRIES = {"breakout20_vol", "momentum", "meanrev", *NEW_FAMILIES}
 
 
 @dataclass(frozen=True)
@@ -37,14 +48,26 @@ class Variant:
     ml_filter: bool = False
     extra_overrides: dict = field(default_factory=dict)
     description: str = ""
+    regime: str = "none"      # none | spy200 | spy50
+    max_pos: int = 0          # 0 = unlimited (live champion behaviour)
 
     def overrides(self) -> dict:
-        return {**EXIT_STYLES[self.exit_style], **ENTRY_FAMILIES[self.entry], **self.extra_overrides}
+        ex = dict(EXIT_STYLES[self.exit_style])
+        if self.exit_style == "native" and self.entry in NATIVE_HOLD_DAYS:
+            ex.update(backtest_max_hold_days=NATIVE_HOLD_DAYS[self.entry],
+                      exit_max_hold_days=NATIVE_HOLD_DAYS[self.entry])
+        return {**ex, **ENTRY_FAMILIES[self.entry], **self.extra_overrides}
 
     def config_hash(self) -> str:
         blob = json.dumps({"entry": self.entry, "exit": self.exit_style, "ml": self.ml_filter,
-                           "ov": self.overrides()}, sort_keys=True, default=str)
+                           "reg": self.regime, "mp": self.max_pos, "ov": self.overrides()}, sort_keys=True, default=str)
         return hashlib.sha1(blob.encode()).hexdigest()[:10]
+
+
+def make(entry, exit_style="d", regime="none", max_pos=10, ml=False) -> Variant:
+    """Programmatic variant for staged search; name encodes every knob."""
+    name = f"{entry}|{regime}|{exit_style}|p{max_pos}|{'ml' if ml else 'noml'}"
+    return Variant(name, entry, exit_style, ml, {}, "", regime, max_pos)
 
 
 def _v(name, entry, exit_style="d", ml=False, desc=""):
