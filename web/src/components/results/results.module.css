@@ -17,6 +17,7 @@
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 32px; margin: 8px 0 0; font-size: 13px; }
 .kv dt { color: var(--ink-2); }
 .kv dd { margin: 0; }
+<<<<<<< HEAD
 /* Trade stats (strategy table + distribution) */
 .note { color: var(--ink-2); font-size: 13px; margin: 8px 0 0; }
 .pick { cursor: pointer; }
@@ -40,3 +41,5 @@
 .asTable { margin-top: 8px; font-size: 13px; color: var(--ink-2); max-width: 420px; }
 .asTable summary { cursor: pointer; }
 .asTable table { margin-top: 6px; }
+=======
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5

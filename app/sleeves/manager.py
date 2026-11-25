@@ -128,10 +128,13 @@ class SleeveManager:
                 self.db.set_kv("sleeves_capital_warned", day)
                 self.db.log("error", short, alert=True)
             return
+<<<<<<< HEAD
         try:
             await self._price("SPY", snap)    # SPY is rarely held, so the snapshot lacks it
         except Exception:  # noqa: BLE001 - the benchmark line is optional, never block the tick
             pass
+=======
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
         self._record(values, snap)
         await self._drawdown_checks(values)
         self._drift_checks()
@@ -886,6 +889,7 @@ class SleeveManager:
         return {**base, "holdings": holdings, "targets": targets, "orders": orders}
 
     def equity_series(self, days: int = 365) -> dict:
+<<<<<<< HEAD
         """Daily equity per sleeve plus 'total' and 'spy', with a start baseline row.
 
         The baseline row (``baseline: True``) sits on the last stored close before the
@@ -929,3 +933,6 @@ class SleeveManager:
         return {"day": last["day"], "baseline": True, **others,
                 "swing": round(nl - sum(others.values()), 2), "total": round(nl, 2),
                 "spy": float(last["spy_close"])}
+=======
+        return {"series": self.db.sleeve_equity_series(days)}
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5

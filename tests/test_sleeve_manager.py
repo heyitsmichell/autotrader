@@ -466,6 +466,7 @@ async def test_others_day_pnl_feeds_swing_daily_loss(env):
     mgr.last_values = {"momentum": {"equity": 500000.0}}
     assert mgr.others_day_pnl() == -20000.0
     assert env.broker.__dict__["sleeve_day_pnl"]() == -20000.0
+<<<<<<< HEAD
 
 
 # ---------------------------------------------------------------- SPY line + start baseline
@@ -509,3 +510,5 @@ async def test_equity_series_baseline_without_benchmark_close(env):
 async def test_equity_series_without_sleeves(env):
     eng, mgr = env.build()
     assert mgr.equity_series(30) == {"series": [], "start_date": None}
+=======
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5

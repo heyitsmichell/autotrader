@@ -606,7 +606,11 @@ export interface SleevesPayload {
 }
 export interface SleeveEquityPoint {
   day: string; swing: number | null; momentum: number | null; putwrite: number | null;
+<<<<<<< HEAD
   vaa: number | null; total: number | null; spy: number | null; baseline?: boolean;
+=======
+  vaa: number | null; total: number | null; spy: number | null;
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
 }
 export interface SleeveHolding {
   symbol: string; kind: string; qty: number; avg_cost: number | null; last: number | null;
@@ -680,6 +684,7 @@ export interface PnlPayload {
   days: PnlRow[]; cumulative: PnlRow[]; periods: PnlPeriods;
   shadows?: { days: PnlRow[]; cumulative?: PnlRow[]; periods?: PnlPeriods; names?: Record<string, string> };
 }
+<<<<<<< HEAD
 export type ExitBucket = "stop" | "time" | "manual" | "rebalance" | "expiry" | "other";
 export interface RoundTrip {
   strategy: string; live: boolean; symbol: string; kind: string; direction: "long" | "short"; qty: number | null;
@@ -695,6 +700,8 @@ export interface TripStats {
   best: TripPick | null; worst: TripPick | null; exits: Partial<Record<ExitBucket, { n: number; pnl: number }>>;
 }
 export interface RoundTripsPayload { trips: RoundTrip[]; stats: Record<string, TripStats> }
+=======
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
 
 // ---- Research tab (docs/RESEARCH_TAB.md) ----
 export interface ResearchBase { as_of?: string; error?: string }
@@ -720,6 +727,7 @@ export interface RegimePayload extends ResearchBase {
   breadth?: { pct_above_200: number; n: number };
   vaa_bad?: number;
   swing_gate?: { watched: number; eligible: number; pass: number; top_blockers?: { name: string; n: number }[] };
+<<<<<<< HEAD
 }
 /** Backtests tab (docs/BACKTESTS_TAB.md). Every field may be missing. */
 export interface BtEvidence { path: string; title?: string; exists?: boolean }
@@ -749,3 +757,6 @@ export interface BtMl {
   options_model?: Record<string, unknown> | null;
   experiments?: BtPipelineEntry[]; summary?: string;
 }
+=======
+}
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5

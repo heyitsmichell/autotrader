@@ -7,6 +7,11 @@ import Section from "./ui/Section";
 import Segmented from "./ui/Segmented";
 import Mark from "./ui/Mark";
 import Empty from "./ui/Empty";
+<<<<<<< HEAD
+=======
+import TradeStats from "./results/TradeStats";
+import OptionsModel from "./results/OptionsModel";
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
 import { money, num, pct } from "@/lib/format";
 import type { TradeLedgerEntry } from "@/lib/types";
 import css from "./TradeLedgerView.module.css";
@@ -43,7 +48,13 @@ export default function TradeLedgerView() {
 
   return (
     <div className="trade-ledger-view">
+<<<<<<< HEAD
       <Section title="Swing round trips" meta={`${filteredTrades.length} shown · click a row for entry signals, slippage, MAE/MFE`} right={
+=======
+      <TradeStats />
+      <OptionsModel />
+      <Section title="Trades" meta={`${filteredTrades.length} shown`} rule right={
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
         <div className={rcss["filters"]}>
           <Segmented label="Status" value={statusFilter} onChange={setStatusFilter}
             options={[{ value: "all", label: "All" }, { value: "open", label: "Open" }, { value: "closed", label: "Closed" }]} />

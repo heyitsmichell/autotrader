@@ -54,6 +54,7 @@ def _title(path: Path) -> str:
     return path.stem
 
 
+<<<<<<< HEAD
 def _bt_root() -> Path:
     return (Path(env.DATA_DIR) / "backtests").resolve()
 
@@ -62,6 +63,9 @@ def _safe(root: Path, rel: str) -> Path:
     rel = rel or ""
     if rel.replace("\\", "/").startswith("backtests/"):
         root, rel = _bt_root(), rel.replace("\\", "/")[len("backtests/"):]
+=======
+def _safe(root: Path, rel: str) -> Path:
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
     if not rel or rel.startswith(("/", "\\")) or ":" in rel or not rel.lower().endswith(".md"):
         raise HTTPException(400, "path must be a relative .md path under data/experiments")
     if ".." in Path(rel.replace("\\", "/")).parts:
@@ -103,6 +107,7 @@ async def experiments():
             reports.append({"path": p.relative_to(root).as_posix(), "title": _title(real),
                             "modified": datetime.fromtimestamp(stt.st_mtime, timezone.utc)
                             .isoformat(timespec="seconds"), "bytes": stt.st_size})
+<<<<<<< HEAD
     bt = _bt_root()
     if bt.is_dir():
         for p in sorted(bt.rglob("*.md")):
@@ -115,6 +120,8 @@ async def experiments():
             reports.append({"path": "backtests/" + p.relative_to(bt).as_posix(), "title": _title(real),
                             "modified": datetime.fromtimestamp(stt.st_mtime, timezone.utc)
                             .isoformat(timespec="seconds"), "bytes": stt.st_size})
+=======
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
     return {"registry": {"n_trials": len(reg), "by_lab": by_lab},
             "leaderboard": [_row(r) for r in scored[:25]],
             # best survivorship-free rows: the top 25 overall can be all biased universes

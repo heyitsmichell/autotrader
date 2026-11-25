@@ -153,6 +153,7 @@ def test_pnl_includes_shadow_display_names(tmp_path):
     db = DB(tmp_path / "t.db", "mock", None, None)
     names = pnl(db, 30)["shadows"]["names"]
     assert names.get("swing_dynamic") and names["swing_dynamic"] != "swing_dynamic"
+<<<<<<< HEAD
 
 
 # ---------------------------------------------------------------- round trips (FIFO) + stats
@@ -229,3 +230,5 @@ async def test_unmatched_stock_sell_opens_no_short(app):
     order(db, iso(70), "momentum", "ZZZ", "BUY", 5, 40.0, reason="rebalance")
     j = (await get(app, "/api/results/round_trips")).json()
     assert not [t for t in j["trips"] if t["symbol"] == "ZZZ"]
+=======
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5

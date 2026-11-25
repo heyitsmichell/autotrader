@@ -8,7 +8,10 @@ import Empty from "@/components/ui/Empty";
 import { Figure, FigureRow } from "@/components/ui/Figure";
 import Section from "@/components/ui/Section";
 import EquityChart from "./EquityChart";
+<<<<<<< HEAD
 import StrategiesVsSpy from "./today/StrategiesVsSpy";
+=======
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
 import Activity from "./today/Activity";
 import { summarizeGate, weekdaysSince } from "./today/gate";
 import OptionPositions from "./options/OptionPositions";
@@ -197,7 +200,11 @@ export default function Today({ status, portfolio, performance, events, pendingC
         budget={status.settings.options_entry_max_premium_usd ?? null}/>}
     </div>
 
+<<<<<<< HEAD
     <div className={css["chartbox"]}>{api ? <StrategiesVsSpy api={api} performance={performance}/> : <EquityChart performance={performance}/>}</div>
+=======
+    <div className={css["chartbox"]}><EquityChart performance={performance}/></div>
+>>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
     </div>
 
     <div className={css["rail"]}>
