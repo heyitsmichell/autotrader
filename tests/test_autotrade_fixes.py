@@ -27,6 +27,7 @@ async def _pending(engine, mock_broker):
 # -- engine helper: auto vs approve vs kill switch --------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.slow
 async def test_auto_execute_run_places_in_auto_mode(test_engine, mock_broker, bullish_signal):
     run, _ = await _pending(test_engine, mock_broker)
     test_engine.trading_mode = "auto"

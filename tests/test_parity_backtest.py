@@ -123,6 +123,7 @@ def test_pullback_gate_is_mirrored_in_the_backtest_signal(test_settings):
 
 
 # ------------------------------------------------------------------ the manual script
+@pytest.mark.slow
 def test_manual_script_help_runs():
     r = subprocess.run([sys.executable, str(ROOT / "run_backtest_manual.py"), "--help"],
                        capture_output=True, text=True, timeout=120)
@@ -141,6 +142,7 @@ def test_manual_script_respects_matrix_env_override():
     assert "setdefault" in text and "'BACKTEST_ML_ENABLED'" not in text
 
 
+@pytest.mark.slow
 def test_run_backtest_manual_no_ml_forces_rules_only(test_settings, monkeypatch):
     spec = importlib.util.spec_from_file_location("rbm", ROOT / "run_backtest_manual.py")
     mod = importlib.util.module_from_spec(spec)
