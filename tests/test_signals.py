@@ -5,6 +5,7 @@ from pathlib import Path
 from conftest import db_tmpdir
 
 
+@pytest.mark.slow
 class TestSignals:
     """Test signal generation and consensus."""
 
@@ -156,6 +157,7 @@ class TestSignals:
             assert "Consensus for a BUY now" in desc
 
 @pytest.mark.asyncio
+@pytest.mark.slow
 async def test_refresh_with_market_regime_and_relative_strength(test_settings, mock_broker, test_db):
     """Regression (2026-11-25): with the regime filter / relative strength on, refresh() raised
     KeyError: -1 because indicators.features() returns a dict, not a list."""

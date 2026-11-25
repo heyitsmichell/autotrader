@@ -97,6 +97,7 @@ class TestFractionalShares:
     """Test fractional share trading functionality."""
 
     @pytest.mark.asyncio
+    @pytest.mark.slow
     async def test_fractional_buy_amount_order(self, fractional_engine, fractional_broker):
         """Test BUY with fractional shares using AMOUNT (dollar-based) order."""
         price = await fractional_broker.last_price("AAPL")
@@ -184,6 +185,7 @@ class TestFractionalShares:
         assert "below minimum precision" in r
 
     @pytest.mark.asyncio
+    @pytest.mark.slow
     async def test_fractional_no_bracket_orders(self, fractional_settings_with_brackets, tmp_data_dir):
         """Test that bracket orders are not used for fractional quantities when brackets enabled."""
         from app.broker import Broker

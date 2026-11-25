@@ -133,8 +133,9 @@ async def test_http400_other_still_pauses(test_settings, test_db, monkeypatch):
 # --- news refresh in the background -----------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_background_news_refresh_does_not_overlap_and_stamps_on_completion(test_settings, test_db):
+async def test_background_news_refresh_does_not_overlap_and_stamps_on_completion(test_settings, test_db, monkeypatch):
     e = _engine(test_settings, test_db, news_refresh_minutes=15)
+    monkeypatch.setattr(type(e), "NEWS_GRACE_SECONDS", 0.05)  # was a real 8 s wait
     gate = asyncio.Event()
     starts = []
 
