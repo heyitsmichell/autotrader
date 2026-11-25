@@ -1,0 +1,100 @@
+"use client";
+
+import Section from "@/components/ui/Section";
+import { useEffect, useMemo, useState } from "react";
+import type { Api } from "@/lib/api";
+import { money, num, signTone } from "@/lib/format";
+import type { ResultTrade, ResultTradesPayload } from "@/lib/types";
+import Empty from "@/components/ui/Empty";
+import Segmented from "@/components/ui/Segmented";
+import { sleeveColor } from "@/components/strategies/sleeveColors";
+import { shadowColor } from "@/components/strategies/shadowColors";
+import css from "./ResultsTables.module.css";
+
+type Strat = "all" | "swing" | "momentum" | "putwrite" | "vaa" | "shadows";
+const STRATS: [Strat, string][] = [["all", "All"], ["swing", "Swing"], ["momentum", "Momentum"], ["putwrite", "Put-write"], ["vaa", "VAA"], ["shadows", "Shadows"]];
+const NAMES: Record<string, string> = { swing: "Swing", momentum: "Momentum", putwrite: "Put-write", vaa: "VAA",
+  mom_skip1w: "Momentum, skip 1 week", overnight_mom: "Overnight momentum", vaa_g4: "VAA-G4",
+  swing_dynamic: "Swing, dynamic top-100" };
+const PAGE = 50;
+
+const when = (ts: string) => {
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+};
+const tone = (v: unknown) => { const t = signTone(v); return t === "positive" ? css["gain"] : t === "negative" ? css["loss"] : ""; };
+
+function Strategy({ t }: { t: ResultTrade }) {
+  const color = t.live ? sleeveColor(t.strategy) : shadowColor(t.strategy);
+  return <><i className={css["chip"]} style={{ background: color }}/>{NAMES[t.strategy] ?? t.strategy}
+    {!t.live && <span className={css["tag"]}>virtual</span>}</>;
+}
+
+export default function AllTrades({ api }: { api: Api }) {
+  const [strategy, setStrategy] = useState<Strat>("all");
+  const [includeFailed, setIncludeFailed] = useState(false);
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(0);
+  const [data, setData] = useState<ResultTradesPayload | null>(null);
+  const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    const load = () => api<ResultTradesPayload>(`/api/results/trades?strategy=${strategy}&days=90&include_failed=${includeFailed ? 1 : 0}&limit=500`)
+      .then(d => { if (live) { setData(d); setErr(false); } })
+      .catch(() => { if (live) setErr(true); });
+    load();
+    const t = window.setInterval(load, 60_000);
+    return () => { live = false; window.clearInterval(t); };
+  }, [api, strategy, includeFailed]);
+
+  const rows = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    return (data?.trades ?? []).filter(t => !s || (t.symbol ?? "").toLowerCase().includes(s));
+  }, [data, q]);
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+  const cur = Math.min(page, pages - 1);
+  const view = rows.slice(cur * PAGE, cur * PAGE + PAGE);
+  const counts = data?.counts ?? {};
+
+  return <Section title="All trades" meta="Every strategy, live and virtual"><div>
+    <div className={css["filters"]}>
+      <Segmented<Strat> label="Strategy" value={strategy} onChange={v => { setStrategy(v); setPage(0); }}
+        options={STRATS.map(([v, l]) => ({ value: v, label: counts[v] != null ? `${l} ${counts[v]}` : l }))}/>
+      <label className={css["toggle"]}><input type="checkbox" checked={includeFailed}
+        onChange={e => { setIncludeFailed(e.target.checked); setPage(0); }}/>Include failed</label>
+      <input type="search" placeholder="Symbol" aria-label="Search by symbol" value={q}
+        onChange={e => { setQ(e.target.value); setPage(0); }}/>
+    </div>
+    {err && !data && <p className={css["muted"]}>Trades are not available right now.</p>}
+    {data && rows.length === 0 && <Empty>No trades match these filters.</Empty>}
+    {rows.length > 0 && <>
+      <div className={`${css["scroll"]} ${css["wide"]}`}>
+        <table className={css["tbl"]}>
+          <thead><tr><th>Time</th><th className={css["l"]}>Strategy</th><th className={css["l"]}>Symbol</th><th className={css["l"]}>Side</th>
+            <th>Qty</th><th>Price</th><th>Value</th><th>P&L</th><th className={css["l"]}>Status</th><th className={css["l"]}>Reason</th></tr></thead>
+          <tbody>{view.map((t, i) => <tr key={`${t.ts}-${t.symbol}-${i}`}>
+            <td>{when(t.ts)}</td><td className={css["l"]}><Strategy t={t}/></td><td className={css["l"]}>{t.symbol}</td>
+            <td className={css["l"]}>{t.side}</td><td>{num(t.qty, 0)}</td><td>{money(t.price)}</td><td>{money(t.notional)}</td>
+            <td className={tone(t.pnl)}>{t.pnl == null ? "—" : money(t.pnl, { sign: true })}</td>
+            <td className={css["l"]}>{t.status}</td>
+            <td className={css["l"]}><span className={css["reason"]} title={t.reason ?? ""}>{t.reason || "—"}</span></td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+      <div className={css["cards"]}>
+        {view.map((t, i) => <div key={`${t.ts}-${t.symbol}-${i}`} className={css["card"]}>
+          <div><span><Strategy t={t}/> · {t.symbol}</span><span className={tone(t.pnl)}>{t.pnl == null ? "—" : money(t.pnl, { sign: true })}</span></div>
+          <div><span>{t.side} {num(t.qty, 0)} @ {money(t.price)}</span><span>{money(t.notional)}</span></div>
+          <div className={css["sub"]}><span>{when(t.ts)} · {t.status}</span></div>
+          {t.reason && <div className={css["sub"]} title={t.reason}><span>{t.reason.length > 80 ? `${t.reason.slice(0, 80)}…` : t.reason}</span></div>}
+        </div>)}
+      </div>
+      <div className={css["pager"]}>
+        <button type="button" disabled={cur === 0} onClick={() => setPage(cur - 1)}>Previous</button>
+        <span>Page {cur + 1} of {pages} ({rows.length} trades)</span>
+        <button type="button" disabled={cur >= pages - 1} onClick={() => setPage(cur + 1)}>Next</button>
+      </div>
+    </>}
+  </div></Section>;
+}

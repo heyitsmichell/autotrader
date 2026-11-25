@@ -40,6 +40,28 @@ def is_mutating_tool(name: str) -> bool:
 DEFAULT_MIN_INTERVALS = {"get_stock_bars": 0.35, "get_account_positions": 1.0}
 
 
+
+def sleeve_symbols(settings) -> list[str]:
+    """Symbols the multi-strategy sleeves may trade, so the Webull MCP server's symbol whitelist
+    accepts them: the S&P 500 list (momentum), the VAA ETFs and the put-write underlying.
+    Empty when sleeves are off. (2026-11-25: momentum/VAA/put-write orders were refused with
+    'symbol is not in the allowed whitelist' because only the swing universe was listed.)"""
+    if not getattr(settings, "sleeves_enabled", False):
+        return []
+    out: list[str] = []
+    try:
+        if getattr(settings, "sleeve_momentum_enabled", True):
+            from ..sleeves.data import sp500_symbols
+            out += sp500_symbols()
+        if getattr(settings, "sleeve_vaa_enabled", True):
+            from ..sleeves.strategies import vaa
+            out += list(vaa.G12) + list(vaa.DEFENSIVE)
+        if getattr(settings, "sleeve_putwrite_enabled", True):
+            out.append(str(getattr(settings, "sleeve_putwrite_underlying", "QQQ")).upper())
+    except Exception:  # noqa: BLE001 - never block broker start-up
+        log.warning("could not build the sleeve symbol whitelist", exc_info=True)
+    return [x.upper() for x in out if x]
+
 class CallSpacer:
     """Spaces calls of one tool: each caller reserves the next free slot and sleeps until it."""
 
@@ -126,7 +148,7 @@ class McpTransport:
             # settings.watchlist, otherwise the Webull server rejects names the engine allows.
             whitelist = list(dict.fromkeys(
                 self.settings.watchlist + [self.settings.core_symbol]
-                + self.settings.options_allowed_underlyings))
+                + self.settings.options_allowed_underlyings + sleeve_symbols(self.settings)))
             defaults = {
                 "WEBULL_TOKEN_DIR": str(ROOT / "conf"),
                 "WEBULL_AUDIT_LOG_FILE": str(LOG_DIR / "webull_audit.log"),

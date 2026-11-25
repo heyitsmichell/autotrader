@@ -667,3 +667,42 @@ export interface ShadowTrade {
   ts: string; symbol: string; side: string; qty: number; price: number | null; reason: string | null;
 }
 export interface ShadowDetail extends Shadow { holdings: ShadowHolding[]; trades: ShadowTrade[] }
+
+export interface ResultTrade {
+  ts: string; strategy: string; live: boolean; symbol: string; kind: string;
+  side: string; qty: number | null; price: number | null; notional: number | null; status: string;
+  pnl: number | null; reason: string | null; source: string;
+}
+export interface ResultTradesPayload { trades: ResultTrade[]; counts: Record<string, number> }
+export type PnlRow = { day: string } & Record<string, number | string | null>;
+export type PnlPeriods = Record<string, Record<string, number | null>>;
+export interface PnlPayload {
+  days: PnlRow[]; cumulative: PnlRow[]; periods: PnlPeriods;
+  shadows?: { days: PnlRow[]; cumulative?: PnlRow[]; periods?: PnlPeriods; names?: Record<string, string> };
+}
+
+// ---- Research tab (docs/RESEARCH_TAB.md) ----
+export interface ResearchBase { as_of?: string; error?: string }
+export interface MomentumRow { rank: number; symbol: string; score: number; held: boolean; held_qty?: number; in_target: boolean; gap_to_cutoff: number }
+export interface MomentumPayload extends ResearchBase { n_target?: number; rows?: MomentumRow[]; next_rebalance?: string; universe_n?: number }
+export interface VaaOffensive { symbol: string; score: number; rank?: number; bad: boolean }
+export interface VaaPayload extends ResearchBase {
+  B?: number; bad?: number; cash_fraction?: number; offensive?: VaaOffensive[]; defensive?: { symbol: string; score: number }[];
+  best_defensive?: string; allocation_if_today?: Record<string, number>; held?: Record<string, number>; next_rebalance?: string;
+}
+export interface PutwritePut {
+  symbol: string; strike: number; expiration: string; dte: number; contracts: number; premium_received: number;
+  mark: number | null; unrealized_pnl: number | null; delta: number | null; iv: number | null; prob_itm: number | null;
+  distance_pct: number | null; collateral: number; next_action?: string;
+}
+export interface PutwritePayload extends ResearchBase { underlying?: string; spot?: number | null; puts?: PutwritePut[]; cash?: number; rule?: string }
+export interface OverlapHolder { strategy: string; live: boolean; qty: number; value: number }
+export interface OverlapRow { symbol: string; total_value: number; pct_of_net: number; holders: OverlapHolder[] }
+export interface OverlapPayload extends ResearchBase { net_liq?: number; rows?: OverlapRow[]; shadow_overlap?: OverlapRow[] }
+export interface RegimePayload extends ResearchBase {
+  spy?: { last: number; sma50: number; sma200: number; above_200: boolean; ret_1m: number; ret_3m: number };
+  vix?: { last: number; pct_rank_1y: number };
+  breadth?: { pct_above_200: number; n: number };
+  vaa_bad?: number;
+  swing_gate?: { watched: number; eligible: number; pass: number; top_blockers?: { name: string; n: number }[] };
+}

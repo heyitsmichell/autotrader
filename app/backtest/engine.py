@@ -566,7 +566,8 @@ def run_backtest(settings: Settings, *,
                  reentry_cooldown_days: int = 0,
                  sec_fee_rate: float = 0.0,
                  taf_per_share: float = 0.0,
-                 taf_max: float = 8.30) -> BacktestResult:
+                 taf_max: float = 8.30,
+                 entry_allowed=None) -> BacktestResult:
     """Run a full backtest on the given universe.
 
     Args:
@@ -760,6 +761,8 @@ def run_backtest(settings: Settings, *,
             # A symbol closed today was still held at the prev-day-close signal, and an entry fills at
             # the open (before any intraday exit): re-entering it is impossible live. Cooldown extends this.
             if symbol in last_exit_i and i - last_exit_i[symbol] <= max(0, reentry_cooldown_days):
+                continue
+            if entry_allowed is not None and not entry_allowed(day, symbol):
                 continue
             prev_bar = price_maps[symbol].get(prev_day)
             if not prev_bar:

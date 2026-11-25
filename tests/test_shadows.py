@@ -118,7 +118,7 @@ async def test_rebalance_and_valuation_never_touch_order_methods(env):
     m, db = env.mgr, env.db
     await m.tick()
     assert m.last_error is None
-    for d in registry.SHADOWS:
+    for d in [x for x in registry.SHADOWS if x.monthly]:
         st = db.shadow_state(d.id)
         assert st["last_rebalance"] and st["cash"] >= 0
         hold = db.shadow_holdings(d.id)
@@ -240,7 +240,7 @@ async def test_api(tmp_path):
         app.state.db.record_shadow_equity(date.today().isoformat(), "vaa_g4", 123.0)
         async with make_client(app) as c:
             j = (await c.get("/api/shadows", headers=HDR)).json()
-            assert j["enabled"] is True and len(j["shadows"]) == 3
+            assert j["enabled"] is True and len(j["shadows"]) == len(registry.IDS)
             r = await c.get("/api/shadows/equity?days=30", headers=HDR)
             assert r.status_code == 200 and r.json()["series"][0]["vaa_g4"] == 123.0
             assert (await c.get("/api/shadows/vaa_g4", headers=HDR)).json()["holdings"] == []

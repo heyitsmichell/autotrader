@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+import re
 import time
 
 from ..quotes import Quote
 from .errors import BrokerError
 from .guard import is_opening_option
 from .parsers import parse_option_positions, parse_option_snapshot
+
+_OCC = re.compile(r"^([A-Z]{1,6})(\d{6})([CP])(\d{8})$")
+
+
+def order_symbol(symbol: str) -> str:
+    """The ``symbol`` Webull's option order tools expect: the UNDERLYING ticker. Strike, expiry
+    and call/put travel in their own fields. The app works with OCC codes everywhere, and sending
+    one as ``symbol`` made the MCP server refuse every option order ('symbol is not in the
+    allowed whitelist', 2026-11-25), since the whitelist holds tickers."""
+    m = _OCC.match(str(symbol or "").strip().upper())
+    return m.group(1) if m else symbol
 
 
 class OptionsMixin:
@@ -67,7 +79,7 @@ class OptionsMixin:
         """Preview a single-leg option order."""
         args = {
             "account_id": await self.account_id(),
-            "symbol": symbol,
+            "symbol": order_symbol(symbol),
             "side": side,
             "quantity": quantity,
             "option_type": option_type,
@@ -98,7 +110,7 @@ class OptionsMixin:
                     allow_when_killed=allow_when_killed)
         args = {
             "account_id": await self.account_id(),
-            "symbol": symbol,
+            "symbol": order_symbol(symbol),
             "side": side,
             "quantity": quantity,
             "option_type": option_type,
