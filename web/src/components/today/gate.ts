@@ -31,6 +31,7 @@ const TRADING = /option|call skipped|put skipped|order|fill|stop|proposal|block|
 export function isSystemEvent(message: string, level: string): boolean {
   if (level === "error" || level === "critical") return false;
   if (/reconcil|signals refreshed|research scan|deterministic run|scheduler started/i.test(message)) return true;
+  if (/rate-limited us|pausing (google news|webull news calls|it for)|news is failing/i.test(message)) return true;
   if (TRADING.test(message)) return false;
   return SYSTEM.test(message);
 }

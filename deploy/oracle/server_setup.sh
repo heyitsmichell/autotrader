@@ -62,6 +62,9 @@ ExecStart=$ROOT/.venv/bin/python $ROOT/scripts/trader.py run --no-sleep-prevent
 Restart=on-failure
 RestartSec=15
 TimeoutStopSec=60
+# SIGTERM only the app; it closes the Webull MCP child itself (control-group killed the child first,
+# so every loop errored until the SIGKILL)
+KillMode=mixed
 StandardOutput=append:$ROOT/data/trader.out.log
 StandardError=append:$ROOT/data/trader.err.log
 

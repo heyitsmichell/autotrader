@@ -234,6 +234,9 @@ def title_key(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", t)[:80]
 
 
+NASDAQ_RSS_URL = "https://www.nasdaq.com/feed/rssoutbound?symbol={symbol}"
+SEEKINGALPHA_RSS_URL = "https://seekingalpha.com/api/sa/combined/{symbol}.xml"
+BING_RSS_URL = "https://www.bing.com/news/search?q={query}&format=rss"
 YAHOO_RSS_URL = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US"
 
 
@@ -295,6 +298,9 @@ class SentimentEngine:
         self._google_sem: asyncio.Semaphore | None = None
         self._google_until = 0.0                       # monotonic time the 429 breaker closes
         self._rss_next: dict[str, float] = {}          # source -> earliest next request time
+        self._last_google_pass: float | None = None    # monotonic time of the last Google News pass
+        self._last_news_ok = time.monotonic()          # last refresh in which any source returned items
+        self._outage_alerted = False
         # LLM scoring: paused for a while after a provider failure; runs in the background.
         self._llm_until = 0.0
         self._llm_task: asyncio.Task | None = None
@@ -337,6 +343,8 @@ class SentimentEngine:
     async def _pace(self, source: str) -> None:
         """Space requests to one RSS host so a 56-symbol refresh is not a burst."""
         gap = float(getattr(self.s, "news_rss_spacing_seconds", 0.7))
+        if source == "google":
+            gap = float(getattr(self.s, "news_google_spacing_seconds", 2.5))
         if gap <= 0:
             return
         now = time.monotonic()
@@ -354,11 +362,30 @@ class SentimentEngine:
         template = getattr(self.s, "sentiment_yahoo_rss_url", "") or YAHOO_RSS_URL
         return await self._http_text(template.replace("{symbol}", quote_plus(symbol)))
 
+    def _bing_query(self, symbol: str) -> str:
+        suffix = getattr(self.s, "sentiment_rss_query_suffix", " stock")
+        return quote_plus(build_news_query(symbol, suffix, query_name_for(symbol)))
+
+    async def _nasdaq_news(self, symbol: str) -> str:
+        await self._pace("nasdaq")
+        template = getattr(self.s, "news_nasdaq_rss_url", "") or NASDAQ_RSS_URL
+        return await self._http_text(template.replace("{symbol}", quote_plus(symbol)))
+
+    async def _seekingalpha_news(self, symbol: str) -> str:
+        await self._pace("seekingalpha")
+        template = getattr(self.s, "news_seekingalpha_rss_url", "") or SEEKINGALPHA_RSS_URL
+        return await self._http_text(template.replace("{symbol}", quote_plus(symbol)))
+
+    async def _bing_news(self, symbol: str) -> str:
+        await self._pace("bing")
+        template = getattr(self.s, "news_bing_rss_url", "") or BING_RSS_URL
+        return await self._http_text(template.replace("{query}", self._bing_query(symbol)))
+
     def _google_breaker_open(self) -> bool:
         return time.monotonic() < self._google_until
 
     def _google_trip(self, err: Exception, retry_after: float = 0.0) -> None:
-        cooldown = max(float(getattr(self.s, "news_google_cooldown_minutes", 20.0)) * 60.0, retry_after)
+        cooldown = max(float(getattr(self.s, "news_google_cooldown_minutes", 30.0)) * 60.0, retry_after)
         already = self._google_breaker_open()
         self._google_until = time.monotonic() + cooldown
         if not already:                                 # one audit warning per trip
@@ -468,6 +495,9 @@ class SentimentEngine:
         news_interval = self.s.news_refresh_minutes * 60
         fetch_news = ((news_interval == 0) or (now_mono - self._last_news_refresh >= news_interval))             and not self._fetching
         sem = asyncio.Semaphore(max(1, self.s.news_concurrency))
+        google_gap = float(getattr(self.s, "news_google_refresh_minutes", 30)) * 60
+        google_due = self._last_google_pass is None or now_mono - self._last_google_pass >= google_gap
+        per_source: dict[str, int] = {}
 
         async def source_call(source: str, sym: str, coro_fn, gated: bool = True) -> list[dict]:
             """One source for one symbol: independent back-off, never raises. ``gated=False``
@@ -491,13 +521,21 @@ class SentimentEngine:
             if getattr(self.s, "news_webull_enabled", True):
                 names.append("webull")
                 jobs.append(source_call("webull", sym, lambda: self._fetch_webull(sym)))
-            if self.s.sentiment_rss_fallback:
+            if self.s.sentiment_rss_fallback and google_due:
                 names.append("google")
                 jobs.append(source_call("google", sym, lambda: self._fetch_google(sym, sem), gated=False))
             if self.s.sentiment_yahoo_rss:
                 names.append("yahoo")
                 jobs.append(source_call("yahoo", sym, lambda: self._fetch_rss(
                     sym, self._yahoo_news, "yahoo_rss", "Yahoo Finance")))
+            for key, label, fetcher, pub in (
+                    ("nasdaq", "nasdaq_rss", self._nasdaq_news, "Nasdaq"),
+                    ("seekingalpha", "seekingalpha_rss", self._seekingalpha_news, "Seeking Alpha"),
+                    ("bing", "bing_rss", self._bing_news, "Bing News")):
+                if getattr(self.s, f"news_{key}_enabled", True):
+                    names.append(key)
+                    jobs.append(source_call(key, sym, lambda f=fetcher, lb=label, p=pub: self._fetch_rss(
+                        sym, f, lb, p)))
             batches = await asyncio.gather(*jobs)
 
             # Webull first so its POSITIVE/NEGATIVE tag wins when the same story appears twice.
@@ -505,6 +543,7 @@ class SentimentEngine:
             stored = {n: 0 for n in names}
             cutoff = now_utc() - timedelta(hours=self.s.news_lookback_hours)
             for name, items in zip(names, batches):
+                per_source[name] = per_source.get(name, 0) + len(items)
                 for item in items:
                     st["fetched"] += 1
                     if not self._fresh_enough(item, cutoff):
@@ -535,6 +574,9 @@ class SentimentEngine:
                 # Only a COMPLETED fetch starts the interval; a cancelled one is retried next cycle
                 # (what it already stored per symbol is kept).
                 self._last_news_refresh = time.monotonic()
+                if self.s.sentiment_rss_fallback and google_due:
+                    self._last_google_pass = self._last_news_refresh
+                self._check_outage(st["fetched"], per_source)
             finally:
                 self._fetching = False
             self.ingest_stats = {**st, "at": now_utc().isoformat(timespec="seconds")}
@@ -552,6 +594,24 @@ class SentimentEngine:
             log.warning("local headline scoring failed: %s", e)
         if self.s.sentiment_llm if with_llm is None else with_llm:
             self._spawn_llm_scoring()
+
+    def _check_outage(self, fetched: int, per_source: dict[str, int]) -> None:
+        now = time.monotonic()
+        if fetched > 0:
+            if self._outage_alerted:
+                srcs = ", ".join(f"{k} {v}" for k, v in per_source.items() if v)
+                self.db.log("info", f"News is back: {fetched} headlines from {srcs}")
+            self._outage_alerted = False
+            self._last_news_ok = now
+            return
+        minutes = float(getattr(self.s, "news_outage_minutes", 60))
+        if not self._outage_alerted and now - self._last_news_ok > minutes * 60:
+            self._outage_alerted = True
+            paused = "yes" if self._google_breaker_open() else "no"
+            wb = "yes" if self._webull_breaker_open() else "no"
+            self.db.log("error", f"News is DOWN: no headlines from any source for "
+                                 f"{(now - self._last_news_ok) / 60:.0f} min (Google paused: {paused}, "
+                                 f"Webull paused: {wb})", alert=True)
 
     def _news_due(self) -> bool:
         interval = self.s.news_refresh_minutes * 60

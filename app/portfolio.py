@@ -109,6 +109,28 @@ def parse_position_rows(text: str) -> list[dict]:
     return rows
 
 
+def swing_rows(rows: list[dict], reserved: dict[str, float] | None) -> list[dict]:
+    """Position rows with the multi-strategy sleeves' shares removed (scaled value and P&L), so
+    Today's protection ladder lists swing positions only. Rows left at 0 shares drop out."""
+    if not reserved:
+        return rows
+    out = []
+    for r in rows:
+        held = float(r.get("qty") or 0)
+        res = float(reserved.get(r["symbol"], 0.0))
+        if res <= 0 or held <= 0:
+            out.append(r)
+            continue
+        left = held - res
+        if left < 1e-9:
+            continue
+        f = left / held
+        out.append({**r, "qty": left, "sleeve_qty": res,
+                    "market_value": round(r["market_value"] * f, 2) if r.get("market_value") is not None else None,
+                    "unrealized": round(r["unrealized"] * f, 2) if r.get("unrealized") is not None else None})
+    return out
+
+
 _ORDER_KEYS = {
     "Order ID": "order_id", "Symbol": "symbol", "Side": "side", "Status": "status",
     "Order Type": "order_type", "Total Quantity": "quantity", "Filled Quantity": "filled_qty",
@@ -156,6 +178,18 @@ class Portfolio:
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
 
+    def _sleeve_reserved(self) -> dict[str, float]:
+        try:
+            return self.db.sleeve_reserved()
+        except Exception:  # noqa: BLE001 - stub DBs / older schemas
+            return {}
+
+    def _sleeve_options(self) -> set[str]:
+        try:
+            return self.db.sleeve_option_symbols()
+        except Exception:  # noqa: BLE001
+            return set()
+
     async def snapshot(self, max_age: float = 5.0) -> dict:
         """Balance, positions and open orders (cached a few seconds)."""
         async with self._lock:
@@ -184,10 +218,11 @@ class Portfolio:
                 self._last_good_balance = balance
             snap = {
                 "balance": balance,
-                "positions": parse_position_rows(out["positions"]),
+                "positions": swing_rows(parse_position_rows(out["positions"]), self._sleeve_reserved()),
                 # Option holdings come from the same positions text (parse_position_rows keeps
-                # equities only); no extra broker call.
-                "option_positions": _option_rows(out["positions"]),
+                # equities only); no extra broker call. Sleeve-held contracts are listed by the sleeve.
+                "option_positions": [r for r in _option_rows(out["positions"])
+                                     if r["symbol"].upper() not in self._sleeve_options()],
                 "open_orders": parse_orders(out["orders"]),
                 "errors": out["errors"],
                 "raw": {k: out[k] for k in ("balance", "positions", "orders")},

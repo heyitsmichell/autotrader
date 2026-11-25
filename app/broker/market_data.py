@@ -202,6 +202,14 @@ class MarketDataMixin:
         return await self.call("get_open_orders", account_id=await self.account_id())
 
     async def positions(self, fresh: bool = False) -> dict[str, float]:
+        """Shares held per symbol, as the swing engine owns them: the shares the multi-strategy
+        sleeves hold (``reserved_positions``, set by the engine) are subtracted, so stops, exits,
+        flatten and reconcile never touch sleeve shares (docs/SLEEVES_ARCHITECTURE.md section 2)."""
+        raw = await self.positions_raw(fresh=fresh)
+        return subtract_reserved(raw, self.__dict__.get("reserved_positions"))
+
+    async def positions_raw(self, fresh: bool = False) -> dict[str, float]:
+        """Every share the broker reports, sleeves included."""
         text = await self.positions_text(fresh=fresh)
         return {} if text.startswith("No data") else parse_positions(text)
 
@@ -281,6 +289,27 @@ class MarketDataMixin:
 
     async def order_history_text(self) -> str:
         return await self.call("get_order_history", account_id=await self.account_id())
+
+
+def subtract_reserved(raw: dict[str, float], provider) -> dict[str, float]:
+    """``raw`` minus the sleeve-reserved shares from ``provider()``; symbols left at 0 drop out.
+    A provider failure leaves ``raw`` unchanged (logged): hiding swing shares would be worse."""
+    if provider is None:
+        return raw
+    try:
+        reserved = provider() or {}
+    except Exception:  # noqa: BLE001
+        log.warning("sleeve reserved positions unavailable; using raw broker positions", exc_info=True)
+        return raw
+    if not reserved:
+        return raw
+    out: dict[str, float] = {}
+    for sym, qty in raw.items():
+        left = qty - float(reserved.get(sym, 0.0)) if qty > 0 else qty
+        if qty > 0 and left < 1e-9:
+            continue
+        out[sym] = left
+    return out
 
 
 async def fresh_positions(broker) -> dict[str, float]:

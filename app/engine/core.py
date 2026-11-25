@@ -106,6 +106,13 @@ class CoreMixin:
             broker.set_guard_context(kill_switch=lambda: self.kill_switch, db=db)
         except AttributeError:  # test doubles without the guard API
             log.debug("broker has no set_guard_context")
+        # Multi-strategy sleeves: shares held by a sleeve are hidden from every swing code path
+        # (broker.positions() subtracts them). Harmless when no sleeve holds anything.
+        if hasattr(db, "sleeve_reserved"):
+            try:
+                broker.__dict__["reserved_positions"] = db.sleeve_reserved
+            except (AttributeError, TypeError):  # slotted test doubles
+                log.debug("broker cannot take reserved_positions")
         # Apply active lessons with guardrails
         self._apply_active_lessons()
 

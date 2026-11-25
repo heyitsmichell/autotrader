@@ -22,7 +22,7 @@ export function dataAgeTone(status: Status | null): "fresh" | "aging" | "stale" 
   return "fresh";
 }
 
-export type Tab = "today" | "options" | "research" | "learning" | "backtests" | "settings";
+export type Tab = "today" | "strategies" | "options" | "research" | "learning" | "backtests" | "settings";
 
 export default function TopBar({ status, busy, tab, onTab, onMode, onFlatten, onKill, onScheduler }: {
   status: Status | null;
@@ -39,6 +39,7 @@ export default function TopBar({ status, busy, tab, onTab, onMode, onFlatten, on
   const paused = !status?.scheduler_on;
   const tabs: [Tab, string][] = [
     ["today", "Today"],
+    ["strategies", "Strategies"],
     ["research", "Research"],
     ["learning", "Results"],
     ["backtests", "Backtests"],

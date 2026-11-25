@@ -168,4 +168,8 @@ class ProposalsRepo(BaseRepo):
                 f"SELECT client_order_id FROM {table} WHERE client_order_id IS NOT NULL "
                 f"AND {ns_where}", *ns_args)
             out.update(r["client_order_id"] for r in rows)
+        try:            # multi-strategy sleeve orders are ours too (never adopted as orphans)
+            out.update(self.sleeve_coids())  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - table missing on a stub DB
+            pass
         return out

@@ -322,6 +322,14 @@ class RiskManager:
                         "day P&L unavailable; cannot verify the daily loss limit, so no new "
                         "buys (fails closed)")
                 else:
+                    # multi-strategy sleeves: the swing limit applies to the swing sleeve only, so the
+                    # other sleeves' day P&L (provider set by SleeveManager) is taken out
+                    other = (getattr(broker, "__dict__", {}) or {}).get("sleeve_day_pnl")
+                    if other is not None:
+                        try:
+                            pnl -= float(other() or 0.0)
+                        except Exception:  # noqa: BLE001 - fall back to the account figure
+                            log.debug("sleeve day P&L unavailable", exc_info=True)
                     hit = pnl <= -s.max_daily_loss_usd
                     add("Daily loss", not hit,
                         f"day P&L ${pnl:,.2f} hit the ${s.max_daily_loss_usd:,.2f} daily loss "
