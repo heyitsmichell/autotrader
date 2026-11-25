@@ -2,11 +2,67 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException, Request
 
 from ..broker import BrokerError
 
 router = APIRouter()
+
+
+@router.get("/api/options/spreads")
+async def option_spreads(request: Request, days: int = 20):
+    """Logged option spreads by minutes from the open (see OPTIONS_SPREAD_LOG)."""
+    from ..engine.spread_log import summarize
+    st = request.app.state
+    days = max(1, min(int(days), 365))
+    rows = st.db.option_spreads(days)
+    return summarize(rows, st.settings.options_max_bid_ask_pct)
+
+
+def _model_payload(db, s) -> dict:
+    from .. import options_ml
+    m = options_ml.load_model()
+    recent = []
+    outcomes = {r["proposal_id"]: r for r in db.option_outcomes(200)}
+    for p in db.proposals(400):
+        if p.get("side") != "BUY" or str(p.get("position_intent") or "").upper() != "BUY_TO_OPEN":
+            continue
+        inst = p.get("instrument_json")
+        if isinstance(inst, str):
+            try:
+                inst = json.loads(inst)
+            except ValueError:
+                inst = {}
+        sel = (inst or {}).get("selection") or {}
+        if not sel:
+            continue
+        o = outcomes.get(p["id"])
+        recent.append({
+            "id": p["id"], "symbol": p["symbol"], "created_at": p.get("created_at"),
+            "status": p.get("status"), "ml_p": sel.get("ml_p") if sel.get("ml_version") else None,
+            "explore": bool(sel.get("explore")), "arm": sel.get("arm"),
+            "delta": sel.get("delta"), "dte": sel.get("dte"),
+            "ret": None if o is None else o.get("ret"),
+            "exit_reason": None if o is None else o.get("exit_reason"),
+        })
+        if len(recent) >= 15:
+            break
+    return {
+        "available": m is not None, "enabled": bool(s.options_ml_enabled),
+        "version": options_ml.model_version(), "trained_at": (m or {}).get("trained_at"),
+        "n_backtest": (m or {}).get("n_backtest"), "n_live": (m or {}).get("n_live"),
+        "val_auc": (m or {}).get("val_auc"), "baseline_win_rate": (m or {}).get("baseline_win_rate"),
+        "explore_pct": s.options_ml_explore_pct, "min_p": s.options_ml_min_p, "recent": recent,
+    }
+
+
+@router.get("/api/options/model")
+async def options_model(request: Request):
+    """The options ML (learning mode): model facts and the last 15 auto option predictions."""
+    st = request.app.state
+    return _model_payload(st.db, st.settings)
 
 
 @router.get("/api/options/chain")

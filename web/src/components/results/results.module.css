@@ -1,0 +1,19 @@
+.statsWrap { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 32px; align-items: start; }
+.statsMain { min-width: 0; }
+.statsHist { min-width: 0; }
+.exits { margin: 12px 0 0; font-size: 13px; color: var(--ink-2); }
+.muted { color: var(--ink-2); font-size: 13px; margin: 0; }
+.hist { margin: 0; }
+.hist svg { width: 100%; height: auto; display: block; margin-top: 6px; }
+.filters { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 0 0 8px; }
+.filters input { height: 34px; }
+.tableWrap { overflow-x: auto; }
+.more { margin-top: 12px; }
+@media (max-width: 900px) { .statsWrap { grid-template-columns: 1fr; gap: 16px; } }
+.gain { color: var(--gain); }
+.loss { color: var(--loss); }
+.dim { color: var(--ink-2); }
+.sub { font-size: 13px; font-weight: 500; color: var(--ink-2); margin: 24px 0 4px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 32px; margin: 8px 0 0; font-size: 13px; }
+.kv dt { color: var(--ink-2); }
+.kv dd { margin: 0; }

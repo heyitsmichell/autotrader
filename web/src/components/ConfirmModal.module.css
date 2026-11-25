@@ -1,14 +1,11 @@
-/* ConfirmModal styles (CSS Module). Shared primitives are global, in src/styles/. */
-
+/* ConfirmModal styles (CSS Module). */
 .confirm-body {
-  color: #c6d1d7;
-  font-size: 13px;
+  color: var(--ink);
+  font-size: 14px;
   line-height: 1.55;
   margin: 6px 0 14px;
 }
-.confirm-body p {
-  margin: 0 0 8px;
-}
+.confirm-body p { margin: 0 0 8px; }
 .confirm-body ul {
   margin: 6px 0 10px;
   padding-left: 20px;

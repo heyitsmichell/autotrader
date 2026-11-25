@@ -3,8 +3,19 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import Dialog from "./Dialog";
+import Section from "./ui/Section";
+import Segmented from "./ui/Segmented";
+import Mark from "./ui/Mark";
+import Empty from "./ui/Empty";
+import TradeStats from "./results/TradeStats";
+import OptionsModel from "./results/OptionsModel";
+import { money, num, pct } from "@/lib/format";
 import type { TradeLedgerEntry } from "@/lib/types";
 import css from "./TradeLedgerView.module.css";
+import rcss from "./results/results.module.css";
+
+const CAP = 25;
+const pnlCls = (v: number | null) => (v == null || v === 0 ? "" : v > 0 ? rcss["gain"] : rcss["loss"]);
 
 export default function TradeLedgerView() {
   const [trades, setTrades] = useState<TradeLedgerEntry[]>([]);
@@ -12,6 +23,7 @@ export default function TradeLedgerView() {
   const [selectedTrade, setSelectedTrade] = useState<TradeLedgerEntry | null>(null);
   const [statusFilter, setStatusFilter] = useState<"all" | "open" | "closed">("all");
   const [symbolFilter, setSymbolFilter] = useState("");
+  const [showAll, setShowAll] = useState(false);
 
   const [loadedFilter, setLoadedFilter] = useState<string | null>(null);
   const loading = loadedFilter !== statusFilter;
@@ -28,118 +40,56 @@ export default function TradeLedgerView() {
   const filteredTrades = trades.filter((t) =>
     symbolFilter === "" || t.symbol.toLowerCase().includes(symbolFilter.toLowerCase())
   );
-
-  const openTrades = filteredTrades.filter((t) => t.status === "open");
-  const closedTrades = filteredTrades.filter((t) => t.status === "closed");
-  const totalPnl = closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0);
-  const winCount = closedTrades.filter((t) => (t.realized_pnl_pct || 0) > 0).length;
-  const winRate = closedTrades.length > 0 ? (winCount / closedTrades.length * 100).toFixed(1) : "0.0";
+  const shown = showAll ? filteredTrades : filteredTrades.slice(0, CAP);
 
   return (
     <div className="trade-ledger-view">
-      <header className="view-header">
-        <h2>Trade Ledger</h2>
-        <div className="view-stats">
-          <span className="stat">Open: {openTrades.length}</span>
-          <span className="stat">Closed: {closedTrades.length}</span>
-          <span className="stat">Win Rate: {winRate}%</span>
-          <span className={`stat ${totalPnl >= 0 ? "positive" : "negative"}`}>
-            Total P&L: ${totalPnl.toFixed(2)}
-          </span>
+      <TradeStats />
+      <OptionsModel />
+      <Section title="Trades" meta={`${filteredTrades.length} shown`} rule right={
+        <div className={rcss["filters"]}>
+          <Segmented label="Status" value={statusFilter} onChange={setStatusFilter}
+            options={[{ value: "all", label: "All" }, { value: "open", label: "Open" }, { value: "closed", label: "Closed" }]} />
+          <input type="text" aria-label="Filter by symbol" placeholder="Symbol" value={symbolFilter}
+            onChange={(e) => setSymbolFilter(e.target.value)} />
         </div>
-      </header>
-
-      <div className="filters">
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}>
-          <option value="all">All</option>
-          <option value="open">Open</option>
-          <option value="closed">Closed</option>
-        </select>
-        <input
-          type="text"
-          placeholder="Filter by symbol..."
-          value={symbolFilter}
-          onChange={(e) => setSymbolFilter(e.target.value)}
-        />
-      </div>
-
-      {loading && <div className="loading">Loading trades…</div>}
-      {error && <div className="error">{error}</div>}
-
-      <table className={`${css["trades-table"]}`}>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Proposal</th>
-            <th>Symbol</th>
-            <th>Side</th>
-            <th>Status</th>
-            <th>Entry</th>
-            <th>Exit</th>
-            <th>Qty</th>
-            <th>P&L</th>
-            <th>P&L%</th>
-            <th>MAE</th>
-            <th>MFE</th>
-            <th>Hold</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {filteredTrades.map((trade) => (
-            <tr
-              key={trade.id}
-              className={selectedTrade?.id === trade.id ? "selected" : ""}
-              onClick={() => setSelectedTrade(trade)}
-            >
-              <td>#{trade.id}</td>
-              <td>#{trade.proposal_id}</td>
-              <td>{trade.symbol}</td>
-              <td className={trade.side === "BUY" ? "side-buy" : "side-sell"}>
-                {trade.side}
-              </td>
-              <td>
-                <span className={`status-badge status-${trade.status}`}>
-                  {trade.status}
-                </span>
-              </td>
-              <td>
-                {trade.entry_fill_price != null ? trade.entry_fill_price.toFixed(2) : "—"}
-                {trade.entry_fill_time && <> <br /><small>{new Date(trade.entry_fill_time).toLocaleString()}</small> </>}
-              </td>
-              <td>
-                {trade.exit_fill_price != null ? trade.exit_fill_price.toFixed(2) : "—"}
-                {trade.exit_fill_time && <> <br /><small>{new Date(trade.exit_fill_time).toLocaleString()}</small> </>}
-              </td>
-              <td>
-                {trade.quantity_filled != null ? trade.quantity_filled : trade.quantity_requested || "—"}
-                {trade.quantity_requested && trade.quantity_filled != null && trade.quantity_filled < trade.quantity_requested && (
-                  <span className="partial-fill"> (partial)</span>
-                )}
-              </td>
-              <td className={trade.realized_pnl != null && trade.realized_pnl > 0 ? "positive" : trade.realized_pnl != null && trade.realized_pnl < 0 ? "negative" : "neutral"}>
-                {trade.realized_pnl != null ? (trade.realized_pnl > 0 ? "+" : "") + trade.realized_pnl.toFixed(2) : "—"}
-              </td>
-              <td className={trade.realized_pnl_pct != null && trade.realized_pnl_pct > 0 ? "positive" : trade.realized_pnl_pct != null && trade.realized_pnl_pct < 0 ? "negative" : "neutral"}>
-                {trade.realized_pnl_pct != null ? (trade.realized_pnl_pct > 0 ? "+" : "") + trade.realized_pnl_pct.toFixed(2) + "%" : "—"}
-              </td>
-              <td className="negative">{trade.mae != null ? trade.mae.toFixed(2) + "%" : "—"}</td>
-              <td className="positive">{trade.mfe != null ? trade.mfe.toFixed(2) + "%" : "—"}</td>
-              <td>{trade.hold_seconds != null ? (trade.hold_seconds / 3600).toFixed(1) + "h" : "—"}</td>
-              <td>
-                <button className="button button-quiet" onClick={(e) => { e.stopPropagation(); setSelectedTrade(trade); }}>
-                  View
-                </button>
-              </td>
-            </tr>
-          ))}
-          {filteredTrades.length === 0 && (
-            <tr>
-              <td colSpan={14} className="empty">No trades found</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      }>
+        {loading && <p className="loading">Loading trades…</p>}
+        {error && <p className="error">{error}</p>}
+        {filteredTrades.length === 0 && !loading ? <Empty>No trades match. Trades appear here once the bot places an order.</Empty> : (
+          <div className={rcss["tableWrap"]}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th><th>Side</th><th>Status</th>
+                  <th className="num">Entry</th><th className="num">Exit</th><th className="num">Qty</th>
+                  <th className="num">P&amp;L</th><th className="num">Return</th><th className="num">Hold</th>
+                  <th>Exit reason</th><th />
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((t) => (
+                  <tr key={t.id} onClick={() => setSelectedTrade(t)}>
+                    <td>{t.symbol}</td>
+                    <td>{t.side}</td>
+                    <td><Mark tone={t.status === "open" ? "warn" : "neutral"}>{t.status}</Mark></td>
+                    <td className="num mono">{num(t.entry_fill_price)}</td>
+                    <td className="num mono">{num(t.exit_fill_price)}</td>
+                    <td className="num mono">{t.quantity_filled ?? t.quantity_requested ?? "—"}</td>
+                    <td className={`num mono ${pnlCls(t.realized_pnl)}`}>{money(t.realized_pnl, { sign: true })}</td>
+                    <td className={`num mono ${pnlCls(t.realized_pnl_pct)}`}>{pct(t.realized_pnl_pct)}</td>
+                    <td className="num mono">{t.hold_seconds != null ? `${num(t.hold_seconds / 86400, 1)} d` : "—"}</td>
+                    <td>{t.exit_reason || "—"}</td>
+                    <td><button className="button" onClick={(e) => { e.stopPropagation(); setSelectedTrade(t); }}>View</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {!showAll && filteredTrades.length > CAP &&
+          <button className={`button ${rcss["more"]}`} onClick={() => setShowAll(true)}>Show all {filteredTrades.length}</button>}
+      </Section>
 
       {selectedTrade && (
         <TradeDetail trade={selectedTrade} onClose={() => setSelectedTrade(null)} />
@@ -147,6 +97,7 @@ export default function TradeLedgerView() {
     </div>
   );
 }
+
 
 function TradeDetail({ trade, onClose }: { trade: TradeLedgerEntry; onClose: () => void }) {
   return (

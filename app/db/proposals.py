@@ -104,12 +104,19 @@ class ProposalsRepo(BaseRepo):
             f"SELECT COUNT(*) FROM proposals WHERE run_id=? AND {ns_where}", (run_id, *ns_args)
         ).fetchone()[0]
 
-    def count_placed_today(self) -> int:
+    def count_placed_today(self, asset_class: str | None = None) -> int:
+        """Orders placed today. ``asset_class`` "equity" counts stock orders only (option orders
+        have their own cap, OPTIONS_ENTRY_MAX_PER_DAY); "option" counts option OPENING orders."""
         ns_where, ns_args = self._ns_where()
         since = start_of_today_et_utc().isoformat(timespec="seconds")
+        extra = ""
+        if asset_class == "equity":
+            extra = "AND asset_class != 'option' "
+        elif asset_class == "option":
+            extra = "AND asset_class = 'option' AND side = 'BUY' "
         return self.conn.execute(
             f"SELECT COUNT(*) FROM proposals WHERE status IN ('placed','unknown','submitting') "
-            f"AND COALESCE(placed_at, created_at) >= ? AND {ns_where}",
+            f"{extra}AND COALESCE(placed_at, created_at) >= ? AND {ns_where}",
             (since, *ns_args),
         ).fetchone()[0]
 

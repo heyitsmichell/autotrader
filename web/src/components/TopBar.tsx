@@ -22,7 +22,7 @@ export function dataAgeTone(status: Status | null): "fresh" | "aging" | "stale" 
   return "fresh";
 }
 
-export type Tab = "today" | "options" | "research" | "learning" | "settings";
+export type Tab = "today" | "options" | "research" | "learning" | "backtests" | "settings";
 
 export default function TopBar({ status, busy, tab, onTab, onMode, onFlatten, onKill, onScheduler }: {
   status: Status | null;
@@ -40,8 +40,10 @@ export default function TopBar({ status, busy, tab, onTab, onMode, onFlatten, on
   const tabs: [Tab, string][] = [
     ["today", "Today"],
     ["research", "Research"],
-    ["learning", "Learning"],
-    ...(status?.settings?.options_enabled ? [["options", "Options"] as [Tab, string]] : []),
+    ["learning", "Results"],
+    ["backtests", "Backtests"],
+    // The manual option-chain tab was removed (2026-11-25): auto-entry picks contracts itself, and
+    // option positions/settings/spreads live on Today and Settings. OptionChain.tsx is kept.
     ["settings", "Settings"],
   ];
 
@@ -59,8 +61,21 @@ export default function TopBar({ status, busy, tab, onTab, onMode, onFlatten, on
     return () => window.removeEventListener("keydown", onKey);
   }, [onKill]);
 
+  const age = status?.data_age_seconds;
+  const ageTone = dataAgeTone(status);
+  const ageText = age == null ? null
+    : age < 90 ? `Prices ${Math.round(age)}s old`
+    : age < 5400 ? `Prices ${Math.round(age / 60)}m old`
+    : `Prices ${Math.round(age / 3600)}h old`;
+
   return <header className={`topbar ${css["bar"]}`}>
-    <b className={css["wordmark"]}>Trader</b>
+    <div className={css["brand"]}>
+      <svg className={css["mark"]} width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+        <path d="M3 15 H9 V9 H15 V4 H19" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
+        <path d="M3 19 H19" stroke="var(--ink-2)" strokeWidth="1.5" strokeLinecap="round"/>
+      </svg>
+      <b className={css["wordmark"]}>Trader</b>
+    </div>
     <nav className={css["tabs"]} role="tablist" aria-label="Views">
       {tabs.map(([t, label]) => <button
         key={t}
@@ -68,14 +83,16 @@ export default function TopBar({ status, busy, tab, onTab, onMode, onFlatten, on
         aria-selected={tab === t}
         className={`${css["tab"]} ${tab === t ? css["on"] : ""}`}
         onClick={() => onTab(t)}
-      >{label}</button>)}
+      ><span className={css["label"]}>{label}</span></button>)}
     </nav>
-    <div className={css["controls"]}>
+    {ageText && <span className={`${css["fresh"]} ${ageTone === "stale" ? css["stale"] : ""}`}
+      title="Age of the latest market data">{ageText}</span>}
+    <div className={`${css["controls"]} ${ageText ? "" : css["push"]}`}>
       <div className={css["mode"]} role="group" aria-label="Execution mode">
         <button aria-pressed={status?.trading_mode === "approve"} disabled={!status}
-          onClick={() => onMode("approve")}>Approve</button>
+          onClick={() => onMode("approve")}><span>Approve</span></button>
         <button aria-pressed={status?.trading_mode === "auto"} disabled={!status}
-          onClick={() => onMode("auto")}>Auto</button>
+          onClick={() => onMode("auto")}><span>Auto</span></button>
       </div>
       <button
         className="button"
@@ -84,7 +101,7 @@ export default function TopBar({ status, busy, tab, onTab, onMode, onFlatten, on
         onClick={() => onScheduler(paused)}
       >{paused ? "Resume" : "Pause"}</button>
       <button
-        className={`button ${css["danger"]} ${killOn ? css["is-on"] : ""}`}
+        className={`button danger ${killOn ? css["is-on"] : ""}`}
         disabled={busy}
         title={killOn ? "Release the kill switch (Shift+K)" : "Stop all new orders now (Shift+K)"}
         aria-pressed={killOn}
@@ -92,7 +109,7 @@ export default function TopBar({ status, busy, tab, onTab, onMode, onFlatten, on
         onClick={onKill}
       >{killOn ? "Release kill" : "Kill"}</button>
       <button
-        className={`button ${css["danger"]}`}
+        className="button danger"
         disabled={!status?.connected || busy || status?.flattening}
         title="Kill switch, cancel every open order, sell every position"
         onClick={onFlatten}

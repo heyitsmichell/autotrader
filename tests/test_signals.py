@@ -154,3 +154,21 @@ class TestSignals:
             await signals.refresh()
             desc = signals.describe()
             assert "Consensus for a BUY now" in desc
+
+@pytest.mark.asyncio
+async def test_refresh_with_market_regime_and_relative_strength(test_settings, mock_broker, test_db):
+    """Regression (2026-11-25): with the regime filter / relative strength on, refresh() raised
+    KeyError: -1 because indicators.features() returns a dict, not a list."""
+    import dataclasses
+    from app.signals import SignalService
+    from app.sentiment import SentimentEngine
+    from app.ml import MLFilter
+    from app.research import ResearchService
+
+    s = dataclasses.replace(test_settings, market_regime_filter_enabled=True,
+                            relative_strength_enabled=True)
+    svc = SignalService(s, mock_broker, test_db, SentimentEngine(s, mock_broker, test_db),
+                        MLFilter(s, test_db), ResearchService(s, mock_broker, test_db))
+    await svc.refresh()          # first pass fills the bars cache (SPY included)
+    sigs = await svc.refresh()   # second pass takes the cached-benchmark branch
+    assert len(sigs) == len(s.watchlist)

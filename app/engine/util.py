@@ -37,7 +37,8 @@ def normalize_proposal(args: dict) -> dict:
     # Preserve option-specific fields if present
     option_fields = [
         "option_type", "strike_price", "expiration_date", "position_intent",
-        "option_strategy", "legs"
+        "option_strategy", "legs", "underlying", "underlying_stop", "underlying_entry_close",
+        "selection"
     ]
     for field in option_fields:
         if field in args:

@@ -1,9 +1,12 @@
-/* ErrorBoundary styles (CSS Module). Shared primitives are global, in src/styles/. */
-
+/* ErrorBoundary styles (CSS Module). */
 .panel-error {
-  border-color: #7a2f36;
+  padding: 12px 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
-.panel-error h2 {
-  margin: 4px 0 6px;
-  font-size: 15px;
-}
+.panel-error p { margin: 0; color: var(--ink-2); font-size: 14px; }

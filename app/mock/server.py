@@ -387,7 +387,12 @@ async def get_option_snapshot(symbols: str, category: Optional[str] = None) -> s
             vol = 500
             oi = 5000
             # Mock Greeks
-            delta = 0.5 if opt_type == "CALL" else -0.5
+            # Black-Scholes-style delta (30% vol, 4% rate) so strike/delta selection is testable
+            _t = max((datetime.fromisoformat(exp).replace(tzinfo=timezone.utc)
+                      - datetime.now(timezone.utc)).days, 1) / 365
+            _d1 = (math.log(max(price_of(underlying), 0.01) / strike) + (0.04 + 0.045) * _t) / (0.30 * math.sqrt(_t))
+            delta = norm_cdf(_d1) if opt_type == "CALL" else norm_cdf(_d1) - 1
+            delta = max(-0.79, min(0.79, delta)) if abs(delta) > 0.79 else (delta if abs(delta) >= 0.21 else (0.21 if delta > 0 else -0.21))  # keep inside the gate range
             gamma = 0.02
             theta = -0.05
             vega = 0.10

@@ -1,0 +1,5 @@
+.kv { margin: 0 0 16px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 24px; }
+.kv > div { display: contents; }
+.kv dt, .kv dd { margin: 0; padding: 8px 0; border-bottom: 1px solid var(--rule); font-size: 13px; }
+.kv dt { color: var(--ink-2); }
+.sub { margin: 16px 0 8px; font-size: 14px; font-weight: 500; }

@@ -276,9 +276,9 @@ class OptionsFlowMixin:
         # Prepare extra fields for options
         extra = {
             "signal_id": None,
-            "sl": None,
+            "sl": p.get("underlying_stop"),     # the STOCK's stop; option_exits closes on it
             "tp": None,
-            "ml_p": None,
+            "ml_p": (p.get("selection") or {}).get("ml_p"),
             "consensus": gate["checks"],
             "risk_checks": [],
             "asset_class": "option",
@@ -292,6 +292,10 @@ class OptionsFlowMixin:
                 "expiration_date": p.get("expiration_date"),
                 "position_intent": p.get("position_intent"),
                 "multiplier": 100,
+                "underlying": p.get("underlying"),
+                "underlying_stop": p.get("underlying_stop"),
+                "underlying_entry_close": p.get("underlying_entry_close"),
+                "selection": p.get("selection"),
             }),
             "strategy_type": p.get("option_strategy", "SINGLE"),
             "legs": json.dumps(p.get("legs")) if p.get("legs") else None,

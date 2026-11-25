@@ -98,7 +98,7 @@ export default function Dialog({
           {eyebrow && <div className="eyebrow">{eyebrow}</div>}
           <h2 id={titleId}>{title}</h2>
         </div>
-        <button className="icon-button" aria-label="Close dialog" disabled={!dismissable} onClick={onClose}>×</button>
+        <button className="button" aria-label="Close dialog" disabled={!dismissable} onClick={onClose}>Close</button>
       </div>
       <div className="dialog-body">{children}</div>
       {footer && <div className={`${css["modal-actions"]}`}>{footer}</div>}

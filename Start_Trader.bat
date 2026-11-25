@@ -2,6 +2,11 @@
 setlocal EnableDelayedExpansion
 REM Double-click on Windows. First run installs everything; later runs just start.
 cd /d "%~dp0"
+if exist "PC_BOT_DISABLED" (
+  echo The bot runs on the Oracle server ^(ubuntu@168.107.87.233^). Starting it on this PC would run two bots on the same account. Delete PC_BOT_DISABLED to override.
+  pause
+  exit /b 1
+)
 set PYTHONUTF8=1
 if not exist ".venv\Scripts\python.exe" goto setup
 if not exist "web\out" goto setup

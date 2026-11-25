@@ -2,6 +2,7 @@
 
 import { dateTime, money } from "@/lib/format";
 import type { Learning, Status } from "@/lib/types";
+import Section from "./ui/Section";
 import css from "./SettingsPanel.module.css";
 
 export default function SettingsPanel({
@@ -27,21 +28,17 @@ export default function SettingsPanel({
   const hitRate = learning?.stats?.all?.hit_rate;
   const buysVsSpy = learning?.stats?.buys_vs_spy;
 
-  return <details className={`panel ${css["settings-panel"]}`}>
-    <summary>
-      <span><span className="eyebrow">REVIEWER NOTES & LEARNING</span><b>Reviewer notes (does not change trading) and outcome review</b></span>
-      <span className="muted">Expand</span>
-    </summary>
-    <div className={`${css["settings-grid"]}`}>
+  return <Section title="Reviewer notes" meta="Does not change trading">
+    <div className={css["grid"]}>
       <section>
-        <div className="panel-head">
+        <div className={css["head"]}>
           <div>
-            <h2>Strategy notes</h2>
-            <p className="muted">Reviewer notes (does not change trading). Given to the outcome review as context;
+            <h3>Strategy notes</h3>
+            <p className="muted">Given to the outcome review as context;
               the trading rules live in the settings and the code.</p>
           </div>
           <button
-            className="button button-quiet"
+            className="button"
             disabled={busy || !strategyLoaded}
             title={strategyLoaded ? undefined : "Not loaded yet: saving now would overwrite the file"}
             onClick={e => { e.preventDefault(); void onAction("Strategy notes saved", () => api("/api/strategy", "PUT", { text: strategy })); }}
@@ -51,42 +48,42 @@ export default function SettingsPanel({
           disabled={!strategyLoaded} placeholder={strategyLoaded ? "" : "Loading…"}/>
       </section>
       <section>
-        <div className="panel-head">
-          <div><h2>Learning loop</h2><p className="muted">Outcomes scored against forward price moves and SPY.</p></div>
-          <div className="inline-actions">
-            <button className="button button-quiet" disabled={busy} onClick={() => void onAction("Outcome scoring started", () => api("/api/learning/evaluate", "POST"))}>Score outcomes</button>
-            <button className="button button-quiet" disabled={busy} onClick={() => void onAction("Model review started", () => api("/api/learning/review", "POST"))}>Run review</button>
+        <div className={css["head"]}>
+          <div><h3>Learning loop</h3><p className="muted">Outcomes scored against forward price moves and SPY.</p></div>
+          <div className={css["actions"]}>
+            <button className="button" disabled={busy} onClick={() => void onAction("Outcome scoring started", () => api("/api/learning/evaluate", "POST"))}>Score outcomes</button>
+            <button className="button" disabled={busy} onClick={() => void onAction("Model review started", () => api("/api/learning/review", "POST"))}>Run review</button>
           </div>
         </div>
 
-        <div className="learning-health">
-          <div className="learning-stat"><span>Signals scored</span><b>{scoredSignals}</b></div>
-          <div className="learning-stat"><span>Proposals evaluated</span><b>{evaluated}</b></div>
-          <div className="learning-stat"><span>Review threshold</span><b>{minimum} outcomes</b></div>
-          <div className="learning-stat"><span>Last review</span><b>{dateTime(learning?.last_review?.created_at)}</b></div>
-          <div className="learning-stat"><span>Hit rate</span><b>{hitRate == null ? "Not enough data" : `${hitRate}%`}</b></div>
-          <div className="learning-stat"><span>BUY vs SPY</span><b>{buysVsSpy?.avg_buy_5d == null ? "Not enough data" : `${buysVsSpy.avg_buy_5d}% vs ${buysVsSpy.avg_spy_5d}%`}</b></div>
-        </div>
+        <dl className={css["stats"]}>
+          <div><dt>Signals scored</dt><dd className="num">{scoredSignals}</dd></div>
+          <div><dt>Proposals evaluated</dt><dd className="num">{evaluated}</dd></div>
+          <div><dt>Review threshold</dt><dd className="num">{minimum} outcomes</dd></div>
+          <div><dt>Last review</dt><dd className="num">{dateTime(learning?.last_review?.created_at)}</dd></div>
+          <div><dt>Hit rate</dt><dd className="num">{hitRate == null ? "Not enough data" : `${hitRate}%`}</dd></div>
+          <div><dt>BUY vs SPY</dt><dd className="num">{buysVsSpy?.avg_buy_5d == null ? "Not enough data" : `${buysVsSpy.avg_buy_5d}% vs ${buysVsSpy.avg_spy_5d}%`}</dd></div>
+        </dl>
 
-        {evaluated < minimum && <div className="inline-warning" role="note">
+        {evaluated < minimum && <p className={css["note"]} role="note">
           Not enough scored outcomes for a review yet: {evaluated} of {minimum} required.
           {scoredSignals > 0 ? ` ${scoredSignals} signal(s) are scored separately so blocked setups can be compared with acted ones.` : ""}
-        </div>}
+        </p>}
 
-        <h3 className={`${css["subhead"]}`}>Lesson notes</h3>
-        <p className="muted">Reviewer notes (does not change trading). Parameter changes go through the lessons table
-          (Learning tab), where each one needs approval and activation.</p>
+        <h3 className={css["subhead"]}>Lesson notes</h3>
+        <p className="muted">Parameter changes go through the lessons table
+          (Results tab), where each one needs approval and activation.</p>
         <textarea value={lessons} onChange={e => onLessons(e.target.value)} rows={8}
           placeholder={lessonsLoaded ? "No lesson notes saved yet." : "Loading…"} aria-label="Lesson notes" disabled={!lessonsLoaded}/>
-        <div className="actions-end">
-          <button className="button button-quiet" disabled={busy || !lessonsLoaded} onClick={() => void onAction("Lesson notes saved", () => api("/api/lessons", "PUT", { text: lessons }))}>Save lessons</button>
+        <div className={css["end"]}>
+          <button className="button" disabled={busy || !lessonsLoaded} onClick={() => void onAction("Lesson notes saved", () => api("/api/lessons", "PUT", { text: lessons }))}>Save lessons</button>
         </div>
       </section>
     </div>
-    <div className={`${css["settings-foot"]}`}>
+    <div className={css["foot"]}>
       <span>Model: {status?.model || "AI analyst"}</span>
       <span>Provider: {status?.provider || "—"}</span>
       <span>Estimated LLM spend today: {money(status?.cost_today_usd)}</span>
     </div>
-  </details>;
+  </Section>;
 }

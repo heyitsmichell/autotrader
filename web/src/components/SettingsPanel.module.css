@@ -1,60 +1,59 @@
 /* SettingsPanel styles (CSS Module). Shared primitives are global, in src/styles/. */
-.settings-panel {
-  margin-top: 14px;
-}
-.settings-panel summary {
-  list-style: none;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  cursor: pointer;
-}
-.settings-panel summary::-webkit-details-marker {
-  display: none;
-}
-.settings-panel summary span:first-child {
-  display: grid;
-  gap: 3px;
-}
-.settings-panel summary b {
-  font: 600 13px var(--display);
-}
-.settings-panel[open] summary {
-  padding-bottom: 15px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 15px;
-}
-.settings-grid {
+.grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 22px;
+  gap: 24px;
 }
-.settings-grid textarea {
+@media (max-width: 899px) {
+  .grid { grid-template-columns: 1fr; }
+}
+.grid h3 { margin: 0; font-size: 14px; font-weight: 500; }
+.grid p { margin: 2px 0 0; font-size: 13px; }
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.end { display: flex; justify-content: flex-end; margin-top: 8px; }
+.grid textarea {
   width: 100%;
   resize: vertical;
-  background: #0e151a;
-  color: #d4dde1;
-  border: 1px solid var(--line);
-  border-radius: 4px;
+  background: var(--page);
+  color: var(--ink);
+  border: 1px solid var(--control);
+  border-radius: var(--radius);
   padding: 10px;
-  font: 11px/1.6 var(--mono);
+  font: 13px/1.6 var(--mono);
 }
-@media (max-width: 580px) {
-  .settings-grid {
-    grid-template-columns: 1fr;
-  }
+.stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 24px;
+  margin: 0 0 12px;
 }
-.settings-foot {
+.stats > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 13px;
+}
+.stats dt { color: var(--ink-2); }
+.stats dd { margin: 0; text-align: right; }
+.note { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; }
+.subhead { margin: 16px 0 4px; }
+.foot {
   display: flex;
   gap: 18px;
   flex-wrap: wrap;
-  margin-top: 12px;
+  margin-top: 16px;
   padding-top: 10px;
-  border-top: 1px solid var(--line2);
-  color: var(--faint);
-  font: 11px var(--mono);
-}
-.subhead {
-  font: 700 var(--fs-md) var(--display);
-  margin: 14px 0 4px;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-2);
+  font-size: 12px;
 }

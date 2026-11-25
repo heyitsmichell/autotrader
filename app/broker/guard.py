@@ -61,10 +61,6 @@ def in_flatten_mode() -> bool:
     return _flatten.get()
 
 
-def is_opening_stock(side: str) -> bool:
-    return str(side).upper() == "BUY"
-
-
 def is_opening_option(position_intent: str | None, side: str | None = None) -> bool:
     intent = (position_intent or "").upper()
     if intent:

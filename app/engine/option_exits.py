@@ -33,18 +33,19 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, time as dtime
+from datetime import date, datetime, time as dtime, timedelta, timezone
 
 from ..broker import BrokerError
 from ..db import DuplicateProposalError
-from ..market import market_is_open, now_et, now_utc
+from ..market import is_trading_day, market_is_open, now_et, now_utc
 from ..quotes import Quote
 from .util import parse_occ
 
 log = logging.getLogger("app.engine")
 
 _OCC_FULL = re.compile(r"^[A-Z]{1,5}\d{6}[CP]\d{8}$")
-TRIGGER_PRIORITY = ("expiry_close", "dte", "stop", "take_profit")
+TRIGGER_PRIORITY = ("expiry_close", "dte", "underlying_stop", "underlying_time", "stop",
+                    "take_profit")
 
 
 @dataclass
@@ -98,15 +99,27 @@ def parse_close_time(raw: str) -> dtime:
 
 
 def evaluate_exit(settings, *, entry: float | None, mark: float | None, expiration: str | None,
-                  now: datetime, fresh_mark: bool = True) -> tuple[str, str] | None:
+                  now: datetime, fresh_mark: bool = True, underlying_px: float | None = None,
+                  underlying_stop: float | None = None,
+                  held_trading_days: int | None = None) -> tuple[str, str] | None:
     """The first exit trigger that fires, as ``(trigger, detail)``, else None. Pure.
 
     ``now`` is a timezone-aware ET datetime. ``fresh_mark`` False means the mark comes from a
     stale or missing quote: protective triggers (expiry, DTE, stop) still fire, a take profit
-    does not.
+    does not. ``underlying_px`` / ``underlying_stop`` (the stock's price and the stop saved at
+    entry) and ``held_trading_days`` drive the auto-entry exits; each is skipped when None.
     """
     s = settings
     fired: dict[str, str] = {}
+    if (getattr(s, "options_exit_underlying_stop", True) and underlying_px and underlying_stop
+            and underlying_px > 0 and underlying_stop > 0
+            and underlying_px <= underlying_stop + 1e-9):
+        fired["underlying_stop"] = (f"underlying {underlying_px:.2f} <= its stop "
+                                    f"{underlying_stop:.2f}")
+    max_hold = int(getattr(s, "exit_max_hold_days", 0) or 0)
+    if max_hold > 0 and held_trading_days is not None and held_trading_days >= max_hold:
+        fired["underlying_time"] = (f"held {held_trading_days} trading days >= "
+                                    f"time stop {max_hold}")
     if expiration:
         try:
             dte = (date.fromisoformat(expiration) - now.date()).days
@@ -165,6 +178,36 @@ class OptionExitManager:
             except Exception:  # noqa: BLE001
                 pass
         return rows
+
+    def entry_context(self, pos: HeldOption) -> tuple[float | None, str | None]:
+        """(underlying stop, entry timestamp) saved on the placed BUY_TO_OPEN proposal."""
+        try:
+            for r in self.db.proposals(100, pos.symbol):
+                if (r.get("side") == "BUY" and str(r.get("position_intent") or "").upper() ==
+                        "BUY_TO_OPEN" and r.get("status") in ("placed", "unknown")):
+                    sl = r.get("sl")
+                    return (float(sl) if sl else None), (r.get("placed_at") or r.get("created_at"))
+        except Exception:  # noqa: BLE001
+            pass
+        return None, None
+
+    @staticmethod
+    def trading_days_held(entry_ts: str | None, now: datetime) -> int | None:
+        """Trading days from the entry date to ``now`` (None when the entry is unknown)."""
+        if not entry_ts:
+            return None
+        try:
+            start = datetime.fromisoformat(str(entry_ts).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        d, end, n = start.astimezone(now.tzinfo).date(), now.date(), 0
+        while d < end:
+            d += timedelta(days=1)
+            if is_trading_day(d):
+                n += 1
+        return n
 
     def entry_price(self, pos: HeldOption) -> float | None:
         """Premium paid per contract (per share): the latest placed BUY_TO_OPEN proposal's limit
@@ -229,6 +272,11 @@ class OptionExitManager:
         self.last_run = time.time()
         rows = [r for r in await self.held_options() if r.qty]
         self.held = {r.symbol: r for r in rows}
+        try:        # leave a training record for every auto option trade that has closed
+            from .. import options_ml
+            options_ml.record_closed_outcomes(self.db, set(self.held), now_et().date())
+        except Exception as e:  # noqa: BLE001 - recording must never disturb exits
+            log.debug("option outcome recording skipped: %r", e)
         if not rows:
             return actions
         if not market_is_open():
@@ -269,8 +317,17 @@ class OptionExitManager:
         if mark is None:
             mark = pos.mark
             fresh = False
+        u_stop, entry_ts = self.entry_context(pos)
+        u_px = None
+        if u_stop and self.s.options_exit_underlying_stop:
+            try:
+                u_px = await self.broker.last_price(occ["underlying"])
+            except BrokerError:
+                u_px = None     # a missing stock price never blocks the other triggers
         hit = evaluate_exit(self.s, entry=entry, mark=mark, expiration=occ["expiration"],
-                            now=now, fresh_mark=fresh)
+                            now=now, fresh_mark=fresh, underlying_px=u_px, underlying_stop=u_stop,
+                            held_trading_days=(self.trading_days_held(entry_ts, now)
+                                               if u_stop else None))
         if hit is None:
             return None
         trigger, detail = hit

@@ -6,7 +6,7 @@
  * Live state (status, portfolio, proposals, events, kill, fill) arrives over the SSE mux
  * (`/api/stream`). Polling is the fallback, in tiers:
  *   fast tier  status, portfolio, proposals, events   10 s while the stream is down, 60 s resync otherwise
- *   slow tier  signals, runs, research, ml, performance   30 s
+ *   slow tier  signals, runs, ml, performance   30 s
  * Every setState is structural-equality guarded, so an identical payload never re-renders.
  * Every failed request counts toward the error banner, the portfolio included.
  */
@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type Api } from "@/lib/api";
 import { useHubStream } from "@/lib/stream";
 import type {
-  EventRow, Learning, MlStatus, Performance, Portfolio, Proposal, Research, Run, Signal, Status,
+  EventRow, Learning, MlStatus, Performance, Portfolio, Proposal, Run, Signal, Status,
 } from "@/lib/types";
 
 export type { Api };
@@ -46,7 +46,6 @@ export function useDashboardData() {
   const [proposals, setProposals] = useStable<Proposal[]>([]);
   const [runs, setRuns] = useStable<Run[]>([]);
   const [events, setEvents] = useStable<EventRow[]>([]);
-  const [research, setResearch] = useStable<Research | null>(null);
   const [ml, setMl] = useStable<MlStatus | null>(null);
   const [performance, setPerformance] = useStable<Performance | null>(null);
   const [learning, setLearning] = useStable<Learning | null>(null);
@@ -104,14 +103,13 @@ export function useDashboardData() {
       await Promise.all([
         track("signals", () => api<Signal[]>("/api/signals"), v => setSignals(asList(v))),
         track("runs", () => api<Run[]>("/api/runs"), v => setRuns(asList(v))),
-        track("research", () => api<Research>("/api/research?limit=30"), setResearch),
         track("ml", () => api<MlStatus>("/api/ml"), setMl),
         track("performance", () => api<Performance>("/api/performance"), setPerformance),
       ]);
     } finally {
       slowInFlight.current = false;
     }
-  }, [track, setSignals, setRuns, setResearch, setMl, setPerformance]);
+  }, [track, setSignals, setRuns, setMl, setPerformance]);
 
   const refreshMl = useCallback(
     () => track("ml", () => api<MlStatus>("/api/ml"), setMl), [track, setMl]);
@@ -207,7 +205,7 @@ export function useDashboardData() {
     : "";
 
   return {
-    mounted, status, portfolio, signals, proposals, runs, events, research, ml, learning,
+    mounted, status, portfolio, signals, proposals, runs, events, ml, learning,
     performance, strategy, setStrategy, lessons, setLessons, refresh, refreshMl, refreshLearning,
     api, error, failures, pendingCount, duplicateInstance,
     streamConnected: stream.connected,

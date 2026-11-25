@@ -29,6 +29,12 @@ GROUP_FIELDS: dict[str, tuple[str, ...]] = {
         "options_min_open_interest", "options_max_bid_ask_pct", "options_exit_stop_pct",
         "options_exit_take_profit_pct", "options_exit_dte", "options_expiry_close_time",
         "options_quote_max_age_seconds", "options_iv_rank_min_history",
+        "options_auto_entry", "options_entry_target_delta", "options_entry_target_dte",
+        "options_entry_max_premium_usd", "options_entry_max_open", "options_entry_max_per_day",
+        "options_entry_earnings_days", "options_entry_skip_open_close_minutes",
+        "options_ml_enabled", "options_ml_explore_pct", "options_ml_min_p",
+        "options_ml_retrain_days", "options_ml_live_weight",
+        "options_exit_underlying_stop", "options_spread_log", "options_spread_log_times",
     ),
     "MLSettings": (
         "ml_enabled", "ml_min_p", "ml_min_auc", "ml_history_bars", "ml_min_bars",

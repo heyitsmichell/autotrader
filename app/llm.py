@@ -21,11 +21,6 @@ GROQ_COOLDOWN_SECONDS = 60.0
 _groq_cooldown_until = 0.0
 
 
-def groq_cooldown_remaining() -> float:
-    """Return remaining cooldown seconds for Groq (0.0 if not in cooldown)."""
-    return max(0.0, _groq_cooldown_until - time.monotonic())
-
-
 def reset_groq_cooldown() -> None:
     """Reset the Groq rate-limit cooldown timer (useful for tests)."""
     global _groq_cooldown_until
@@ -265,17 +260,6 @@ def tool_calls(response: dict) -> list[dict]:
     if not choices:
         return []
     return (choices[0].get("message") or {}).get("tool_calls") or []
-
-
-def assistant_message(response: dict) -> dict:
-    choices = response.get("choices") or []
-    if not choices:
-        raise LLMError("LLM provider returned no completion choices")
-    message = choices[0].get("message") or {"role": "assistant", "content": ""}
-    # Keep only portable assistant fields. NVIDIA reasoning metadata is not part of
-    # the standard messages shape and can make the next Groq request fail validation.
-    return {key: message[key] for key in ("role", "content", "tool_calls", "function_call", "name")
-            if key in message}
 
 
 def parse_json_response(response: dict) -> dict:

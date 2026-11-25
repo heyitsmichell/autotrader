@@ -30,7 +30,7 @@ from ..sentiment import SentimentEngine
 from ..signals import SignalService
 from ..supervisor import Supervisor
 from ..yfinance_service import YahooFinanceService
-from . import auth, chart, controls, learning, ml, options, portfolio, proposals, research, status, stream
+from . import auth, chart, controls, experiments, learning, ml, options, portfolio, proposals, research, status, stream
 from .auth import install_auth, new_token, write_token_file
 
 setup_logging(files=False)          # console logging + redaction as early as import time
@@ -203,17 +203,13 @@ def create_app(lifespan=lifespan, web_dir: Path | None = None, token: str | None
     app = FastAPI(title="AI Trader", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.api_token = token or new_token()
     try:
-        app.state.trusted_hosts = frozenset(load_settings().trusted_hosts)
-    except ValueError:
-        raise
-    except Exception:  # noqa: BLE001 - settings problems surface at startup elsewhere
-        app.state.trusted_hosts = frozenset()
-    if app.state.trusted_hosts:
-        log.warning("UI/API also answer to TRUSTED_HOSTS: %s", ", ".join(sorted(app.state.trusted_hosts)))
-    install_auth(app)
+        trusted = load_settings().trusted_hosts
+    except Exception:  # noqa: BLE001 - never let a settings problem widen access
+        trusted = []
+    install_auth(app, trusted)
     for r in (auth.router, status.router, portfolio.router, proposals.router, options.router,
               learning.router, ml.router, research.router, controls.router, chart.router,
-              stream.router):
+              stream.router, experiments.router):
         app.include_router(r)
 
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE"], include_in_schema=False)

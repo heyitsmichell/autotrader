@@ -1,6 +1,6 @@
 "use client";
 
-import { dateTime, money, score } from "@/lib/format";
+import { dateTime, money, score, signed } from "@/lib/format";
 import { classifyProposal } from "@/lib/proposalStatus";
 import type { Proposal, ProposalDetail, Status } from "@/lib/types";
 import Dialog from "./Dialog";
@@ -16,7 +16,7 @@ export default function DecisionModal({ selected, detail, status, onClose }: {
   const option = selected.option_type != null;
   return <Dialog
     title={<>{selected.side} {selected.symbol}</>}
-    eyebrow={`DECISION RECORD · #${selected.id}`}
+    eyebrow={`Decision record · #${selected.id}`}
     size="lg"
     className={`${css["decision-modal"]}`}
     onClose={onClose}
@@ -42,10 +42,10 @@ export default function DecisionModal({ selected, detail, status, onClose }: {
           </div>}
           <div className={`${css["decision-columns"]}`}>
             <div>
-              <div className="eyebrow">TECHNICAL FACTORS</div>
+              <h3 className={css["sec"]}>Technical factors</h3>
               {(detail.signal?.ta_components || []).map(item => <div className={`${css["factor-row"]}`} key={item.name}>
                 <span>{item.name}<small>{item.note}</small></span>
-                <b className={Number(item.points) >= 0 ? "positive" : "negative"}>{Number(item.points) > 0 ? "+" : ""}{item.points}</b>
+                <b className={`mono ${Number(item.points) > 0 ? "positive" : Number(item.points) < 0 ? "negative" : ""}`}>{signed(item.points)}</b>
               </div>)}
               {!detail.signal?.ta_components?.length && <p className="muted">No stored TA factors for this proposal.</p>}
               <div className={`${css["detail-score"]}`}>
@@ -55,7 +55,7 @@ export default function DecisionModal({ selected, detail, status, onClose }: {
               </div>
             </div>
             <div>
-              <div className="eyebrow">NEWS SENTIMENT</div>
+              <h3 className={css["sec"]}>News sentiment</h3>
               <div className={`${css["sentiment-card"]}`}>
                 <b className={Number(detail.signal?.sent_score) >= 0 ? "positive" : "negative"}>{score(detail.signal?.sent_score)}</b>
                 <span>{detail.signal?.sent_n ?? 0} headlines · {status?.sentiment?.source || "configured source"}</span>
@@ -68,7 +68,7 @@ export default function DecisionModal({ selected, detail, status, onClose }: {
             </div>
           </div>
           <div className={`${css["gate-record"]}`}>
-            <div className="eyebrow">CONSENSUS CHECKS</div>
+            <h3 className={css["sec"]}>Consensus checks</h3>
             {(detail.signal?.consensus_checks || []).map(check => <div className={`${css["gate-record-row"]}`} key={check.name}>
               <span className={`no-arrow ${check.ok ? "positive" : "negative"}`} aria-label={check.ok ? "pass" : "fail"}>{check.ok ? "✓" : "×"}</span>
               <span><b>{check.name}</b><small>{check.detail}</small></span>

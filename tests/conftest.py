@@ -95,6 +95,17 @@ def set_test_market_time():
     os.environ.pop("TRADER_TEST_TIME", None)
 
 
+@pytest.fixture(autouse=True)
+def _restore_test_clock():
+    """Put the suite clock back after every test. Several tests move it with set_test_time()
+    (premarket, overnight) and never restore it, which made later files order-dependent
+    (e.g. test_bracket_orders.py failed after test_24h_trading.py)."""
+    import app.market as m
+    saved = m._test_time
+    yield
+    m.set_test_time(saved)
+
+
 @pytest.fixture(scope="session")
 def event_loop():
     """Create an event loop for the test session."""

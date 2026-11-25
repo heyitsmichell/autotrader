@@ -277,7 +277,9 @@ def _backtest_settings_with_overrides(overrides: dict) -> Settings:
         "MIN_SL_PCT": "0.5",
         "MAX_SL_PCT": "5.0",
     }.keys())
-    original_values = {k: os.environ.get(k) for k in keys_to_save}
+    # Restore override keys too: a key only in `overrides` (e.g. RELATIVE_STRENGTH_ENABLED) used to
+    # leak into os.environ for every later test in the session.
+    original_values = {k: os.environ.get(k) for k in set(keys_to_save) | set(overrides)}
     # Default test settings
     test_defaults = {
         "MAX_ORDER_QTY": "1000",
@@ -426,7 +428,10 @@ def test_backtest_trades_match_expected_pattern():
 
 def test_backtest_respects_gross_exposure():
     """Gross exposure cap limits concurrent positions."""
-    s = _backtest_settings_with_overrides({"BACKTEST_MAX_GROSS_EXPOSURE_PCT": "50.0", "BACKTEST_INITIAL_CASH": "10000.0"})
+    # BACKTEST_MIN_BARS=3: 50 synthetic bars (this used to pass only via an env value leaked by the
+    # previous test, before the helper restored override keys).
+    s = _backtest_settings_with_overrides({"BACKTEST_MAX_GROSS_EXPOSURE_PCT": "50.0",
+                                           "BACKTEST_INITIAL_CASH": "10000.0", "BACKTEST_MIN_BARS": "3"})
     # Create two symbols that both signal
     bars1 = _synthetic_bars(50, start_price=100.0, trend=0.001, seed=1)
     bars2 = _synthetic_bars(50, start_price=100.0, trend=0.001, seed=2)

@@ -6,7 +6,8 @@
  */
 
 import { memo, useEffect, useMemo, useState } from "react";
-import { countdown, dateTime, money, proposalExpiry } from "@/lib/format";
+import { countdown, money, num, occLabel, pct, proposalExpiry } from "@/lib/format";
+import { instrumentOf } from "./options/selection";
 import type { Api } from "@/lib/api";
 import type { Proposal, Status } from "@/lib/types";
 import css from "./ProposalCard.module.css";
@@ -63,15 +64,40 @@ export function Countdown({ expiresAt, onExpire }: { expiresAt: number; onExpire
 }
 
 function sizeText(p: Proposal): string {
+  if (isOptionProposal(p)) return `buy ${p.quantity}`;
   if (!isOptionProposal(p)) return `${p.quantity} share${p.quantity === 1 ? "" : "s"}`;
   const strike = p.strike_price != null ? money(p.strike_price) : "";
   return `${p.quantity} contract${p.quantity === 1 ? "" : "s"} ×${multiplierOf(p)} · ${strike} ${p.option_type || ""} exp ${p.expiration_date || "—"}`;
 }
 
+function OptionDetail({ p, settings }: { p: Proposal; settings?: Status["settings"] }) {
+  const sel = instrumentOf(p).selection;
+  const stop = instrumentOf(p).underlying_stop ?? p.sl;
+  const bits: string[] = [];
+  if (sel?.delta != null) bits.push(`${num(sel.delta, 2)}Δ`);
+  if (sel?.dte != null) bits.push(`${sel.dte} days`);
+  if (sel?.iv_rank != null) bits.push(`IV rank ${num(sel.iv_rank, 2)}`);
+  if (sel?.ml_version && sel?.ml_p != null) bits.push(`ML ${num(sel.ml_p, 2)}${sel.explore ? " · explore" : ""}`);
+  else if (sel?.explore) bits.push("explore");
+  if (sel?.spread_pct != null) bits.push(`spread ${pct(sel.spread_pct, { sign: false, digits: 1 })}`);
+  bits.push(`max loss ${money(p.limit_price * multiplierOf(p) * p.quantity)}`);
+  const exits: string[] = [];
+  if (stop != null && settings?.options_exit_underlying_stop !== false) exits.push(`underlying stop ${money(stop)}`);
+  if (settings?.options_exit_stop_pct) exits.push(`−${Math.round(settings.options_exit_stop_pct * 100)}% premium stop`);
+  if (settings?.options_exit_take_profit_pct) exits.push(`+${Math.round(settings.options_exit_take_profit_pct * 100)}% take-profit`);
+  const hold = Number(settings?.exit_max_hold_days);
+  if (hold > 0) exits.push(`${hold}-day time stop`);
+  return <>
+    <p className={`${css["gate"]} mono`}>{bits.join(" · ")}</p>
+    {exits.length > 0 && <p className={css["gate"]}>Exits: {exits.join(" · ")}</p>}
+  </>;
+}
+
 export const ProposalCard = memo(function ProposalCard({
-  p, ttl, duplicate, busy, api, onAction, onOpen, onApprove,
+  p, ttl, duplicate, busy, api, status, onAction, onOpen, onApprove,
 }: {
   p: Proposal;
+  status?: Status | null;
   ttl?: number;
   duplicate: boolean;
   busy: boolean;
@@ -96,41 +122,40 @@ export const ProposalCard = memo(function ProposalCard({
       .finally(() => setRequoting(false));
   };
 
-  return <article className={`${css["proposal-row"]} ${expired && !quote ? "expired" : ""}`}>
-    <div className={`${css["side-badge"]} ${p.side === "BUY" ? "buy" : "sell"}`}>{p.side}</div>
-    <div className={`${css["proposal-main"]}`}>
-      <div className={`${css["proposal-title"]}`}>
-        <b>{p.symbol}</b>
-        {isOptionProposal(p) && <span className={`${css["side-badge"]} option`}>{p.position_intent || "OPTION"}</span>}
-        <span>{sizeText(p)} @ {money(shown.limit_price)}</span>
-        <small>≈ {money(shown.limit_price * mult * p.quantity)} · {dateTime(p.created_at)}</small>
-      </div>
-      <p>{p.rationale || "No rationale supplied."}</p>
-      <div className={`${css["proposal-sub"]}`}>
-        <span>Confidence {p.confidence == null ? "—" : `${Math.round(p.confidence * 100)}%`}</span>
-        {expires != null && <Countdown expiresAt={expires} onExpire={() => setExpired(true)}/>}
-        {duplicate && <span className={`${css["expiry-chip"]} warn`}>Duplicate of a newer {p.symbol} {p.side}</span>}
-        <button className={`${css["text-button"]}`} onClick={() => onOpen(p)}>View decision record ↗</button>
-      </div>
-      {quoteError && <div className="inline-warning broker-warning" role="alert">{quoteError}</div>}
-      {quote && <div className={`${css["requote-box"]} ${quote.risk_ok ? "" : "failed"}`} role="status">
-        <div className={`${css["requote-title"]}`}>Re-quoted at the current price: review before approving</div>
-        <div className={`${css["requote-grid"]}`}>
-          <span>Limit</span><b>{money(quote.previous.limit_price)} → {money(quote.proposal.limit_price)}</b>
-          <span>Stop</span><b>{quote.proposal.sl == null ? "—" : `${money(quote.previous.sl)} → ${money(quote.proposal.sl)}`}</b>
-          <span>Target</span><b>{quote.proposal.tp == null ? "—" : `${money(quote.previous.tp)} → ${money(quote.proposal.tp)}`}</b>
-        </div>
-        {!quote.risk_ok && <div className="inline-warning">Re-quoted proposal still fails risk: {quote.reasons.join("; ") || "see proposal detail"}</div>}
-      </div>}
+  const gateLine = (p.rationale || "").split(/(?<=[.!?])\s/)[0] || "No rationale supplied.";
+  return <article className={`${css["item"]} ${expired && !quote ? "expired" : ""}`}>
+    <div className={css["line"]}>
+      <button className={css["sym"]} onClick={() => onOpen(p)} title="Open the decision record">{isOptionProposal(p) ? occLabel(p.symbol) : p.symbol}</button>
+      {isOptionProposal(p)
+        ? <span className="mono">· {p.side.toLowerCase()} {p.quantity} @ {money(shown.limit_price)}</span>
+        : <><span className={p.side === "BUY" ? css["buy"] : css["sell"]}>{p.side.toLowerCase()}</span>
+          <span className="mono">{sizeText(p)} @ {money(shown.limit_price)}</span></>}
     </div>
-    <div className={`${css["proposal-actions"]}`}>
-      <button className="button button-quiet" disabled={busy}
+    {isOptionProposal(p) && <OptionDetail p={shown} settings={status?.settings}/>}
+    <p className={css["gate"]}>{gateLine}{p.confidence != null && <> Confidence {Math.round(p.confidence * 100)}%.</>}</p>
+    <div className={css["sub"]}>
+      {expires != null && <Countdown expiresAt={expires} onExpire={() => setExpired(true)}/>}
+      {duplicate && <span className={css["expiry-chip"]}>Duplicate of a newer {p.symbol} {p.side}</span>}
+      <span>≈ {money(shown.limit_price * mult * p.quantity)}</span>
+    </div>
+    {quoteError && <div className="inline-warning broker-warning" role="alert">{quoteError}</div>}
+    {quote && <div className={`${css["requote-box"]} ${quote.risk_ok ? "" : "failed"}`} role="status">
+      <div className={css["requote-title"]}>Re-quoted at the current price: review before approving</div>
+      <div className={css["requote-grid"]}>
+        <span>Limit</span><b>{money(quote.previous.limit_price)} → {money(quote.proposal.limit_price)}</b>
+        <span>Stop</span><b>{quote.proposal.sl == null ? "—" : `${money(quote.previous.sl)} → ${money(quote.proposal.sl)}`}</b>
+        <span>Target</span><b>{quote.proposal.tp == null ? "—" : `${money(quote.previous.tp)} → ${money(quote.proposal.tp)}`}</b>
+      </div>
+      {!quote.risk_ok && <div className="inline-warning">Re-quoted proposal still fails risk: {quote.reasons.join("; ") || "see proposal detail"}</div>}
+    </div>}
+    <div className={css["actions"]}>
+      <button className="button" disabled={busy}
         onClick={() => void onAction(`Proposal #${p.id} dismissed`, () => api(`/api/proposals/${p.id}/dismiss`, "POST"))}>Dismiss</button>
-      {(expired || quote) && <button className="button button-quiet" disabled={busy || requoting} onClick={requote}>
+      {(expired || quote) && <button className="button" disabled={busy || requoting} onClick={requote}>
         {requoting ? "Re-quoting…" : "Re-quote"}
       </button>}
       <button
-        className="button button-primary"
+        className="button"
         disabled={busy || (expired && !quote)}
         title={expired && !quote ? "Expired proposals must be re-quoted before approval" : "Review and place this order"}
         onClick={() => onApprove({ proposal: shown, requote: quote, duplicate })}
@@ -139,7 +164,7 @@ export const ProposalCard = memo(function ProposalCard({
   </article>;
 });
 
-export default function ProposalQueue({ kind, proposals, status, api, busy, onAction, onOpen, onApprove, compact = false }: {
+export default function ProposalQueue({ kind, proposals, status, api, busy, onAction, onOpen, onApprove }: {
   kind: ProposalKind | "all";
   proposals: Proposal[];
   status: Status | null;
@@ -148,26 +173,20 @@ export default function ProposalQueue({ kind, proposals, status, api, busy, onAc
   onAction: (label: string, fn: () => Promise<unknown>) => Promise<void>;
   onOpen: (proposal: Proposal) => void;
   onApprove: (request: ApproveRequest) => void;
-  compact?: boolean;
+  compact?: boolean; // accepted for compatibility; layout no longer differs
 }) {
   const ttl = status?.limits?.proposal_ttl_minutes;
   const duplicates = useMemo(() => duplicateIds(proposals), [proposals]);
-  const title = kind === "option" ? "Pending option proposals" : kind === "equity" ? "Pending proposals" : "Action queue";
-  const eyebrow = kind === "option" ? "OPTION EXECUTION QUEUE" : kind === "equity" ? "EXECUTION QUEUE" : "NEEDS YOUR DECISION";
 
-  return <section className={`panel ${compact ? "action-queue" : ""}`} id={kind === "all" ? "action-queue" : `pending-${kind}`}>
-    <div className="panel-head">
-      <div><div className="eyebrow">{eyebrow}</div><h2>{title} <span className="count-pill">{proposals.length}</span></h2></div>
-      <span className="muted">Risk checks run again at approval</span>
-    </div>
+  return <section id={kind === "all" ? "action-queue" : `pending-${kind}`} aria-label="Pending proposals">
     {ttl == null && proposals.length > 0 && <div className="inline-warning" role="note">
       Proposal expiry is not configured, so stale proposals cannot be timed out on screen.
     </div>}
     {proposals.length === 0
-      ? <div className="empty-state"><span aria-hidden="true">✓</span><p>Nothing waiting for review</p></div>
-      : <div className={`${css["proposal-list"]}`}>
+      ? <p className="muted">Nothing waiting for review.</p>
+      : <div className={css["list"]}>
         {proposals.map(p => <ProposalCard key={p.id} p={p} ttl={ttl} duplicate={duplicates.has(p.id)} busy={busy}
-          api={api} onAction={onAction} onOpen={onOpen} onApprove={onApprove}/>)}
+          api={api} status={status} onAction={onAction} onOpen={onOpen} onApprove={onApprove}/>)}
       </div>}
   </section>;
 }

@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import type { Api } from "@/lib/api";
+import { money, num, pct, signed } from "@/lib/format";
 import { lastSma, PERIODS, periodReturn, type CloseBar } from "@/lib/indicators";
-import type { Signal } from "@/lib/types";
+import type { Signal, Status } from "@/lib/types";
+import Mark from "@/components/ui/Mark";
 import css from "./ChartRead.module.css";
 
-const sgn = (n: number, d = 2) => `${n >= 0 ? "+" : ""}${n.toFixed(d)}`;
-const cls = (n: number) => (n >= 0 ? css.pos : css.neg);
+const sign = (n: number) => (n > 0 ? css.pos : n < 0 ? css.neg : "");
 
 function useDaily(api: Api, symbol: string) {
   const [bars, setBars] = useState<{ symbol: string; bars: CloseBar[] } | null>(null);
@@ -22,12 +23,43 @@ function useDaily(api: Api, symbol: string) {
   return bars && bars.symbol === symbol ? bars.bars : null;
 }
 
-export default function ChartRead({ symbol, signal, api, price, benchmark }: {
-  symbol: string; signal?: Signal; api: Api; price: number | null; benchmark: string;
+/** Next earnings date from the cached Yahoo summary; null when unknown. */
+function useEarnings(api: Api, symbol: string) {
+  const [e, setE] = useState<{ symbol: string; date: string | null } | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (!symbol) return;
+    api<{ earnings_date?: string | null }>(`/api/yfinance/${encodeURIComponent(symbol)}`)
+      .then(d => { if (live) setE({ symbol, date: d.earnings_date || null }); })
+      .catch(() => { if (live) setE({ symbol, date: null }); });
+    return () => { live = false; };
+  }, [api, symbol]);
+  return e && e.symbol === symbol ? e.date : null;
+}
+
+const fmtDate = (iso: string) => {
+  const d = new Date(`${iso.slice(0, 10)}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+};
+
+function KV({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div className={css.kv}><span className={css.k}>{label}</span><span className={css.v}>{children}</span></div>;
+}
+
+const minus = (t: string) => t.replace(/(^|[\s(])-(?=\d)/g, "$1−");
+
+export default function ChartRead({ symbol, signal, api, price, benchmark, status }: {
+  symbol: string; signal?: Signal; api: Api; price: number | null; benchmark: string; status: Status | null;
 }) {
   const hasSpy = !!benchmark;   // SPY, or SPYM (same S&P 500 index) when SPY is not on the watchlist
   const bars = useDaily(api, symbol);
   const spy = useDaily(api, hasSpy && symbol !== benchmark ? benchmark : "");
+  const earnings = useEarnings(api, symbol);
+  const [now] = useState(() => Date.now());
+  const blackout = status?.settings?.eligibility_earnings_blackout_days ?? null;
+  const earnLabel = earnings ? fmtDate(earnings) : null;
+  const earnDays = earnings ? Math.round((new Date(`${earnings.slice(0, 10)}T12:00:00`).getTime() - now) / 86400000) : null;
+  const inWindow = earnDays != null && blackout != null && earnDays >= 0 && earnDays <= blackout;
   const s = signal;
   const comps = s?.ta_components || [];
   const checks = s?.consensus_checks || [];
@@ -50,40 +82,52 @@ export default function ChartRead({ symbol, signal, api, price, benchmark }: {
       {!s ? <p className={css.muted}>No signal yet for {symbol}.</p> : <>
         <p>
           Trend is <b>{s.trend || "unknown"}</b>{s.strength ? `, ${s.strength} strength` : ""}.
-          {s.ta_score != null && <> Technical score <b className={cls(s.ta_score)}>{sgn(s.ta_score)}</b>.</>}
+          {s.ta_score != null && <> Technical score <b className={`${css.mono} ${sign(s.ta_score)}`}>{signed(s.ta_score)}</b>.</>}
         </p>
         {(s.features?.rsi14 != null || s.features?.pct_from_high10 != null) && <p className={css.muted}>
           {s.features?.rsi14 != null && <>RSI {Number(s.features.rsi14).toFixed(0)}{Number(s.features.rsi14) > 70 ? " (stretched)" : Number(s.features.rsi14) < 30 ? " (oversold)" : ""}. </>}
           {s.features?.pct_from_high10 != null && <>{Math.abs(Number(s.features.pct_from_high10)).toFixed(1)}% below the 10-day high.</>}
         </p>}
+        {earnLabel && (inWindow
+          ? <p style={{ color: "var(--warn)" }}>Earnings in {earnDays} {earnDays === 1 ? "day" : "days"} · entries blocked</p>
+          : <p className={css.muted}>Earnings {earnLabel}{blackout ? ` · entries blocked within ${blackout} days` : ""}</p>)}
         {comps.length > 0 && <ul className={css.list}>{comps.map((c, i) =>
-          <li key={i} className={css.row}><span>{c.note || c.name}</span><span className={cls(c.points ?? 0)}>{sgn(c.points ?? 0)}</span></li>)}</ul>}
+          <li key={i} className={css.comp}>
+            <span className={css.compText}>
+              <span>{c.name || "Component"}</span>
+              {c.note && <span className={css.sub}>{c.note}</span>}
+            </span>
+            <span className={`${css.mono} ${sign(c.points ?? 0)}`}>{signed(c.points ?? 0)}</span>
+          </li>)}</ul>}
       </>}
     </section>
     {s && <section>
       <h3>Decision</h3>
-      <p className={failing ? css.warn : css.pos}>
-        {failing ? `Blocked: ${failing.detail || failing.name}` : s.consensus ? `Consensus: ${s.consensus}` : "No consensus result yet."}
+      <p className={css.decision}>
+        {s.consensus || failing
+          ? <Mark tone={failing || s.consensus === "blocked" ? "loss" : "gain"}>{failing || s.consensus === "blocked" ? "Blocked" : "Pass"}</Mark>
+          : <Mark>Waiting</Mark>}
+        <span>{failing ? minus(failing.detail || failing.name) : s.consensus ? "All checks clear" : "No consensus result yet."}</span>
       </p>
       {checks.length > 0 && <p className={css.muted}>{checks.filter(c => c.ok).length} of {checks.length} checks pass.</p>}
-      {s.ml_p != null && <p>Model probability <b>{(s.ml_p * 100).toFixed(0)}%</b>.</p>}
-      {s.sl ? <ul className={css.list}>
-        <li className={css.row}><span>Stop</span><span>${s.sl.toFixed(2)}</span></li>
-        {s.tp ? <li className={css.row}><span>Target</span><span>${s.tp.toFixed(2)}</span></li> : null}
-        {risk != null && risk > 0 && <li className={css.row}><span>Risk per share</span><span>${risk.toFixed(2)}</span></li>}
-        {risk != null && risk > 0 && reward != null && reward > 0 && <li className={css.row}><span>Reward to risk</span><span>{(reward / risk).toFixed(2)} : 1</span></li>}
-      </ul> : <p className={css.muted}>No stop or target set.</p>}
+      {s.ml_p != null && <p>Model probability <b className={css.mono}>{(s.ml_p * 100).toFixed(0)}%</b>.</p>}
+      {s.sl ? <div className={css.kvs}>
+        <KV label="Stop">{money(s.sl)}</KV>
+        <KV label="Target">{s.tp ? money(s.tp) : "—"}</KV>
+        <KV label="Risk per share">{risk != null && risk > 0 ? money(risk) : "—"}</KV>
+        <KV label="Reward to risk">{risk != null && risk > 0 && reward != null && reward > 0 ? `${num(reward / risk)} : 1` : "—"}</KV>
+      </div> : <p className={css.muted}>No stop or target set.</p>}
     </section>}
     <section>
       <h3>Momentum context</h3>
-      {bars == null ? <p className={css.muted}>Loading daily history…</p> : bars.length === 0 ? <p className={css.muted}>Daily history unavailable.</p> : <ul className={css.list}>
+      {bars == null ? <p className={css.muted}>Loading daily history…</p> : bars.length === 0 ? <p className={css.muted}>Daily history unavailable.</p> : <div className={css.kvs}>
         {rets.map(([label, d]) => { const r = periodReturn(bars, d);
-          return <li key={label} className={css.row}><span>{label} return</span>{r == null ? <span className={css.muted}>not enough history</span> : <span className={cls(r)}>{sgn(r, 1)}%</span>}</li>; })}
+          return <KV key={label} label={`${label} return`}>{r == null ? <span className={css.muted}>—</span> : <span className={sign(r)}>{pct(r, { digits: 1 })}</span>}</KV>; })}
         {symbol !== benchmark && ([["3-month", PERIODS.m3], ["6-month", PERIODS.m6]] as const).map(([label, d]) => { const r = rel(d);
-          return <li key={`rs${label}`} className={css.row}><span>{label} vs {benchmark || "SPY"}</span>{r == null ? <span className={css.muted}>{hasSpy ? "unavailable" : "no S&P 500 ETF on the watchlist"}</span> : <span className={cls(r)}>{sgn(r, 1)} pts</span>}</li>; })}
-        <li className={css.row}><span>Versus 200-day average</span>{ma200 == null || last == null ? <span className={css.muted}>not enough history</span> :
-          <span className={cls(last - ma200)}>{sgn((last / ma200 - 1) * 100, 1)}% ({last > ma200 ? "above" : "below"})</span>}</li>
-      </ul>}
+          return <KV key={`rs${label}`} label={`${label} vs ${benchmark || "SPY"}`}>{r == null ? <span className={css.muted} title={hasSpy ? "unavailable" : "no S&P 500 ETF on the watchlist"}>—</span> : <span className={sign(r)}>{signed(r, 1)} pts</span>}</KV>; })}
+        <KV label="Versus 200-day average">{ma200 == null || last == null ? <span className={css.muted}>—</span> :
+          <span className={sign(last - ma200)}>{pct((last / ma200 - 1) * 100, { digits: 1 })} ({last > ma200 ? "above" : "below"})</span>}</KV>
+      </div>}
       <p className={css.muted}>Medium-term momentum and relative strength were the only robust signals in our research.</p>
     </section>
   </aside>;

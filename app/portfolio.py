@@ -58,6 +58,27 @@ def parse_balance(text: str) -> dict:
     return out
 
 
+def _option_rows(text: str) -> list[dict]:
+    """Option positions from the positions text, using the same one-row-per-line parser the
+    option exit manager relies on (broker.parsers.parse_option_positions expects a block layout
+    the broker does not print). [] on any problem: the dashboard must not break on an odd row."""
+    try:
+        from .engine.option_exits import parse_held_options
+        from .engine.util import parse_occ
+        rows = []
+        for h in parse_held_options(text or ""):
+            occ = parse_occ(h.symbol) or {}
+            upl = (round((h.mark - h.cost) * h.qty * 100, 2)
+                   if h.mark is not None and h.cost is not None else None)
+            rows.append({"symbol": h.symbol, "underlying": occ.get("underlying"),
+                         "option_type": occ.get("option_type"), "strike": occ.get("strike"),
+                         "expiration": occ.get("expiration"), "qty": h.qty,
+                         "cost_basis": h.cost, "mark_price": h.mark, "unrealized_pnl": upl})
+        return rows
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def parse_position_rows(text: str) -> list[dict]:
     rows = []
     for line in text.splitlines():
@@ -164,6 +185,9 @@ class Portfolio:
             snap = {
                 "balance": balance,
                 "positions": parse_position_rows(out["positions"]),
+                # Option holdings come from the same positions text (parse_position_rows keeps
+                # equities only); no extra broker call.
+                "option_positions": _option_rows(out["positions"]),
                 "open_orders": parse_orders(out["orders"]),
                 "errors": out["errors"],
                 "raw": {k: out[k] for k in ("balance", "positions", "orders")},

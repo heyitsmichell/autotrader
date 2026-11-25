@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .db import DB
 
 # Evidence categories for causes
 CAUSE_CATEGORIES = {
@@ -390,10 +389,3 @@ Evidence-Based Causes (ranked by strength):
 Narrate this autopsy for the trader. Explain what the evidence shows about process vs outcome.
 Do NOT add causes not listed above. Be concise and factual.
 """.strip()
-
-
-async def generate_llm_narration(db: DB, trade: dict, causes: list[Cause]) -> str:
-    """Generate LLM narration for autopsy (optional)."""
-    # This would call the LLM, but for now return the formatted prompt
-    # The actual LLM call would be in the learning/review loop
-    return format_autopsy_for_llm(trade, causes)

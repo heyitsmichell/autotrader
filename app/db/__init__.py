@@ -16,6 +16,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from .atm_iv import AtmIvRepo
+from .option_spreads import OptionSpreadsRepo
+from .option_outcomes import OptionOutcomesRepo
 from .autopsies import AutopsiesRepo
 from .base import BaseRepo
 from .connection import LockedConnection, connect
@@ -43,7 +45,8 @@ __all__ = [
 
 
 class DB(EventsRepo, KvRepo, RunsRepo, ProposalsRepo, SignalsRepo, EquityRepo, ProtectiveRepo,
-         MLRepo, ReviewsRepo, ResearchRepo, LedgerRepo, AutopsiesRepo, LessonsRepo, AtmIvRepo,
+         MLRepo, ReviewsRepo, ResearchRepo, LedgerRepo, AutopsiesRepo, LessonsRepo, AtmIvRepo, OptionSpreadsRepo,
+         OptionOutcomesRepo,
          MaintenanceRepo, NotifyMixin, BaseRepo):
     def __init__(self, path: Path, broker_mode: str = "mock",
                  webull_environment: str | None = None, account_id: str | None = None) -> None:

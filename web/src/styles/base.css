@@ -15,15 +15,25 @@ body {
 button {
   font: inherit;
 }
-input {
+input, textarea, select {
   font: inherit;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--control);
+  border-radius: 6px;
 }
-textarea {
-  font: inherit;
+input[type=text], input[type=search], input:not([type]), select {
+  height: 34px;
+  padding: 0 10px;
 }
-select {
-  font: inherit;
+textarea { padding: 8px 10px; }
+input::placeholder, textarea::placeholder { color: var(--muted); }
+input[type=text]:focus-visible, input[type=search]:focus-visible, input:not([type]):focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
 }
+select option { background: var(--page); color: var(--ink); }
 button {
   color: inherit;
 }
@@ -147,7 +157,6 @@ button {
 }
 .eyebrow {
   font: 11px var(--mono);
-  letter-spacing: 0.13em;
   color: var(--faint);
 }
 .reconnect {
@@ -160,7 +169,6 @@ button {
 .metric-value {
   display: block;
   font: 700 23px/1.25 var(--display);
-  letter-spacing: -0.04em;
   margin-top: 8px;
 }
 .positive {
@@ -184,7 +192,6 @@ button {
 }
 .panel-head h2 {
   font: 700 15px var(--display);
-  letter-spacing: -0.02em;
   margin: 3px 0 0;
 }
 .panel-head p {
@@ -211,7 +218,6 @@ th {
   text-align: left;
   color: var(--faint);
   font: 11px var(--mono);
-  letter-spacing: 0.08em;
   padding: 8px 9px;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
@@ -236,7 +242,6 @@ td small {
   display: inline-block;
   border-radius: 3px;
   padding: 2px 6px;
-  text-transform: uppercase;
   font: 11px var(--mono);
   color: #aeb9c0;
   background: #202a30;
@@ -261,7 +266,6 @@ td small {
   color: #aab7bd;
   background: #172128;
   font: 11px var(--mono);
-  text-transform: uppercase;
   white-space: nowrap;
 }
 .status-chip.placed {
@@ -480,7 +484,6 @@ td small {
 }
 .confirm-type b {
   color: #ffc9ca;
-  letter-spacing: 0.08em;
 }
 .confirm-type input {
   background: #0d1418;
@@ -489,7 +492,6 @@ td small {
   color: var(--text);
   padding: 8px 10px;
   font: 12px var(--mono);
-  letter-spacing: 0.08em;
 }
 .confirm-type input:focus {
   outline: none;
@@ -512,7 +514,6 @@ td small {
 .learning-stat span {
   color: var(--faint);
   font: 11px var(--mono);
-  letter-spacing: 0.04em;
 }
 .learning-stat b {
   color: #d7e2e8;
@@ -588,20 +589,22 @@ td small {
   flex-wrap: wrap;
 }
 .filters select {
-  background: #0d1419;
-  border: 1px solid var(--line);
-  color: var(--text);
-  padding: 6px 10px;
-  border-radius: 4px;
-  font: 11px var(--mono);
+  background: transparent;
+  border: 1px solid var(--control);
+  color: var(--ink);
+  padding: 0 10px;
+  height: 34px;
+  border-radius: 6px;
+  font: 12px var(--mono);
 }
 .filters input {
-  background: #0d1419;
-  border: 1px solid var(--line);
-  color: var(--text);
-  padding: 6px 10px;
-  border-radius: 4px;
-  font: 11px var(--mono);
+  background: transparent;
+  border: 1px solid var(--control);
+  color: var(--ink);
+  padding: 0 10px;
+  height: 34px;
+  border-radius: 6px;
+  font: 12px var(--mono);
 }
 .side-buy {
   color: var(--green);
@@ -725,7 +728,6 @@ td small {
 .detail-section dt {
   color: var(--muted);
   font: 11px var(--mono);
-  letter-spacing: 0.04em;
 }
 .detail-section dd {
   color: #c4cdd2;
@@ -1024,7 +1026,6 @@ td small {
 .panel + .panel { border-top: 1px solid var(--rule); }
 .eyebrow {
   font: 500 12px var(--sans);
-  letter-spacing: 0;
   text-transform: none;
   color: var(--ink-2);
 }
@@ -1047,9 +1048,8 @@ td small {
 .positive { color: var(--gain) !important; }
 .negative { color: var(--loss) !important; }
 .muted { color: var(--ink-2); }
-h1, h2, h3 { font-weight: 600; letter-spacing: 0; }
 h2 { font-size: 17px; margin: 0; }
-button, input, select, textarea { border-radius: var(--radius); }
+button { border-radius: var(--radius); }
 table { font-variant-numeric: tabular-nums; }
 :focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
 .app-shell { max-width: 1280px; padding: 0 24px 32px; }
@@ -1063,3 +1063,113 @@ table { font-variant-numeric: tabular-nums; }
     scroll-behavior: auto !important;
   }
 }
+
+/* === Redesign v2 (docs/DESIGN_PLAN_v2.md): data terminal. Overrides everything above. === */
+:root {
+  --page: #16171a;
+  --raise: #1d1f23;
+  --rule: #26292e;
+  --control: #3a3d43;
+  --ink: #ecedef;
+  --ink-2: #8c9199;
+  --gain: #46a882;
+  --loss: #e5596f;
+  --warn: #d9a441;
+  --accent: #5b9be0;
+  --info: #5b9be0;
+  --gain-bg: #1b2a25;
+  --loss-bg: #2c1a20;
+  --warn-bg: #2a2416;
+  --neutral-bg: #23252a;
+  --neutral-fg: #bdbfc4;
+  --mono: var(--font-mono), ui-monospace, Consolas, monospace;
+  --radius: 6px;
+  --gutter: 32px;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 22px;
+}
+body { background: var(--page); color: var(--ink); font: 400 14px/1.5 var(--sans); }
+.num, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.positive::before, .negative::before { content: none; }
+.eyebrow { font: 400 12px var(--sans); color: var(--ink-2); }
+h2 { font-size: 16px; font-weight: 600; }
+
+/* Canvas: one width for the top bar and every block. */
+.app-shell { max-width: 1440px; width: 100%; margin: 0 auto; padding: 0 var(--gutter) 32px; }
+@media (max-width: 639px) { :root { --gutter: 16px; } }
+@media (min-width: 2200px) { .app-shell { max-width: 1440px; } }
+
+/* Tables. */
+table { border-collapse: collapse; width: 100%; min-width: 0; font-size: 13px; }
+th {
+  text-align: left; font: 400 12px var(--sans); color: var(--ink-2);
+  padding: 0 12px; height: 32px; border-bottom: 1px solid var(--rule); background: none; white-space: nowrap;
+}
+td {
+  padding: 0 12px; height: 40px; border-bottom: 1px solid var(--rule);
+  color: var(--ink); font-size: 13px; vertical-align: middle;
+}
+tbody tr:last-child td { border-bottom: 1px solid var(--rule); }
+tbody tr:nth-child(even) { background: none; }
+th:first-child, td:first-child { padding-left: 0; }
+th:last-child, td:last-child { padding-right: 0; }
+th.num, td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+td small { display: inline; font: 400 12px var(--sans); color: var(--ink-2); margin: 0 0 0 6px; }
+.table-scroll { overflow-x: auto; max-width: 100%; }
+
+/* Buttons: one style. */
+.button, .button-primary, .button-danger, .button-quiet {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 34px; min-height: 34px; padding: 0 12px; border-radius: 6px;
+  border: 1px solid var(--control); background: transparent; color: var(--ink);
+  font: 500 14px var(--sans); cursor: pointer; white-space: nowrap;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s;
+}
+.button:hover:not(:disabled), .button-primary:hover:not(:disabled), .button-quiet:hover:not(:disabled) {
+  background: var(--raise); border-color: var(--ink-2);
+}
+.button-primary { background: var(--raise); }
+.button-primary:hover:not(:disabled) { background: var(--raise); border-color: var(--ink-2); }
+.button.danger, .button-danger { color: var(--loss); border-color: var(--loss); background: transparent; }
+.button.danger:hover:not(:disabled), .button-danger:hover:not(:disabled) { background: var(--loss-bg); border-color: var(--loss); }
+.button:disabled, .button-primary:disabled, .button-danger:disabled { opacity: 0.45; cursor: not-allowed; }
+@media (max-width: 639px) { .button { min-height: 44px; } }
+
+/* Status marks: pale tint, same-hue text. */
+.mark {
+  display: inline-block; padding: 1px 6px; border-radius: 4px; font: 400 12px/18px var(--sans);
+  background: var(--neutral-bg); color: var(--neutral-fg); white-space: nowrap;
+}
+.mark.gain { background: var(--gain-bg); color: var(--gain); }
+.mark.loss { background: var(--loss-bg); color: var(--loss); }
+.mark.warn { background: var(--warn-bg); color: var(--warn); }
+.mark.neutral { background: var(--neutral-bg); color: var(--neutral-fg); }
+/* Legacy chips adopt the same look so untouched views stay calm. */
+.status-chip, .regime, .process-badge, .outcome-badge, .status-badge, .count-pill {
+  border: 0; border-radius: 4px; font: 400 12px var(--sans); padding: 1px 6px;
+}
+
+/* Selection: a 1px accent line as wide as the label. */
+.sel { position: relative; }
+.sel[aria-selected="true"]::after, .sel[aria-pressed="true"]::after, .sel.on::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--accent);
+}
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.banner { border-radius: 6px; }
+.panel { padding: 16px 0; }
+.panel:not(:first-child) { border-top: 1px solid var(--rule); }
+.empty-state { text-align: left; padding: 12px 0; }
+.empty-state span { display: none; }
+.empty-state p { font-size: 13px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+
+/* lightweight-charts lays out its panes in an HTML <table>: keep the global table rules out of it
+   (they turned the pane separator row into a 40px band). */
+.tv-lightweight-charts table { width: auto; font-size: inherit; }
+.tv-lightweight-charts th, .tv-lightweight-charts td { padding: 0; height: auto; border: 0; }

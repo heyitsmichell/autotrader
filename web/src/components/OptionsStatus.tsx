@@ -62,23 +62,23 @@ export default function OptionsStatus({ status, api }: {
   }, [api]);
 
   if (!status?.connected) {
-    return <section className="panel"><div className="panel-head"><div className="eyebrow">OPTIONS</div><h2>Not connected</h2></div><p className="muted">Connect to broker to view options status.</p></section>;
+    return <section className="panel"><div className="panel-head"><div className="eyebrow">Options</div><h2>Not connected</h2></div><p className="muted">Connect to broker to view options status.</p></section>;
   }
 
   if (loading) {
-    return <section className="panel"><div className="panel-head"><div className="eyebrow">OPTIONS</div><h2>Loading…</h2></div><span className="spinner" aria-label="Loading"/></section>;
+    return <section className="panel"><div className="panel-head"><div className="eyebrow">Options</div><h2>Loading…</h2></div><span className="spinner" aria-label="Loading"/></section>;
   }
 
   if (error) {
-    return <section className="panel"><div className="panel-head"><div className="eyebrow">OPTIONS</div><h2>Error</h2></div><div className="inline-warning">{error}</div></section>;
+    return <section className="panel"><div className="panel-head"><div className="eyebrow">Options</div><h2>Error</h2></div><div className="inline-warning">{error}</div></section>;
   }
 
   if (!data) return null;
 
   return <section className="panel" id="options-status">
     <div className="panel-head">
-      <div><div className="eyebrow">OPTIONS</div><h2>Options Trading</h2></div>
-      <span className={data.enabled ? "pill-green" : "pill-red"}>{data.enabled ? "ENABLED" : "DISABLED"}</span>
+      <div><div className="eyebrow">Options</div><h2>Options</h2></div>
+      <span className={data.enabled ? "pill-green" : "pill-red"}>{data.enabled ? "Enabled" : "Disabled"}</span>
     </div>
 
     {!data.enabled && (

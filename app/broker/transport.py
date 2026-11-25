@@ -18,6 +18,7 @@ from mcp.client.stdio import stdio_client
 from mcp.types import TextContent, Tool
 
 from ..config import LOG_DIR, ROOT
+from ..logging_setup import trim_shared_logs
 from .errors import BrokerError
 from .parsers import (ERROR_PREFIXES, is_rate_limited, retry_after_seconds, sanitize,
                       strip_disclaimer)
@@ -72,7 +73,7 @@ def _log_tail(path, offset: int) -> str:
     """Last meaningful line the server wrote to its log since `offset`."""
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
-            f.seek(offset)
+            f.seek(offset if offset <= os.fstat(f.fileno()).st_size else 0)
             lines = [ln.strip() for ln in f.read().splitlines()]
     except OSError:
         return ""
@@ -160,6 +161,8 @@ class McpTransport:
     async def start(self, timeout: float = 90) -> None:
         await self.stop()
         self.error = None
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        trim_shared_logs()
         log_file = LOG_DIR / "mcp_server.log"
         log_offset = log_file.stat().st_size if log_file.exists() else 0
         self._stop = asyncio.Event()

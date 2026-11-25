@@ -1,26 +1,75 @@
-.venv/
+# --- Secrets and local config (never commit) ---
 .env
+.env.*
+!.env.example
 conf/
+*.key
+*.pem
+data/api_token
+
+# --- Runtime state, data and logs ---
 data/
 logs/
+!logs/.gitkeep
+*.log
+*.db
+*.db-wal
+*.db-shm
+webull_data_streaming_sdk.log
+.trader-version
+# Machine-local guard: blocks the PC launchers while the bot runs on the Oracle server
+PC_BOT_DISABLED
+
+# --- Python ---
+.venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 *.egg-info/
-*.zip
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
+
+# --- Frontend (web/) ---
 web/node_modules/
 web/.next/
-web/tsconfig.tsbuildinfo
 web/out/
-webull_data_streaming_sdk.log
-.DS_Store
+web/out_prev*/
+web/tsconfig.tsbuildinfo
+web/.env*.local
+
+# --- Archives and scratch ---
+*.zip
+*.tgz
+*.tar.gz
 _archive/
 .scratch/
-.trader-version
-*.log
-!logs/.gitkeep
+*.draft.md
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Claude working notes (kept on disk, not in git) ---
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+HANDOFF.md
+QA_REPORT.md
+REMEDIATION.md
+STRATEGY_REVIEW.md
+docs/archive/
+docs/HANDOFF_*.md
+docs/ARCHITECTURE_CONTRACTS.md
+docs/CLEANUP_AUDIT_*.md
+docs/DESIGN_PLAN*.md
+docs/LEDGER_FIELD_MAPPING.md
+docs/backtest_prelim_*/
