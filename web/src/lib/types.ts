@@ -606,7 +606,7 @@ export interface SleevesPayload {
 }
 export interface SleeveEquityPoint {
   day: string; swing: number | null; momentum: number | null; putwrite: number | null;
-  vaa: number | null; total: number | null; spy: number | null;
+  vaa: number | null; total: number | null; spy: number | null; baseline?: boolean;
 }
 export interface SleeveHolding {
   symbol: string; kind: string; qty: number; avg_cost: number | null; last: number | null;
@@ -680,6 +680,21 @@ export interface PnlPayload {
   days: PnlRow[]; cumulative: PnlRow[]; periods: PnlPeriods;
   shadows?: { days: PnlRow[]; cumulative?: PnlRow[]; periods?: PnlPeriods; names?: Record<string, string> };
 }
+export type ExitBucket = "stop" | "time" | "manual" | "rebalance" | "expiry" | "other";
+export interface RoundTrip {
+  strategy: string; live: boolean; symbol: string; kind: string; direction: "long" | "short"; qty: number | null;
+  entry_ts: string | null; exit_ts: string | null; entry_price: number | null; exit_price: number | null;
+  pnl: number | null; ret_pct: number | null; r: number | null; hold_days: number | null;
+  exit_reason: string | null; bucket: ExitBucket;
+}
+export interface TripPick { symbol: string; pnl: number; ret_pct: number | null }
+export interface TripStats {
+  n: number; wins: number; losses: number; win_rate: number | null; avg_win: number | null; avg_loss: number | null;
+  expectancy: number | null; profit_factor: number | null; total: number | null; avg_ret_pct: number | null;
+  median_ret_pct: number | null; avg_hold_days: number | null; avg_r: number | null; n_r: number;
+  best: TripPick | null; worst: TripPick | null; exits: Partial<Record<ExitBucket, { n: number; pnl: number }>>;
+}
+export interface RoundTripsPayload { trips: RoundTrip[]; stats: Record<string, TripStats> }
 
 // ---- Research tab (docs/RESEARCH_TAB.md) ----
 export interface ResearchBase { as_of?: string; error?: string }
@@ -705,4 +720,32 @@ export interface RegimePayload extends ResearchBase {
   breadth?: { pct_above_200: number; n: number };
   vaa_bad?: number;
   swing_gate?: { watched: number; eligible: number; pass: number; top_blockers?: { name: string; n: number }[] };
+}
+/** Backtests tab (docs/BACKTESTS_TAB.md). Every field may be missing. */
+export interface BtEvidence { path: string; title?: string; exists?: boolean }
+export interface BtCard {
+  id: string; name?: string; stage?: string; kind?: string; since?: string; verdict?: string;
+  backtest?: { cagr?: number | null; vol?: number | null; sharpe?: number | null; max_dd?: number | null; window?: string | null; source?: string | null; biased?: boolean } | null;
+  live?: { days?: number | null; return_pct?: number | null; sharpe?: number | null; max_dd?: number | null } | null;
+  trials?: { lab?: string; n?: number } | null;
+  evidence?: BtEvidence[]; compare_to?: string | null; note?: string | null;
+}
+export interface BtPortfolio {
+  window?: string | null;
+  schemes?: { name: string; cagr?: number | null; vol?: number | null; sharpe?: number | null; max_dd?: number | null }[];
+  curve?: { day: string; equal?: number | null; invvol?: number | null }[];
+  correlation?: { ids?: string[]; matrix?: (number | null)[][] } | null;
+  live?: { days?: number | null; return_pct?: number | null; sharpe?: number | null } | null;
+}
+export interface BtPipelineEntry {
+  id: string; name?: string; kind?: string; stage?: string; since?: string; verdict?: string;
+  evidence?: BtEvidence[]; compare_to?: string | null;
+  live_stats?: { days?: number | null; return_pct?: number | null; sharpe?: number | null } | null;
+  compare_stats?: { days?: number | null; return_pct?: number | null; sharpe?: number | null } | null;
+}
+export interface BtPipeline { stages?: { live?: BtPipelineEntry[]; shadow?: BtPipelineEntry[]; rejected?: BtPipelineEntry[] } }
+export interface BtMl {
+  models?: { id: string | number; created_at?: string; status?: string; kind?: string; auc?: number | null; metrics?: Record<string, unknown> }[];
+  options_model?: Record<string, unknown> | null;
+  experiments?: BtPipelineEntry[]; summary?: string;
 }

@@ -100,8 +100,13 @@ def build_dataset(bars_by_symbol: dict[str, list[dict]], db: DB | None = None,
                 continue
 
             try:
-                features = json.loads(entry_features) if isinstance(entry_features, str) else entry_features
+                features = entry_features
+                for _ in range(2):          # older rows were JSON-encoded twice
+                    if isinstance(features, str):
+                        features = json.loads(features)
             except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(features, dict):
                 continue
 
             x = vector(features)

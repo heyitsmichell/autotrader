@@ -17,3 +17,26 @@
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 32px; margin: 8px 0 0; font-size: 13px; }
 .kv dt { color: var(--ink-2); }
 .kv dd { margin: 0; }
+/* Trade stats (strategy table + distribution) */
+.note { color: var(--ink-2); font-size: 13px; margin: 8px 0 0; }
+.pick { cursor: pointer; }
+.pick:hover td { background: var(--raise); }
+.pick.on td { background: var(--raise); }
+.pick.on td:first-child { box-shadow: inset 2px 0 0 var(--ink); }
+.totalRow td { font-weight: 500; }
+.rowBtn { background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.rowBtn:focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
+.detail { margin-top: 8px; }
+.detail .sub:first-child { margin-top: 20px; }
+.histHead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 20px 0 4px; }
+.histHead .sub { margin: 0; }
+.histBox { position: relative; max-width: 760px; }
+.histBox svg { width: 100%; height: auto; display: block; }
+.histBox rect:focus { outline: none; }
+.htip { position: absolute; top: 4px; z-index: 5; min-width: 150px; background: var(--raise); border: 1px solid var(--rule);
+  border-radius: 4px; padding: 6px 8px; font-size: 12px; pointer-events: none; }
+.htip div { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+.htipHead { color: var(--ink-2); margin-bottom: 2px; }
+.asTable { margin-top: 8px; font-size: 13px; color: var(--ink-2); max-width: 420px; }
+.asTable summary { cursor: pointer; }
+.asTable table { margin-top: 6px; }

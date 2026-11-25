@@ -1,0 +1,3 @@
+# False positive (checked 2026-11-26): a CSS-module class-name map inside a minified dashboard bundle
+# (web/out_prev_chart, committed in a4b5f30, removed in 3dfdda9). Not a secret.
+a4b5f3075063546b3862461032509b44779809c6:web/out_prev_chart/_next/static/chunks/3ph05ocua_4c_.js:generic-api-key:1

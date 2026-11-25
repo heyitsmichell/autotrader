@@ -128,6 +128,10 @@ class SleeveManager:
                 self.db.set_kv("sleeves_capital_warned", day)
                 self.db.log("error", short, alert=True)
             return
+        try:
+            await self._price("SPY", snap)    # SPY is rarely held, so the snapshot lacks it
+        except Exception:  # noqa: BLE001 - the benchmark line is optional, never block the tick
+            pass
         self._record(values, snap)
         await self._drawdown_checks(values)
         self._drift_checks()
@@ -882,4 +886,46 @@ class SleeveManager:
         return {**base, "holdings": holdings, "targets": targets, "orders": orders}
 
     def equity_series(self, days: int = 365) -> dict:
-        return {"series": self.db.sleeve_equity_series(days)}
+        """Daily equity per sleeve plus 'total' and 'spy', with a start baseline row.
+
+        The baseline row (``baseline: True``) sits on the last stored close before the
+        sleeves' common start date: each sleeve at its start capital, total = that
+        close's net liq, swing = net liq minus the other sleeves' capital, spy = that
+        day's SPY close. Every line is then indexed from the same starting point.
+        """
+        series = self.db.sleeve_equity_series(days)
+        start = self.common_start_date()
+        if not start:
+            return {"series": series, "start_date": None}
+        series = [r for r in series if r["day"] >= start]
+        base = self._baseline_row(start)
+        return {"series": ([base] if base else []) + series, "start_date": start}
+
+    def common_start_date(self) -> str | None:
+        """Earliest start date among the live sleeves (they all go live together)."""
+        dates = [st.get("start_date") for sid in ("swing", *self.enabled_ids())
+                 if (st := self.db.sleeve_state(sid)) and st.get("start_date")]
+        return min(dates) if dates else None
+
+    def _baseline_row(self, start: str) -> dict | None:
+        try:
+            prev = [r for r in self.db.benchmark_daily() if r["day"] < start
+                    and r.get("net_liq") is not None and r.get("spy_close") is not None]
+        except Exception:  # noqa: BLE001 - no baseline, lines index from their first day
+            prev = []
+        others = {}
+        for sid in self.enabled_ids():
+            st = self.db.sleeve_state(sid) or {}
+            cap = _f(st.get("start_capital"))
+            if cap:
+                others[sid] = cap
+        if not prev:
+            if not others:
+                return None
+            day = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
+            return {"day": day, "baseline": True, **others}
+        last = prev[-1]
+        nl = float(last["net_liq"])
+        return {"day": last["day"], "baseline": True, **others,
+                "swing": round(nl - sum(others.values()), 2), "total": round(nl, 2),
+                "spy": float(last["spy_close"])}

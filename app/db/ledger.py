@@ -8,6 +8,21 @@ from .schema import _now
 from .base import BaseRepo
 
 
+
+def features_json(features) -> str | None:
+    """Entry features as JSON text, encoded ONCE. Signal rows can already carry them as JSON text;
+    json.dumps on that double-encoded every ledger row (2026-11-25: training failed with
+    "'str' object has no attribute 'get'")."""
+    if features is None:
+        return None
+    if isinstance(features, str):
+        try:
+            decoded = json.loads(features)
+        except ValueError:
+            return None
+        return json.dumps(decoded) if isinstance(decoded, dict) else None
+    return json.dumps(features)
+
 class LedgerRepo(BaseRepo):
     """Mixin for the DB facade: trade ledger."""
 
@@ -29,7 +44,7 @@ class LedgerRepo(BaseRepo):
             "entry_ta_score": sig.get("ta_score") if sig else None,
             "entry_sent_score": sig.get("sent_score") if sig else None,
             "entry_ml_p": sig.get("ml_p") if sig else None,
-            "entry_features": json.dumps(sig.get("features")) if sig and sig.get("features") else None,
+            "entry_features": features_json(sig.get("features")) if sig and sig.get("features") else None,
             "status": "open",
             "created_at": _now(),
             "updated_at": _now(),

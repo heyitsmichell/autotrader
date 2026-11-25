@@ -7,8 +7,6 @@ import Section from "./ui/Section";
 import Segmented from "./ui/Segmented";
 import Mark from "./ui/Mark";
 import Empty from "./ui/Empty";
-import TradeStats from "./results/TradeStats";
-import OptionsModel from "./results/OptionsModel";
 import { money, num, pct } from "@/lib/format";
 import type { TradeLedgerEntry } from "@/lib/types";
 import css from "./TradeLedgerView.module.css";
@@ -25,28 +23,27 @@ export default function TradeLedgerView() {
   const [symbolFilter, setSymbolFilter] = useState("");
   const [showAll, setShowAll] = useState(false);
 
-  const [loadedFilter, setLoadedFilter] = useState<string | null>(null);
-  const loading = loadedFilter !== statusFilter;
+  const [loading, setLoading] = useState(true);
 
+  // one fetch; the status filter is applied here, so switching it costs no request
   useEffect(() => {
     let active = true;
-    api<TradeLedgerEntry[]>(`/api/trades?limit=200&status=${statusFilter}`)
+    api<TradeLedgerEntry[]>("/api/trades?limit=500&status=all")
       .then(data => { if (active) { setTrades(Array.isArray(data) ? data : []); setError(null); } })
       .catch((e: unknown) => { if (active) setError(e instanceof Error ? e.message : "Unknown error"); })
-      .finally(() => { if (active) setLoadedFilter(statusFilter); });
+      .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [statusFilter]);
+  }, []);
 
   const filteredTrades = trades.filter((t) =>
-    symbolFilter === "" || t.symbol.toLowerCase().includes(symbolFilter.toLowerCase())
+    (statusFilter === "all" || t.status === statusFilter) &&
+    (symbolFilter === "" || t.symbol.toLowerCase().includes(symbolFilter.toLowerCase()))
   );
   const shown = showAll ? filteredTrades : filteredTrades.slice(0, CAP);
 
   return (
     <div className="trade-ledger-view">
-      <TradeStats />
-      <OptionsModel />
-      <Section title="Trades" meta={`${filteredTrades.length} shown`} rule right={
+      <Section title="Swing round trips" meta={`${filteredTrades.length} shown · click a row for entry signals, slippage, MAE/MFE`} right={
         <div className={rcss["filters"]}>
           <Segmented label="Status" value={statusFilter} onChange={setStatusFilter}
             options={[{ value: "all", label: "All" }, { value: "open", label: "Open" }, { value: "closed", label: "Closed" }]} />

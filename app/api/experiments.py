@@ -54,7 +54,14 @@ def _title(path: Path) -> str:
     return path.stem
 
 
+def _bt_root() -> Path:
+    return (Path(env.DATA_DIR) / "backtests").resolve()
+
+
 def _safe(root: Path, rel: str) -> Path:
+    rel = rel or ""
+    if rel.replace("\\", "/").startswith("backtests/"):
+        root, rel = _bt_root(), rel.replace("\\", "/")[len("backtests/"):]
     if not rel or rel.startswith(("/", "\\")) or ":" in rel or not rel.lower().endswith(".md"):
         raise HTTPException(400, "path must be a relative .md path under data/experiments")
     if ".." in Path(rel.replace("\\", "/")).parts:
@@ -94,6 +101,18 @@ async def experiments():
             except (ValueError, OSError):
                 continue
             reports.append({"path": p.relative_to(root).as_posix(), "title": _title(real),
+                            "modified": datetime.fromtimestamp(stt.st_mtime, timezone.utc)
+                            .isoformat(timespec="seconds"), "bytes": stt.st_size})
+    bt = _bt_root()
+    if bt.is_dir():
+        for p in sorted(bt.rglob("*.md")):
+            try:
+                real = p.resolve()
+                real.relative_to(bt)
+                stt = real.stat()
+            except (ValueError, OSError):
+                continue
+            reports.append({"path": "backtests/" + p.relative_to(bt).as_posix(), "title": _title(real),
                             "modified": datetime.fromtimestamp(stt.st_mtime, timezone.utc)
                             .isoformat(timespec="seconds"), "bytes": stt.st_size})
     return {"registry": {"n_trials": len(reg), "by_lab": by_lab},

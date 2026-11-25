@@ -153,3 +153,79 @@ def test_pnl_includes_shadow_display_names(tmp_path):
     db = DB(tmp_path / "t.db", "mock", None, None)
     names = pnl(db, 30)["shadows"]["names"]
     assert names.get("swing_dynamic") and names["swing_dynamic"] != "swing_dynamic"
+
+
+# ---------------------------------------------------------------- round trips (FIFO) + stats
+
+def order(db, ts, sleeve, sym, side, qty, px, kind="stock", status="filled", reason=None):
+    db.conn.execute("INSERT INTO sleeve_orders (ns, ts, sleeve, symbol, kind, side, qty, status, filled_qty, "
+                    "avg_fill_price, reason) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (db._sleeve_ns, ts, sleeve, sym, kind, side, qty, status,
+                     qty if status == "filled" else 0, px, reason))
+
+
+async def test_round_trips_swing_and_stats(app):
+    j = (await get(app, "/api/results/round_trips")).json()
+    sw = [t for t in j["trips"] if t["strategy"] == "swing"]
+    assert {t["symbol"]: t["pnl"] for t in sw} == {"BBB": 50.0, "CCC": 17.5}
+    assert next(t for t in sw if t["symbol"] == "BBB")["ret_pct"] == 10.0
+    s = j["stats"]["swing"]
+    assert s["n"] == 2 and s["wins"] == 2 and s["win_rate"] == 1.0 and s["profit_factor"] is None
+    assert s["total"] == 67.5 and s["best"]["symbol"] == "BBB" and s["exits"]["other"]["n"] == 2
+    assert j["stats"]["live"]["n"] == 2 and j["stats"]["shadows"]["n"] == 0
+    assert (await get(app, "/api/results/round_trips?days=0")).status_code == 400
+
+
+async def test_fifo_partial_sell_and_fill_pnl(app):
+    db = app.state.db
+    order(db, iso(80), "vaa", "IEF", "BUY", 10, 100.0)
+    order(db, iso(70), "vaa", "IEF", "BUY", 10, 110.0)
+    order(db, iso(60), "vaa", "IEF", "SELL", 15, 120.0, reason="rebalance")
+    trips = [t for t in (await get(app, "/api/results/round_trips")).json()["trips"] if t["strategy"] == "vaa"]
+    assert sorted((t["qty"], t["entry_price"], t["pnl"]) for t in trips) == [(5.0, 110.0, 50.0), (10.0, 100.0, 200.0)]
+    assert {t["bucket"] for t in trips} == {"rebalance"}
+    rows = (await get(app, "/api/results/trades?strategy=vaa")).json()["trades"]
+    assert [r["pnl"] for r in rows if r["side"] == "SELL"] == [250.0]
+    assert all(r["pnl"] is None for r in rows if r["side"] == "BUY")
+
+
+async def test_put_expiry_and_assignment(app):
+    db = app.state.db
+    old = (NOW - timedelta(days=200)).isoformat(timespec="seconds")
+    exp = (NOW - timedelta(days=170)).date()
+    occ = f"QQQ{exp:%y%m%d}P00500000"
+    order(db, old, "putwrite", occ, "SELL", 2, 4.0, kind="option")
+    order(db, iso(50), "putwrite", "QQQ", "SELL", 200, 490.0, reason="assigned shares")
+    j = (await get(app, "/api/results/round_trips")).json()
+    pw = {t["kind"]: t for t in j["trips"] if t["strategy"] == "putwrite" and t["symbol"].startswith("QQQ")}
+    assert pw["option"]["pnl"] == 800.0 and pw["option"]["exit_reason"] == "expired"
+    assert pw["option"]["ret_pct"] == 0.8                     # 800 / (500 x 100 x 2) collateral
+    assert pw["stock"]["entry_price"] == 500.0 and pw["stock"]["pnl"] == -2000.0
+    assert j["stats"]["putwrite"]["exits"]["expiry"]["n"] == 1
+
+
+async def test_held_put_is_not_expired(app):
+    db = app.state.db
+    exp = (NOW - timedelta(days=1)).date()
+    occ = f"QQQ{exp:%y%m%d}P00500000"
+    order(db, (NOW - timedelta(days=30)).isoformat(timespec="seconds"), "putwrite", occ, "SELL", 1, 4.0, kind="option")
+    db.set_sleeve_holding("putwrite", occ, "option", -1, 4.0)
+    j = (await get(app, "/api/results/round_trips")).json()
+    assert not [t for t in j["trips"] if t["symbol"] == occ]
+
+
+async def test_shadow_round_trip(app):
+    db = app.state.db
+    db.add_shadow_trade("vaa_g4", "SPY", "SELL", 3, 420.0, "rebalance")
+    j = (await get(app, "/api/results/round_trips")).json()
+    t = next(t for t in j["trips"] if t["strategy"] == "vaa_g4")
+    assert t["pnl"] == 60.0 and t["live"] is False and t["ret_pct"] == 5.0
+    assert j["stats"]["shadows"]["n"] == 1 and j["stats"]["live"]["n"] == 2
+
+
+async def test_unmatched_stock_sell_opens_no_short(app):
+    db = app.state.db
+    order(db, iso(80), "momentum", "ZZZ", "SELL", 5, 50.0, reason="rebalance")   # history before the log
+    order(db, iso(70), "momentum", "ZZZ", "BUY", 5, 40.0, reason="rebalance")
+    j = (await get(app, "/api/results/round_trips")).json()
+    assert not [t for t in j["trips"] if t["symbol"] == "ZZZ"]

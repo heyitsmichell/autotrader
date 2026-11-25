@@ -466,3 +466,46 @@ async def test_others_day_pnl_feeds_swing_daily_loss(env):
     mgr.last_values = {"momentum": {"equity": 500000.0}}
     assert mgr.others_day_pnl() == -20000.0
     assert env.broker.__dict__["sleeve_day_pnl"]() == -20000.0
+
+
+# ---------------------------------------------------------------- SPY line + start baseline
+async def test_tick_records_spy_when_not_held(env):
+    eng, mgr = env.build()
+
+    async def last_price(sym):
+        return 600.0 if sym == "SPY" else None
+    env.broker.last_price = last_price                    # SPY absent from positions
+    await mgr.tick()
+    rows = env.db.sleeve_equity_series(30)
+    assert rows and rows[-1].get("spy") == 600.0
+
+
+async def test_equity_series_starts_from_common_baseline(env):
+    eng, mgr = env.build(sleeve_momentum_enabled=True, sleeve_vaa_enabled=True)
+    seed(env.db, "momentum")
+    seed(env.db, "vaa")
+    env.db.upsert_sleeve_state("swing", start_date="2026-12-01", paused=False)
+    env.db.upsert_benchmark_daily("2026-11-27", net_liq=1_600_000.0, spy_close=590.0)
+    env.db.upsert_benchmark_daily("2026-11-30", net_liq=1_500_000.0, spy_close=600.0)
+    env.db.record_sleeve_equity("2026-11-28", "momentum", 1.0)     # stray row before the start
+    env.db.record_sleeve_equity("2026-12-01", "momentum", 510000.0)
+    env.db.record_sleeve_equity("2026-12-01", "spy", 606.0)
+    out = mgr.equity_series(30)
+    assert out["start_date"] == "2026-12-01"
+    base, day1 = out["series"]
+    assert base == {"day": "2026-11-30", "baseline": True, "momentum": 500000.0, "vaa": 500000.0,
+                    "swing": 500000.0, "total": 1_500_000.0, "spy": 600.0}
+    assert day1["day"] == "2026-12-01" and day1["momentum"] == 510000.0
+
+
+async def test_equity_series_baseline_without_benchmark_close(env):
+    eng, mgr = env.build(sleeve_momentum_enabled=True)
+    seed(env.db, "momentum")
+    env.db.upsert_sleeve_state("swing", start_date="2026-12-01", paused=False)
+    base = mgr.equity_series(30)["series"][0]
+    assert base == {"day": "2026-11-30", "baseline": True, "momentum": 500000.0}
+
+
+async def test_equity_series_without_sleeves(env):
+    eng, mgr = env.build()
+    assert mgr.equity_series(30) == {"series": [], "start_date": None}

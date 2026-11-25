@@ -25,3 +25,10 @@ async def results_pnl(request: Request, days: int = 90):
     if not 1 <= days <= 3650:
         raise HTTPException(400, "days must be 1..3650")
     return results.pnl(request.app.state.db, days)
+
+
+@router.get("/api/results/round_trips")
+async def results_round_trips(request: Request, days: int = 365):
+    if not 1 <= days <= 3650:
+        raise HTTPException(400, "days must be 1..3650")
+    return results.round_trips(request.app.state.db, days)

@@ -7,7 +7,7 @@ import BannerRail from "./BannerRail";
 import CommandBar from "./CommandBar";
 import Today from "./Today";
 import Strategies from "./strategies/Strategies";
-import Backtests from "./backtests/Backtests";
+import BacktestsHub from "./backtests/BacktestsHub";
 import ConfirmModal, { ConfirmProvider, type ConfirmRequest } from "./ConfirmModal";
 import DecisionModal from "./DecisionModal";
 import ErrorBoundary from "./ErrorBoundary";
@@ -26,6 +26,8 @@ import ResearchPicker from "./research/ResearchPicker";
 import TopBar, { type Tab } from "./TopBar";
 import StrategyPnl from "./results/StrategyPnl";
 import AllTrades from "./results/AllTrades";
+import TradeStats from "./results/TradeStats";
+import OptionsModel from "./results/OptionsModel";
 import TradeLedgerView from "./TradeLedgerView";
 import { useDashboardData } from "@/lib/useDashboardData";
 import type { Proposal, ProposalDetail } from "@/lib/types";
@@ -252,8 +254,10 @@ export default function Dashboard() {
 
           {activeTab === "learning" && <>
             <Panel name="P&L by strategy"><section className={`panel ${css["learning-panel"]}`}><StrategyPnl api={api}/></section></Panel>
+            <Panel name="Trade stats"><section className={`panel ${css["learning-panel"]}`}><TradeStats api={api}/></section></Panel>
             <Panel name="All trades"><section className={`panel ${css["learning-panel"]}`}><AllTrades api={api}/></section></Panel>
-            <Panel name="Swing trade ledger (detail)"><section className={`panel ${css["learning-panel"]}`}><TradeLedgerView/></section></Panel>
+            <Panel name="Swing round trips"><section className={`panel ${css["learning-panel"]}`}><TradeLedgerView/></section></Panel>
+            <Panel name="Options model"><section className={`panel ${css["learning-panel"]}`}><OptionsModel/></section></Panel>
             <Panel name="Autopsies"><section className={`panel ${css["learning-panel"]}`}><AutopsyView/></section></Panel>
             <Panel name="ML scorecard">
               <section className={`panel ${css["learning-panel"]}`}>
@@ -263,7 +267,7 @@ export default function Dashboard() {
             <Panel name="Lessons"><section className={`panel ${css["learning-panel"]}`}><LearningView onAction={perform}/></section></Panel>
           </>}
 
-          {activeTab === "backtests" && <Panel name="Backtests"><Backtests api={api}/></Panel>}
+          {activeTab === "backtests" && <Panel name="Backtests"><BacktestsHub api={api}/></Panel>}
 
           {activeTab === "settings" && <>
             <div className={css["settings-grid"]}>
