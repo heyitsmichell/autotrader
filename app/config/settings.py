@@ -369,7 +369,16 @@ class Settings:
     news_relevance_filter: bool = True         # NEWS_RELEVANCE_FILTER: keep only headlines naming the ticker/company
     news_google_concurrency: int = 1           # NEWS_GOOGLE_CONCURRENCY: parallel Google News requests
     news_rss_spacing_seconds: float = 0.7      # NEWS_RSS_SPACING_SECONDS: minimum gap between Google/Yahoo RSS requests
-    news_google_cooldown_minutes: float = 20.0 # NEWS_GOOGLE_COOLDOWN_MINUTES: pause Google News after a 429
+    news_google_cooldown_minutes: float = 30.0 # NEWS_GOOGLE_COOLDOWN_MINUTES: pause Google News after a 429
+    news_google_spacing_seconds: float = 2.5   # NEWS_GOOGLE_SPACING_SECONDS: minimum gap between Google News requests
+    news_google_refresh_minutes: int = 30      # NEWS_GOOGLE_REFRESH_MINUTES: minimum time between Google News passes
+    news_outage_minutes: int = 60              # NEWS_OUTAGE_MINUTES: alert when no source returned a headline for this long
+    news_nasdaq_enabled: bool = True           # NEWS_NASDAQ_ENABLED: fetch the Nasdaq per-symbol RSS feed
+    news_nasdaq_rss_url: str = "https://www.nasdaq.com/feed/rssoutbound?symbol={symbol}"  # NEWS_NASDAQ_RSS_URL: Nasdaq RSS template
+    news_seekingalpha_enabled: bool = True     # NEWS_SEEKINGALPHA_ENABLED: fetch the Seeking Alpha per-symbol RSS feed
+    news_seekingalpha_rss_url: str = "https://seekingalpha.com/api/sa/combined/{symbol}.xml"  # NEWS_SEEKINGALPHA_RSS_URL: Seeking Alpha RSS template
+    news_bing_enabled: bool = True             # NEWS_BING_ENABLED: fetch Bing News RSS search
+    news_bing_rss_url: str = "https://www.bing.com/news/search?q={query}&format=rss"  # NEWS_BING_RSS_URL: Bing News RSS template
     news_webull_enabled: bool = True           # NEWS_WEBULL_ENABLED: fetch Webull news (get_stock_news/search_news). false = Google/Yahoo only (Webull UAT returns 404 for news)
     news_llm_batch_size: int = 10              # NEWS_LLM_BATCH_SIZE: headlines per LLM scoring call (keeps JSON untruncated)
     news_llm_max_batches: int = 6              # NEWS_LLM_MAX_BATCHES: LLM scoring calls per refresh
@@ -393,6 +402,21 @@ class Settings:
     size_from_risk: bool = False               # SIZE_FROM_RISK: size a BUY from the risk budget (budget / (entry - stop)); MAX_ORDER_USD no longer shrinks it (MAX_POSITION_USD, MAX_ORDER_QTY and buying power still cap it)
     risk_per_trade_pct: float = 0.0            # RISK_PER_TRADE_PCT: risk budget as % of equity (0 = use MAX_RISK_PER_TRADE_USD); needs the caller to pass equity
     backtest_live_exits: bool = False          # BACKTEST_LIVE_EXITS: backtester models the live profit rules (scale-outs, break-even, give-back, trailing, RSI exhaustion, no-TP bracket)
+    # multi-strategy sleeves (docs/SLEEVES_ARCHITECTURE.md); off = only the swing engine trades
+    sleeves_enabled: bool = False              # SLEEVES_ENABLED: run the momentum / put-write / VAA sleeves
+    sleeve_start_capital: float = 500000.0     # SLEEVE_START_CAPITAL: virtual cash each non-swing sleeve starts with
+    sleeve_pause_dd_pct: float = -25.0         # SLEEVE_PAUSE_DD_PCT: a sleeve stops opening at this drawdown from its peak
+    sleeve_momentum_enabled: bool = True       # SLEEVE_MOMENTUM_ENABLED
+    sleeve_putwrite_enabled: bool = True       # SLEEVE_PUTWRITE_ENABLED
+    sleeve_vaa_enabled: bool = True            # SLEEVE_VAA_ENABLED
+    sleeve_momentum_n: int = 10                # SLEEVE_MOMENTUM_N: stocks held by the momentum sleeve
+    sleeve_putwrite_underlying: str = "QQQ"    # SLEEVE_PUTWRITE_UNDERLYING
+    sleeve_putwrite_delta: float = 0.30        # SLEEVE_PUTWRITE_DELTA: target |delta| of the sold put
+    sleeve_putwrite_dte: int = 30              # SLEEVE_PUTWRITE_DTE: target days to expiry
+    sleeve_min_trade_usd: float = 1000.0       # SLEEVE_MIN_TRADE_USD: smaller rebalance trades are skipped
+    sleeve_rebalance_after_et: str = "10:00"   # SLEEVE_REBALANCE_AFTER_ET: rebalances wait until this ET time
+    shadows_enabled: bool = False              # SHADOWS_ENABLED: run virtual-money shadow strategies (no orders)
+    shadow_start_capital: float = 500000.0     # SHADOW_START_CAPITAL: virtual cash each shadow starts with
 
     @property
     def is_live(self) -> bool:

@@ -275,6 +275,10 @@ class TraderLauncher:
             log_level=self.settings.log_level.lower() if hasattr(self.settings, 'log_level') else "info",
             access_log=getattr(self.settings, 'log_level', 'INFO') == "DEBUG",
             loop="asyncio",
+            # Live-update (SSE) dashboard connections never close on their own; without a limit uvicorn
+            # waits for them forever on SIGTERM, systemd SIGKILLs the app after TimeoutStopSec and the
+            # lifespan shutdown (broker.stop, db.close) never runs. 5 s, then open connections are closed.
+            timeout_graceful_shutdown=5,
         )
 
         server = uvicorn.Server(config)

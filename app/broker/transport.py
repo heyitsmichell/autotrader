@@ -287,6 +287,8 @@ class McpTransport:
         backoff = hinted if hinted is not None else \
             self._rate_limit_backoff_base * (2 ** attempt) + random.uniform(0, 1)
         backoff = min(backoff, 60.0)
-        log.warning(f"Rate limited on {name} (attempt {attempt + 1}/{self._rate_limit_max_retries + 1}), "
-                    f"backing off {backoff:.1f}s")
+        # the first back-off is routine (~6 a minute on UAT) and always recovers: debug, not a warning
+        (log.debug if attempt == 0 else log.warning)(
+            f"Rate limited on {name} (attempt {attempt + 1}/{self._rate_limit_max_retries + 1}), "
+            f"backing off {backoff:.1f}s")
         self._rate_limit_retry_after = max(self._rate_limit_retry_after, time.time() + backoff)

@@ -177,7 +177,13 @@ class OptionExitManager:
                                                r.get("cost_basis"), r.get("mark_price")))
             except Exception:  # noqa: BLE001
                 pass
-        return rows
+        # options a multi-strategy sleeve holds (e.g. the put-write sleeve's short puts) are
+        # managed by that sleeve, never by this manager
+        try:
+            hidden = self.eng.db.sleeve_option_symbols()
+        except Exception:  # noqa: BLE001 - stub DBs
+            hidden = set()
+        return [r for r in rows if r.symbol.upper() not in hidden] if hidden else rows
 
     def entry_context(self, pos: HeldOption) -> tuple[float | None, str | None]:
         """(underlying stop, entry timestamp) saved on the placed BUY_TO_OPEN proposal."""

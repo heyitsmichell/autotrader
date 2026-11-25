@@ -15,6 +15,8 @@ logs/
 *.db
 *.db-wal
 *.db-shm
+*.sqlite
+*.sqlite3
 webull_data_streaming_sdk.log
 .trader-version
 # Machine-local guard: blocks the PC launchers while the bot runs on the Oracle server
@@ -34,6 +36,8 @@ __pycache__/
 .coverage.*
 coverage.xml
 htmlcov/
+.hypothesis/
+*.prof
 
 # --- Frontend (web/) ---
 web/node_modules/
@@ -42,6 +46,7 @@ web/out/
 web/out_prev*/
 web/tsconfig.tsbuildinfo
 web/.env*.local
+node_modules/
 
 # --- Archives and scratch ---
 *.zip
@@ -50,6 +55,10 @@ web/.env*.local
 _archive/
 .scratch/
 *.draft.md
+*.bak
+*.orig
+*.tmp
+*.swp
 
 # --- Editor / OS ---
 .vscode/
@@ -59,18 +68,8 @@ Thumbs.db
 desktop.ini
 
 # --- Claude working notes (kept on disk, not in git) ---
+docs/
 .claude/
 CLAUDE.md
 CLAUDE.local.md
 HANDOFF.md
-QA_REPORT.md
-REMEDIATION.md
-STRATEGY_REVIEW.md
-docs/archive/
-docs/HANDOFF_*.md
-docs/ARCHITECTURE_CONTRACTS.md
-docs/CLEANUP_AUDIT_*.md
-docs/DESIGN_PLAN*.md
-docs/LEDGER_FIELD_MAPPING.md
-docs/MULTI_STRATEGY_PLAN*.md
-docs/backtest_prelim_*/

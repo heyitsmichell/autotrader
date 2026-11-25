@@ -43,7 +43,8 @@ class DeadBroker:
 
 def _engine(settings, db, **over):
     base = dict(sentiment_rss_fallback=True, sentiment_yahoo_rss=False, news_refresh_minutes=0,
-                sentiment_llm=False, news_rss_spacing_seconds=0.0, sentiment_source="blend")
+                sentiment_llm=False, news_rss_spacing_seconds=0.0, sentiment_source="blend",
+                news_nasdaq_enabled=False, news_seekingalpha_enabled=False, news_bing_enabled=False)
     s = replace(settings, **{**base, **over})
     return SentimentEngine(s, DeadBroker(), db)
 

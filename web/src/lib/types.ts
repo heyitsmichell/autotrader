@@ -585,3 +585,85 @@ export interface OptionsModelResponse {
   min_p: number;
   recent: OptionsModelRecent[];
 }
+
+/* ---- Strategies tab (sleeves) ---- */
+export interface Sleeve {
+  id: string; name: string; color_slot: number; description: string;
+  status: "active" | "paused" | "disabled" | "waiting"; status_reason: string | null;
+  start_capital: number | null; start_date: string | null; equity: number | null; cash: number | null;
+  invested: number | null; invested_pct: number | null; day_pnl: number | null; day_pnl_pct: number | null;
+  total_return_pct: number | null; peak_equity: number | null;
+  drawdown_pct: number | null; pause_dd_pct: number; positions_n: number | null;
+  last_rebalance: string | null; next_rebalance: string | null; rebalance_rule: string;
+  expected: { cagr: number | null; sharpe: number | null; max_dd: number | null; window: string } | null;
+  live: { days: number; sharpe: number | null; vol: number | null } | null;
+}
+export interface SleevesPayload {
+  enabled: boolean; as_of?: string; benchmark?: string;
+  account?: { net_liq: number | null; day_pnl: number | null; target_per_sleeve: number; sleeves_equity: number | null };
+  last_error?: string | null;
+  sleeves: Sleeve[];
+}
+export interface SleeveEquityPoint {
+  day: string; swing: number | null; momentum: number | null; putwrite: number | null;
+  vaa: number | null; total: number | null; spy: number | null;
+}
+export interface SleeveHolding {
+  symbol: string; kind: string; qty: number; avg_cost: number | null; last: number | null;
+  market_value: number | null; weight_pct: number | null; target_weight_pct: number | null;
+  unrealized_pnl: number | null; unrealized_pct: number | null; note: string | null;
+}
+export interface SleeveTarget { symbol: string; weight_pct: number; reason: string | null }
+export interface SleeveOrder {
+  ts: string; symbol: string; side: string; qty: number; limit_price: number | null; status: string;
+  filled_qty: number | null; avg_fill_price: number | null; reason: string | null;
+}
+export interface SleeveDetail extends Sleeve {
+  holdings: SleeveHolding[]; targets: SleeveTarget[]; orders: SleeveOrder[];
+}
+
+export interface SleeveEvent {
+  id: number | string; ts: string; day: string; sleeve: string | null; kind: string; text: string;
+}
+export interface SleeveBandPoint {
+  day: string; live: number | null; p5: number; p25: number; p50: number; p75: number; p95: number;
+}
+export interface SleeveBand {
+  sleeve: string; start: string | null; window: string;
+  status: "inside" | "below" | "above" | "insufficient"; below_days: number;
+  points: SleeveBandPoint[];
+}
+export interface SleeveTearSheet {
+  sleeve: string; source: "live" | "backtest"; days: number; start: string | null; end: string | null;
+  metrics: {
+    cagr: number | null; vol: number | null; sharpe: number | null; sortino: number | null;
+    max_dd: number | null; calmar: number | null; best_day: number | null; worst_day: number | null;
+    pct_positive_days: number | null;
+  } | null;
+  drawdown: { day: string; dd: number }[];
+  rolling_sharpe: { day: string; value: number | null }[];
+  monthly: { year: number; month: number; ret: number }[];
+  yearly: { year: number; ret: number }[];
+  worst_drawdowns: { start: string; trough: string; end: string | null; depth: number; days: number }[];
+}
+
+/* ---- Shadow strategies (virtual money) ---- */
+export interface Shadow {
+  id: string; name: string; description: string; rule: string;
+  start_date: string | null; start_capital: number | null;
+  equity: number | null; cash: number | null;
+  total_return_pct: number | null; drawdown_pct: number | null; positions_n: number | null;
+  last_rebalance: string | null; next_rebalance: string | null;
+  live: { days: number; sharpe: number | null } | null;
+  expected: { cagr: number | null; sharpe: number | null; max_dd: number | null; window: string } | null;
+}
+export interface ShadowsPayload { enabled: boolean; shadows: Shadow[] }
+export type ShadowEquityPoint = { day: string } & Record<string, number | string | null | undefined>;
+export interface ShadowHolding {
+  symbol: string; qty: number; avg_cost: number | null; last: number | null;
+  market_value: number | null; weight_pct: number | null;
+}
+export interface ShadowTrade {
+  ts: string; symbol: string; side: string; qty: number; price: number | null; reason: string | null;
+}
+export interface ShadowDetail extends Shadow { holdings: ShadowHolding[]; trades: ShadowTrade[] }

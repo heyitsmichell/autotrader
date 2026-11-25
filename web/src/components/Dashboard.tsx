@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import ApproveDrawer from "./ApproveDrawer";
 import AutopsyView from "./AutopsyView";
 import BannerRail from "./BannerRail";
 import CommandBar from "./CommandBar";
 import Today from "./Today";
+import Strategies from "./strategies/Strategies";
 import Backtests from "./backtests/Backtests";
 import ConfirmModal, { ConfirmProvider, type ConfirmRequest } from "./ConfirmModal";
 import DecisionModal from "./DecisionModal";
@@ -44,6 +45,17 @@ export default function Dashboard() {
   const [notice, setNotice] = useState("");
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("today");
+  // Deep link: /#strategies (any tab id) opens that tab, e.g. from a phone bookmark.
+  useEffect(() => {
+    const tabs: Tab[] = ["today", "strategies", "research", "options", "learning", "backtests", "settings"];
+    const apply = () => {
+      const h = window.location.hash.replace("#", "") as Tab;
+      if (tabs.includes(h)) setActiveTab(h);
+    };
+    const t = window.setTimeout(apply, 0);
+    window.addEventListener("hashchange", apply);
+    return () => { window.clearTimeout(t); window.removeEventListener("hashchange", apply); };
+  }, []);
 
   const pending = useMemo(() => proposals.filter(p => p.status === "pending"), [proposals]);
   const positions = portfolio?.positions || [];
@@ -217,6 +229,8 @@ export default function Dashboard() {
               controls={null}
             />
           </Panel>}
+
+          {activeTab === "strategies" && <Panel name="Strategies"><Strategies api={api} status={status} onConfirm={setConfirm} onAction={perform}/></Panel>}
 
           {activeTab === "research" && <>
             <Panel name="Chart"><MarketChart symbols={status?.watchlist || []} api={api} signals={signals} status={status}/></Panel>

@@ -141,6 +141,26 @@ class RiskLoop:
                     self._spread_task = asyncio.create_task(sl.maybe_sample())
             except Exception as e:  # noqa: BLE001
                 log.debug("spread log scheduling failed: %s", e)
+        if getattr(eng.s, "sleeves_enabled", False):
+            try:       # background task: the multi-strategy sleeves never delay exits
+                sm = getattr(eng, "sleeves", None)
+                if sm is None:
+                    from ..sleeves.manager import SleeveManager
+                    sm = eng.sleeves = SleeveManager(eng)
+                if sm.due():
+                    self._sleeve_task = asyncio.create_task(sm.tick())
+            except Exception as e:  # noqa: BLE001
+                log.debug("sleeve scheduling failed: %s", e)
+        if getattr(eng.s, "shadows_enabled", False):
+            try:       # background task: virtual-money shadow strategies, never any orders
+                sh = getattr(eng, "shadows", None)
+                if sh is None:
+                    from ..shadows.manager import ShadowManager
+                    sh = eng.shadows = ShadowManager(eng)
+                if sh.due():
+                    self._shadow_task = asyncio.create_task(sh.tick())
+            except Exception as e:  # noqa: BLE001
+                log.debug("shadow scheduling failed: %s", e)
         manager = eng.option_exits
         idle = not manager.held and not eng.s.options_enabled
         if idle and time.monotonic() - self._last_poll < IDLE_INTERVAL_SECONDS:
