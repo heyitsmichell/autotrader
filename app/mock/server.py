@@ -459,6 +459,15 @@ async def place_option_single_order(account_id: str = "", symbol: str = "", side
         return err
     if not symbol or not side or not option_type or not expiration_date:
         return "Validation error: symbol, side, option_type, expiration_date are required"
+    if len(symbol) < 16:
+        # Real Webull takes the UNDERLYING as `symbol` (strike/expiry/type in their own fields);
+        # the mock keys positions by OCC code, so build it here.
+        try:
+            exp = datetime.strptime(expiration_date, "%Y-%m-%d")
+            symbol = (f"{symbol.upper()}{exp:%y%m%d}{'C' if option_type.upper().startswith('C') else 'P'}"
+                      f"{int(round(float(strike_price) * 1000)):08d}")
+        except (ValueError, TypeError):
+            return "Validation error: bad expiration_date or strike_price"
     if err := (check_account(account_id)
                or _validate_option(symbol, side, quantity, option_type, strike_price,
                                    expiration_date, order_type, limit_price, stop_price, position_intent)):

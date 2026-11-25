@@ -58,3 +58,24 @@ def daily_ohlc(symbols: list[str], period: str = "18mo") -> dict[str, pd.DataFra
         df.columns = [str(c).upper() for c in df.columns]
         out[key] = df.dropna(axis=1, how="all")
     return out
+
+
+def daily_ohlcv(symbols: list[str], period: str = "2y") -> dict[str, pd.DataFrame]:
+    """Adjusted daily bars: {"open","high","low","close","volume"} DataFrames, same layout as daily_closes."""
+    import yfinance as yf
+    syms = sorted(set(symbols))
+    keys = (("open", "Open"), ("high", "High"), ("low", "Low"), ("close", "Close"), ("volume", "Volume"))
+    empty = {k: pd.DataFrame() for k, _ in keys}
+    if not syms:
+        return empty
+    raw = yf.download(syms, period=period, interval="1d", auto_adjust=True, progress=False,
+                      threads=True, group_by="column")
+    if raw is None or raw.empty:
+        return empty
+    out = {}
+    for key, col in keys:
+        df = raw[col] if isinstance(raw.columns, pd.MultiIndex) else raw[[col]].rename(columns={col: syms[0]})
+        df = df.dropna(how="all").sort_index()
+        df.columns = [str(c).upper() for c in df.columns]
+        out[key] = df.dropna(axis=1, how="all")
+    return out

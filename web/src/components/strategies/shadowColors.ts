@@ -1,6 +1,6 @@
 /** Fixed identity colours by shadow id; unknown ids fall back through the same list. */
 export const SHADOW_COLORS: Record<string, string> = {
-  mom_skip1w: "#e24d8b", overnight_mom: "#0aac23", vaa_g4: "#9887ef",
+  mom_skip1w: "#e24d8b", overnight_mom: "#0aac23", vaa_g4: "#9887ef", swing_dynamic: "#00a888",
 };
 const LIST = ["#e24d8b", "#0aac23", "#9887ef"];
 export const shadowColor = (id: string, index = 0): string =>

@@ -1,0 +1,34 @@
+.muted { color: var(--ink-2); font-size: var(--fs-xs); margin: 6px 0; }
+.gain { color: var(--gain); }
+.loss { color: var(--loss); }
+.scroll { overflow-x: auto; max-width: 100%; }
+.tbl { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
+.tbl th, .tbl td { padding: 4px 8px; border-bottom: 1px solid var(--rule); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tbl th { color: var(--ink-2); font-weight: 400; }
+.tbl th:first-child, .tbl td:first-child, .tbl .l { text-align: left; }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 12px 0 6px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--fs-xs); color: var(--ink-2); }
+.line { display: inline-block; width: 16px; height: 0; border-top: 2px solid; margin-right: 6px; vertical-align: middle; }
+.dash { border-top-style: dashed; border-top-width: 1px; }
+.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--ink-2); }
+.chartBox { position: relative; }
+.chart { height: 300px; width: 100%; }
+.ctip { position: absolute; z-index: 5; background: var(--raise); border: 1px solid var(--rule); border-radius: 4px; padding: 6px 8px; font-size: var(--fs-xs); pointer-events: none; display: none; }
+.ctip div { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+.filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 8px; }
+.filters input[type="search"] { background: var(--raise); border: 1px solid var(--rule); color: var(--ink); border-radius: 4px; padding: 4px 8px; font: inherit; font-size: var(--fs-xs); width: 140px; }
+.chip { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+.tag { color: var(--ink-2); font-size: var(--fs-xs); margin-left: 6px; }
+.reason { display: inline-block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+.pager { display: flex; align-items: center; gap: 12px; margin-top: 8px; font-size: var(--fs-xs); color: var(--ink-2); }
+.pager button { background: none; border: 0; color: var(--ink-2); text-decoration: underline; cursor: pointer; font: inherit; }
+.pager button:disabled { opacity: .4; cursor: default; text-decoration: none; }
+.cards { display: none; }
+@media (max-width: 639px) {
+  .wide { display: none; }
+  .cards { display: block; }
+  .card { padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: var(--fs-md); font-variant-numeric: tabular-nums; }
+  .card > div { display: flex; justify-content: space-between; gap: 8px; }
+  .card .sub { color: var(--ink-2); font-size: var(--fs-xs); }
+  .chart { height: 240px; }
+}

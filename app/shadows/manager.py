@@ -12,19 +12,21 @@ import json
 import logging
 import math
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ..broker import BrokerError
-from ..market import market_is_open, now_et, now_utc
+from ..market import is_trading_day, market_is_open, now_et, now_utc
 from ..sleeves import data
 from ..sleeves.manager import next_rebalance_day
-from . import registry, strategies
+from . import registry, strategies, swing_dynamic
 
 log = logging.getLogger("app.shadows")
 TICK_SECONDS = 60.0
 PRICE_REFRESH_SECONDS = 300.0
 COST_BPS = 10.0
 TOP_N = 10
+REPLAY_AFTER = (16, 30)          # swing_dynamic: first tick at/after 16:30 ET on a trading day
+REPLAY_RETRY_SECONDS = 1800.0
 
 
 def _f(v) -> float | None:
@@ -54,6 +56,8 @@ class ShadowManager:
         self._yahoo: dict[str, dict[str, float]] = {}   # shadow -> last Yahoo close per symbol
         self._retry_after: dict[str, float] = {}
         self._price_warned: dict[str, float] = {}
+        self._replay_retry = 0.0
+        self._replay_warned_day: str | None = None
 
     # ------------------------------------------------------------------ scheduling
     def due(self) -> bool:
@@ -83,12 +87,59 @@ class ShadowManager:
         window = self._trading_window()
         for d in registry.SHADOWS:
             try:
+                if not d.monthly:
+                    await self._replay_tick(d)
+                    continue
                 if window and self._due_month(d.id):
                     await self._rebalance(d)
                 await self._value(d.id)
             except Exception as e:  # noqa: BLE001 - one shadow failing must not stop the others
                 self.last_error = f"{d.id}: {type(e).__name__}: {e}"
                 log.warning("shadow %s failed: %s", d.id, e, exc_info=True)
+
+    # ------------------------------------------------------------------ swing_dynamic (daily forward replay)
+    def _replay_due(self, sid: str) -> bool:
+        now = now_et()
+        if not is_trading_day(now.date()) or (now.hour, now.minute) < REPLAY_AFTER:
+            return False
+        return _meta(self.db.shadow_state(sid)).get("replay_day") != now.date().isoformat()
+
+    async def _replay_tick(self, d: registry.ShadowDef) -> None:
+        if not self._replay_due(d.id) or time.monotonic() < self._replay_retry:
+            return
+        st = self.db.shadow_state(d.id) or {}
+        today = now_et().date()
+        start = datetime.fromisoformat(st.get("start_date") or today.isoformat()).date()
+        cap = float(st.get("start_capital") or self.s.shadow_start_capital)
+        try:
+            out = await swing_dynamic.run_replay(self.s, start, today, cap)   # low-priority worker process
+            swing_dynamic.apply(self.db, d.id, out)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - keep the previous rows
+            self._replay_retry = time.monotonic() + REPLAY_RETRY_SECONDS
+            if self._replay_warned_day != today.isoformat():
+                self._replay_warned_day = today.isoformat()
+                self.db.log("warn", f"Shadow {d.name}: daily replay failed ({type(e).__name__}: {e}); "
+                                    "keeping the previous rows")
+            log.warning("shadow %s replay failed: %s", d.id, e)
+            return
+        meta = _meta(self.db.shadow_state(d.id))
+        meta.update({"replay_day": today.isoformat(), "last_prices": out["last_prices"],
+                     "replay_at": now_utc().isoformat(timespec="seconds")})
+        self.db.upsert_shadow_state(d.id, cash=round(out["cash"], 2), peak_equity=round(out["peak"], 2),
+                                    last_rebalance=now_et().isoformat(timespec="seconds"), meta=meta)
+        self.db.log("info", f"Shadow {d.name}: replayed to {today} (virtual), {len(out['positions'])} open, "
+                            f"equity {out['equity'][-1][1]:,.0f}")
+
+    def _next_replay_day(self, sid: str) -> str:
+        now = now_et()
+        day = now.date()
+        if not self._replay_due(sid) and (now.hour, now.minute) >= REPLAY_AFTER or not is_trading_day(day):
+            day += timedelta(days=1)
+            while not is_trading_day(day):
+                day += timedelta(days=1)
+        return day.isoformat()
 
     def _trading_window(self) -> bool:
         now = now_et()
@@ -157,6 +208,11 @@ class ShadowManager:
 
     def _equity(self, sid: str) -> tuple[float, float]:
         """(equity, invested) from cash plus holdings at the cached price (cost as the fallback)."""
+        d = registry.get(sid)
+        if not d.monthly:
+            rows = [r[sid] for r in self.db.shadow_equity_series(3650) if r.get(sid) is not None]
+            if rows:
+                return round(float(rows[-1]), 2), 0.0
         prices = self._px.get(sid, {}).get("prices", {})
         cash = self._cash(sid)
         invested = sum(float(h["qty"]) * float(prices.get(h["symbol"]) or h.get("avg_cost") or 0.0)
@@ -266,7 +322,7 @@ class ShadowManager:
             sd = (sum((x - m) ** 2 for x in rets) / (len(rets) - 1)) ** 0.5
             sharpe = round(m / sd * math.sqrt(252), 2) if sd > 0 else None
         last_rb = st.get("last_rebalance")
-        nxt = (next_rebalance_day(datetime.fromisoformat(last_rb).date()).isoformat()
+        nxt = (self._next_replay_day(d.id) if not d.monthly else next_rebalance_day(datetime.fromisoformat(last_rb).date()).isoformat()
                if last_rb else now_et().date().isoformat())
         return {
             "id": d.id, "name": d.name, "description": d.description, "rule": d.rule,
@@ -289,7 +345,8 @@ class ShadowManager:
         d = registry.get(sid)
         base = self._view(d, self.db.shadow_equity_series(3650))
         eq = base.get("equity") or 0
-        prices = self._px.get(sid, {}).get("prices", {})
+        prices = (self._px.get(sid, {}).get("prices", {}) if registry.get(sid).monthly
+                  else _meta(self.db.shadow_state(sid)).get("last_prices", {}))
         holdings = []
         for h in self.db.shadow_holdings(sid):
             q, cost = float(h["qty"]), _f(h.get("avg_cost"))

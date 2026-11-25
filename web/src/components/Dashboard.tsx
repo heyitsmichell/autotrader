@@ -22,7 +22,10 @@ import OptionsSettings from "./options/OptionsSettings";
 import SettingsPanel from "./SettingsPanel";
 import { AccountPanel, HealthPanel, OrdersPanel } from "./SidePanels";
 import SignalsTable from "./SignalsTable";
+import ResearchPicker from "./research/ResearchPicker";
 import TopBar, { type Tab } from "./TopBar";
+import StrategyPnl from "./results/StrategyPnl";
+import AllTrades from "./results/AllTrades";
 import TradeLedgerView from "./TradeLedgerView";
 import { useDashboardData } from "@/lib/useDashboardData";
 import type { Proposal, ProposalDetail } from "@/lib/types";
@@ -232,7 +235,7 @@ export default function Dashboard() {
 
           {activeTab === "strategies" && <Panel name="Strategies"><Strategies api={api} status={status} onConfirm={setConfirm} onAction={perform}/></Panel>}
 
-          {activeTab === "research" && <>
+          {activeTab === "research" && <ResearchPicker api={api} swing={<>
             <Panel name="Chart"><MarketChart symbols={status?.watchlist || []} api={api} signals={signals} status={status}/></Panel>
             <Panel name="Signals">
               <SignalsTable signals={signals} status={status} ml={ml} onSelectSymbol={chartSymbol}/>
@@ -240,7 +243,7 @@ export default function Dashboard() {
             <Panel name="History">
               <HistoryTable proposals={proposals.slice(0, 10)} lastRun={lastRun} onOpen={p => void openProposal(p)}/>
             </Panel>
-          </>}
+          </>}/>}
 
           {activeTab === "options" && status?.settings?.options_enabled && <>
             <Panel name="Option chain"><OptionChain status={status} api={api} onSymbolSelect={chartSymbol}/></Panel>
@@ -248,7 +251,9 @@ export default function Dashboard() {
           </>}
 
           {activeTab === "learning" && <>
-            <Panel name="Trade ledger"><section className={`panel ${css["learning-panel"]}`}><TradeLedgerView/></section></Panel>
+            <Panel name="P&L by strategy"><section className={`panel ${css["learning-panel"]}`}><StrategyPnl api={api}/></section></Panel>
+            <Panel name="All trades"><section className={`panel ${css["learning-panel"]}`}><AllTrades api={api}/></section></Panel>
+            <Panel name="Swing trade ledger (detail)"><section className={`panel ${css["learning-panel"]}`}><TradeLedgerView/></section></Panel>
             <Panel name="Autopsies"><section className={`panel ${css["learning-panel"]}`}><AutopsyView/></section></Panel>
             <Panel name="ML scorecard">
               <section className={`panel ${css["learning-panel"]}`}>

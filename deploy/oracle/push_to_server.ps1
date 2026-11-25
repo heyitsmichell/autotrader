@@ -3,6 +3,9 @@
 # First time (code + database + settings):
 #   powershell -ExecutionPolicy Bypass -File deploy\oracle\push_to_server.ps1 -Server ubuntu@<PUBLIC_IP>
 #
+# Research results only (Backtests tab data; no restart):
+#   powershell -ExecutionPolicy Bypass -File deploy\oracle\push_to_server.ps1 -Server ubuntu@<PUBLIC_IP> -Research
+#
 # Later, to send code changes only (the server keeps its own database, .env and Webull login):
 #   powershell -ExecutionPolicy Bypass -File deploy\oracle\push_to_server.ps1 -Server ubuntu@<PUBLIC_IP> -CodeOnly
 #
@@ -12,6 +15,10 @@
 param(
     [Parameter(Mandatory = $true)][string]$Server,
     [switch]$CodeOnly,
+    # Research results only (reports, trials registry, leaderboards, summaries under data/experiments
+    # and data/backtests). Code-only pushes skip data/, so without this the Backtests tab on the server
+    # goes stale. No restart: the API reads these files on each request.
+    [switch]$Research,
     [string]$Key = "$env:USERPROFILE\.ssh\oracle_trader.key"
 )
 
@@ -29,7 +36,7 @@ if (-not (Test-Path (Join-Path $Root "web\out\index.html"))) {
     throw "web\out is missing. Build the dashboard first: cd web; npm run build"
 }
 
-if (-not $CodeOnly) {
+if (-not $CodeOnly -and -not $Research) {
     # The database must not be copied while the bot has it open.
     $lockFile = Join-Path $Root "data\trader.lock"
     if (Test-Path $lockFile) {
@@ -51,6 +58,30 @@ if (-not $CodeOnly) {
 $excludes = @(".venv", "node_modules", ".git", "__pycache__", ".pytest_cache", ".mypy_cache",
               "logs", "web/.next", "web/out_prev*", "web/tsconfig.tsbuildinfo",
               "data/trader.lock", "data/api_token", "PC_BOT_DISABLED")
+if ($Research) {
+    $files = Get-ChildItem -Path (Join-Path $Root "data/experiments"), (Join-Path $Root "data/backtests") -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { ($_.Name -like "*.md" -or $_.Name -eq "trials_registry.csv" -or $_.Name -like "*leaderboard*.csv" -or
+                        $_.Name -like "summary*.json" -or $_.Name -eq "results.json") -and
+                       $_.FullName -notmatch '[\\/]_cache[\\/]' -and $_.Name -notmatch "backup" } |
+        ForEach-Object { "./" + ($_.FullName.Substring($Root.Length + 1) -replace "\\", "/") }
+    if (-not $files) { throw "No research files found under data/experiments or data/backtests" }
+    $list = Join-Path $env:TEMP "trader_research_files.txt"
+    [IO.File]::WriteAllLines($list, [string[]]$files)
+    $archive = Join-Path $env:TEMP "trader_research.tgz"
+    if (Test-Path $archive) { Remove-Item $archive -Force }
+    & tar.exe -czf $archive -C $Root -T $list
+    if ($LASTEXITCODE -ne 0) { throw "tar failed" }
+    Write-Host ("Research files: {0}, archive {1:N0} KB" -f $files.Count, ((Get-Item $archive).Length / 1KB))
+    try {
+        & scp @SshOpts $archive "${Server}:trader_research.tgz"
+        if ($LASTEXITCODE -ne 0) { throw "Upload failed" }
+        Invoke-Remote "mkdir -p ~/trader && tar -xzf ~/trader_research.tgz -C ~/trader && rm ~/trader_research.tgz && echo 'Research results synced (no restart needed).'"
+    } finally {
+        Remove-Item $archive, $list -Force -ErrorAction SilentlyContinue
+    }
+    return
+}
+
 if ($CodeOnly) { $excludes += @("data", "conf", ".env") }
 
 $archive = Join-Path $env:TEMP "trader_push.tgz"

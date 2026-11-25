@@ -672,6 +672,10 @@ class SleeveManager:
             if not occ or occ["underlying"] != under or occ["option_type"] != "PUT":
                 continue
             exp = date.fromisoformat(occ["expiration"])
+            # standard strikes only: adjusted contracts (after a corporate action) carry odd
+            # strikes such as 579.78 and trade thinly (2026-11-25 the picker chose them)
+            if abs(occ["strike"] * 2 - round(occ["strike"] * 2)) > 1e-6:
+                continue
             if 21 <= (exp - today).days <= 45:
                 rows.append({**occ, "symbol": tok, "expiration": exp})
         if not rows:
