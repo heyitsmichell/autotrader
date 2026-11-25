@@ -31,12 +31,9 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (!this.state.error) return this.props.children;
-    return <section className={`panel ${css["panel-error"]}`} role="alert">
-      <div className="eyebrow">PANEL ERROR</div>
-      <h2>{this.props.name} could not be shown</h2>
-      <p className="muted">{this.state.error.message || "Unexpected error"}. The rest of the dashboard,
-        including the kill switch, still works.</p>
-      <button className="button button-quiet" onClick={() => this.setState({ error: null })}>Try again</button>
+    return <section className={css["panel-error"]} role="alert">
+      <p>{this.props.name} could not be shown ({this.state.error.message || "unexpected error"}). The kill switch still works.</p>
+      <button className="button" onClick={() => this.setState({ error: null })}>Retry</button>
     </section>;
   }
 }

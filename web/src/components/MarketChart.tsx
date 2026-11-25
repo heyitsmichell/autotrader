@@ -7,7 +7,8 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { Api } from "@/lib/api";
 import { sma } from "@/lib/indicators";
-import type { Signal } from "@/lib/types";
+import type { Signal, Status } from "@/lib/types";
+import Segmented from "@/components/ui/Segmented";
 import ChartRead from "./ChartRead";
 import css from "./MarketChart.module.css";
 
@@ -16,16 +17,17 @@ type OverlayLine = { kind: string; price: number; label: string; status?: string
 type OverlayMarker = { id: number; time: string; side: string; status: string; price: number; quantity: number };
 type Overlays = { symbol: string; markers: OverlayMarker[]; lines: OverlayLine[] };
 
-const LINE_COLORS: Record<string, string> = { cost: "#9aa3ad", pending: "#e0b35a", sl: "#e5675c", tp: "#3fb27f" };
-const frames = ["1m", "5m", "15m", "1h", "1D"];
+const GAIN = "#46a882", LOSS = "#e5596f", WARN = "#d9a441", ACCENT = "#5b9be0", MUTED = "#8c9199", INK2 = "#bdbfc4";
+const LINE_COLORS: Record<string, string> = { cost: MUTED, pending: WARN, sl: LOSS, tp: GAIN };
+const frames = ["1m", "5m", "15m", "1h", "1D"].map(f => ({ value: f, label: f }));
 const OVERLAYS = [
-  ["sma20", "20-day average", "#7ba9e6"], ["sma50", "50-day average", "#e0b35a"], ["sma200", "200-day average", "#b48ead"],
-  ["volume", "Volume", "#6b747d"], ["levels", "Entry and stop", "#9aa3ad"], ["trades", "Trades", "#3fb27f"],
+  ["sma20", "20-day average", ACCENT], ["sma50", "50-day average", INK2], ["sma200", "200-day average", MUTED],
+  ["volume", "Volume", "#4a4e55"], ["levels", "Entry and stop", MUTED], ["trades", "Trades", GAIN],
 ] as const;
 type OverlayKey = (typeof OVERLAYS)[number][0];
 type HistoryResponse = { bars?: Array<Omit<Bar, "time"> & { time: number | string }> };
 
-export default function MarketChart({ symbols, api, signals = [] }: { symbols: string[]; api: Api; signals?: Signal[] }) {
+export default function MarketChart({ symbols, api, signals = [], status = null }: { symbols: string[]; api: Api; signals?: Signal[]; status?: Status | null }) {
   const host = useRef<HTMLDivElement>(null);
   const [picked, setPicked] = useState("");
   const symbol = picked && symbols.includes(picked) ? picked : symbols[0] || "";
@@ -50,17 +52,18 @@ export default function MarketChart({ symbols, api, signals = [] }: { symbols: s
     if (!host.current) return;
     const c = createChart(host.current, {
       autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: "#17191c" }, textColor: "#9aa3ad", fontFamily: "IBM Plex Sans, system-ui, sans-serif" },
-      grid: { vertLines: { color: "#212428" }, horzLines: { color: "#212428" } },
-      rightPriceScale: { borderColor: "#2a2e33" }, timeScale: { borderColor: "#2a2e33", timeVisible: true },
+      layout: { background: { type: ColorType.Solid, color: "#16171a" }, textColor: "#8c9199", panes: { separatorColor: "#26292e", separatorHoverColor: "#3a3d43", enableResize: true }, fontFamily: "IBM Plex Sans, system-ui, sans-serif" },
+      grid: { vertLines: { visible: false }, horzLines: { color: "#26292e" } },
+      crosshair: { vertLine: { labelBackgroundColor: "#1d1f23" }, horzLine: { labelBackgroundColor: "#1d1f23" } },
+      rightPriceScale: { borderColor: "#26292e" }, timeScale: { borderColor: "#26292e", timeVisible: true },
       localization: { timeFormatter: (t: Time) => {
         const date = typeof t === "number" ? new Date(t * 1000) : typeof t === "string" ? new Date(t) : new Date(Date.UTC(t.year, t.month - 1, t.day));
         return new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(date);
       } },
     });
-    const candle = c.addSeries(CandlestickSeries, { upColor: "#3fb27f", downColor: "#e5675c", wickUpColor: "#3fb27f", wickDownColor: "#e5675c", borderVisible: false });
+    const candle = c.addSeries(CandlestickSeries, { upColor: GAIN, downColor: LOSS, wickUpColor: GAIN, wickDownColor: LOSS, borderVisible: false });
     const mk = (color: string) => c.addSeries(LineSeries, { color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-    const sma20 = mk("#7ba9e6"), sma50 = mk("#e0b35a"), sma200 = mk("#b48ead");
+    const sma20 = mk(ACCENT), sma50 = mk(INK2), sma200 = mk(MUTED);
     const volume = c.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, lastValueVisible: false, priceLineVisible: false }, 1);
     try { c.panes()[1]?.setHeight(64); } catch { /* single pane fallback */ }
     let source: EventSource | null = null;
@@ -70,7 +73,7 @@ export default function MarketChart({ symbols, api, signals = [] }: { symbols: s
     let markerList: SeriesMarker<Time>[] = [];
     const markers = createSeriesMarkers(candle, []);
     const span = ({ "1m": 60, "5m": 300, "15m": 900, "1h": 3600 } as Record<string, number>)[frame] || 86400;
-    const volColor = (b: Bar) => (b.close >= b.open ? "#3fb27f33" : "#e5675c33");
+    const volColor = (b: Bar) => (b.close >= b.open ? "#46a88233" : "#e5596f33");
     const smaOf = (n: number) => sma(bars as Array<{ time: string | number; close: number }>, n) as unknown as Array<{ time: Time; value: number }>;
     const showing = () => {
       const o = onRef.current;
@@ -92,9 +95,9 @@ export default function MarketChart({ symbols, api, signals = [] }: { symbols: s
         priceLines.forEach(l => candle.removePriceLine(l));
         priceLines = (o.lines || []).filter(l => Number(l.price) > 0).map(l => candle.createPriceLine({
           price: Number(l.price),
-          color: LINE_COLORS[l.kind] || "#7ba9e6",
+          color: LINE_COLORS[l.kind] || ACCENT,
           lineWidth: 1,
-          lineStyle: l.kind === "cost" ? LineStyle.Solid : LineStyle.Dashed,
+          lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
           title: l.label,
         }));
@@ -109,7 +112,7 @@ export default function MarketChart({ symbols, api, signals = [] }: { symbols: s
           return [{
             time: (frame === "1D" ? day : Math.floor(epoch / span) * span) as Time,
             position: buy ? "belowBar" : "aboveBar",
-            color: m.status === "placed" ? (buy ? "#3fb27f" : "#e5675c") : "#9aa3ad",
+            color: m.status === "placed" ? (buy ? GAIN : LOSS) : MUTED,
             shape: buy ? "arrowUp" : "arrowDown",
             text: `#${m.id} ${m.side} ${m.quantity} · ${m.status}`,
           }];
@@ -135,7 +138,7 @@ export default function MarketChart({ symbols, api, signals = [] }: { symbols: s
       } catch (e) { if (active) setNote(`Price history unavailable · ${e instanceof Error ? e.message : "broker error"}`); }
       if (!active) return;
       source = new EventSource(`/api/stream?symbol=${encodeURIComponent(symbol)}`);
-      source.addEventListener("hello", (e) => { const v = JSON.parse((e as MessageEvent).data); setLive(v.mode === "stream" ? "streaming" : `polling ${v.mode}`); });
+      source.addEventListener("hello", (e) => { const v = JSON.parse((e as MessageEvent).data); setLive(v.mode === "stream" ? "streaming" : "delayed"); });
       source.onmessage = (e) => {
         const tick = JSON.parse(e.data); if (tick.symbol !== symbol) return;
         setPrice(tick.p); const t = frame === "1D" ? new Date(tick.t * 1000).toLocaleDateString("en-CA", { timeZone: "America/New_York" }) : Math.floor(tick.t / span) * span;
@@ -154,24 +157,26 @@ export default function MarketChart({ symbols, api, signals = [] }: { symbols: s
     return () => { active = false; apply.current = () => {}; window.clearInterval(overlayTimer); source?.close(); c.remove(); };
   }, [symbol, frame, extended, api]);
 
+  const bench = symbols.includes("SPY") ? "SPY" : symbols.includes("SPYM") ? "SPYM" : "";
   return <section className={css.wrap}>
-    <div className={css.head}>
-      <h2>{symbol || "Market chart"} <span className={css.price}>{price == null ? "—" : `$${price.toFixed(2)}`}</span></h2>
-      <div className={css.controls}>
-        <select aria-label="Chart symbol" value={symbol} onChange={e => setPicked(e.target.value)}>{symbols.map(s => <option key={s}>{s}</option>)}</select>
-        <div className={css.tabs} role="group" aria-label="Timeframe">
-          {frames.map(f => <button key={f} aria-pressed={frame === f} className={frame === f ? "selected" : ""} onClick={() => setFrame(f)}>{f}</button>)}
-          <button aria-pressed={extended} className={extended ? "selected" : ""} onClick={() => setExtended(!extended)} title="Include pre-market and after-hours">Extended hours</button>
+    <div className={css.chartCol}>
+      <div className={css.head}>
+        <div className={css.title}>
+          <select aria-label="Chart symbol" value={symbol} onChange={e => setPicked(e.target.value)}>{symbols.map(s => <option key={s}>{s}</option>)}</select>
+          <span className={css.price}>{price == null ? "—" : `$${price.toFixed(2)}`}</span>
+          {live !== "streaming" && live !== "connecting" && <span className={css.muted}>{live}</span>}
+        </div>
+        <div className={css.controls}>
+          <Segmented label="Timeframe" options={frames} value={frame} onChange={setFrame}/>
+          <button type="button" className="button" aria-pressed={extended} onClick={() => setExtended(!extended)} title="Include pre-market and after-hours">Extended hours: {extended ? "on" : "off"}</button>
         </div>
       </div>
+      <div className={css.legend} role="group" aria-label="Chart overlays">
+        {OVERLAYS.map(([k, label, color]) => <button key={k} type="button" aria-pressed={on[k]} className={`${css.chip} ${on[k] ? css.chipOn : ""}`} onClick={() => setOn(o => ({ ...o, [k]: !o[k] }))}><i style={{ background: on[k] ? color : "transparent", borderColor: color }}/>{label}</button>)}
+      </div>
+      <div ref={host} className={css.host}/>
+      <div className={css.foot}>{note}</div>
     </div>
-    <div className={css.legend} role="group" aria-label="Chart overlays">
-      {OVERLAYS.map(([k, label, color]) => <button key={k} aria-pressed={on[k]} className={`${css.chip} ${on[k] ? css.chipOn : ""}`} onClick={() => setOn(o => ({ ...o, [k]: !o[k] }))}><i style={{ background: on[k] ? color : "transparent", borderColor: color }}/>{label}</button>)}
-      <span className={css.live}>{live}</span>
-    </div>
-    <div className={css.body}>
-      <div className={css.chartCol}><div ref={host} className={css.host}/><div className={css.foot}>{note} · Data via Webull MCP</div></div>
-      <ChartRead symbol={symbol} signal={signal} api={api} price={price} benchmark={symbols.includes("SPY") ? "SPY" : symbols.includes("SPYM") ? "SPYM" : ""}/>
-    </div>
+    <ChartRead symbol={symbol} signal={signal} api={api} price={price} benchmark={bench} status={status}/>
   </section>;
 }

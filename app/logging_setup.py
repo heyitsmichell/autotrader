@@ -2,7 +2,7 @@
 
 ``setup_logging()`` is idempotent. It
   * configures the root logger exactly as main.py used to (INFO, same format);
-  * adds the rotating files: logs/app.log (5 MB), logs/mcp_server.log (1 MB, "mcp" logger),
+  * adds the rotating files: logs/app.log (5 MB), logs/mcp_server.log (1 MB, "mcp" logger; copytruncate via trim_log),
     logs/webull_audit.log (0.5 MB, "webull_audit" logger), 5 backups each;
   * sets ``httpx`` / ``httpcore`` to WARNING (their INFO lines print full request URLs, which for
     Telegram contain the bot token);
@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import os
 import re
+import shutil
 
 from .config import LOG_DIR
 
+log = logging.getLogger(__name__)
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 # (pattern, replacement). Order matters: specific shapes first, generic key=value last.
@@ -66,6 +69,51 @@ def install_redaction() -> None:
                 h.addFilter(RedactionFilter())
 
 
+MCP_LOG_MAX = 1_000_000
+AUDIT_LOG_MAX = 500_000
+
+
+def trim_log(path, max_bytes: int, backups: int = 5) -> bool:
+    """Copytruncate rotation; safe while another process holds `path` open in append mode.
+
+    Shifts path.N backups (oldest dropped), copies the file to path.1, truncates in place.
+    Never raises. Returns True if it rotated.
+    """
+    try:
+        path = str(path)
+        if os.path.getsize(path) <= max_bytes:
+            return False
+        for i in range(backups, 0, -1):
+            src = path if i == 1 else f"{path}.{i - 1}"
+            dst = f"{path}.{i}"
+            if os.path.exists(src):
+                if i == backups and os.path.exists(dst):
+                    os.remove(dst)
+                if i == 1:
+                    shutil.copyfile(src, dst)
+                else:
+                    os.replace(src, dst)
+        with open(path, "r+b") as f:
+            f.truncate(0)
+        return True
+    except OSError as e:
+        log.warning("log trim failed for %s: %s", path, e)
+        return False
+
+
+def trim_shared_logs() -> None:
+    """Trim the two logs also written by the MCP subprocess."""
+    trim_log(LOG_DIR / "mcp_server.log", MCP_LOG_MAX)
+    trim_log(LOG_DIR / "webull_audit.log", AUDIT_LOG_MAX)
+
+
+def _shared(name: str) -> logging.FileHandler:
+    """Plain append handler (no rename rotation) for files another process also writes."""
+    handler = logging.FileHandler(LOG_DIR / name, mode="a", encoding="utf-8")
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    return handler
+
+
 def _rotating(name: str, max_bytes: int) -> logging.handlers.RotatingFileHandler:
     handler = logging.handlers.RotatingFileHandler(LOG_DIR / name, maxBytes=max_bytes,
                                                    backupCount=5, encoding="utf-8")
@@ -81,13 +129,14 @@ def setup_logging(*, files: bool = True) -> None:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         root = logging.getLogger()
         if not any(isinstance(h, logging.handlers.RotatingFileHandler) for h in root.handlers):
+            trim_shared_logs()
             root.addHandler(_rotating("app.log", 5_000_000))
             mcp_logger = logging.getLogger("mcp")
-            mcp_logger.addHandler(_rotating("mcp_server.log", 1_000_000))
+            mcp_logger.addHandler(_shared("mcp_server.log"))
             mcp_logger.setLevel(logging.INFO)
             mcp_logger.propagate = False
             audit_logger = logging.getLogger("webull_audit")
-            audit_logger.addHandler(_rotating("webull_audit.log", 500_000))
+            audit_logger.addHandler(_shared("webull_audit.log"))
             audit_logger.setLevel(logging.INFO)
             audit_logger.propagate = False
     install_redaction()

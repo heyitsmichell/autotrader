@@ -106,7 +106,7 @@ class EligibilityChecker:
     def _held_overnight(self) -> bool:
         return True
 
-    async def _check_earnings(self, symbol: str) -> EligibilityResult:
+    async def _check_earnings(self, symbol: str, blackout_days: int | None = None) -> EligibilityResult:
         """Earnings blackout. Fails CLOSED when the calendar cannot be read and the entry would
         be held overnight (ELIGIBILITY_EARNINGS_FAIL_CLOSED, default on). In BROKER_MODE=mock
         there is no real calendar and no real money, so a missing calendar passes there."""
@@ -127,7 +127,8 @@ class EligibilityChecker:
             return EligibilityResult(ok=True, details={"earnings_calendar": "unavailable"})
 
         today = now_et().date()
-        blackout_days = self.s.eligibility_earnings_blackout_days
+        if blackout_days is None:
+            blackout_days = self.s.eligibility_earnings_blackout_days
         for earn_date_str in dates:
             try:
                 earn_date = datetime.fromisoformat(str(earn_date_str)[:10]).date()

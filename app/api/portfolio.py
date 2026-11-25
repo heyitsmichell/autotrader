@@ -8,11 +8,59 @@ from fastapi import APIRouter, HTTPException, Request
 
 from ..db import decode
 from ..execution_quality import add_missed_opportunities, build_execution_quality
-from ..market import now_utc
+from ..market import now_utc, order_session
 from ..performance import build_performance
 from .models import TradeRow
 
 router = APIRouter()
+
+
+def protection_states(positions, open_trades, protective_rows, session, settings, kv_get) -> dict:
+    """Per-held-symbol stop protection, mirroring risk_loop._soft_stops semantics (pure)."""
+    soft_on = bool(getattr(settings, "extended_hours_soft_stop", False))
+    night_ok = bool(getattr(settings, "overnight_trading", False))
+    night_syms = set(getattr(settings, "overnight_symbols", None) or [])
+    trades: dict[str, list[dict]] = {}
+    for t in open_trades or []:
+        if (t.get("side") == "BUY" and t.get("entry_fill_price") is not None
+                and t.get("exit_fill_price") is None):
+            trades.setdefault(t.get("symbol"), []).append(t)
+    rows: dict[str, list[dict]] = {}
+    for r in protective_rows or []:
+        # protective_orders stores the stop leg as kind "sl" (the target leg is "tp")
+        if str(r.get("kind") or "sl").lower() in ("sl", "stop", "stop_loss"):
+            rows.setdefault(r.get("symbol"), []).append(r)
+    out: dict[str, dict] = {}
+    for p in positions or []:
+        sym = p.get("symbol")
+        if not sym or sym in out:
+            continue
+        ts = trades.get(sym, [])
+        with_stop = [t for t in ts if t.get("stop_price")]
+        stop = (max(float(t["stop_price"]) for t in with_stop) if with_stop
+                else next((float(r["price"]) for r in rows.get(sym, []) if r.get("price")), None))
+        if any(kv_get(f"soft_stop:{t['id']}") for t in ts):
+            out[sym] = {"state": "soft_fired", "stop": stop,
+                        "detail": "app soft stop already fired; exit order sent"}
+        elif not with_stop and not rows.get(sym):
+            out[sym] = {"state": "missing", "stop": None, "detail": "no stop on record"}
+        elif session == "CORE":
+            if rows.get(sym):
+                out[sym] = {"state": "broker", "stop": stop, "detail": "resting stop at the broker"}
+            else:
+                out[sym] = {"state": "missing", "stop": stop,
+                            "detail": "no resting stop at the broker"}
+        elif session == "ALL" or (session == "NIGHT" and night_ok and sym in night_syms):
+            if soft_on and with_stop:
+                out[sym] = {"state": "soft", "stop": stop,
+                            "detail": "app watches the stop until 09:30 ET; broker stop resumes at the open"}
+            else:
+                out[sym] = {"state": "inactive", "stop": stop,
+                            "detail": "broker stop only works 09:30-16:00 ET"}
+        else:
+            out[sym] = {"state": "closed", "stop": stop,
+                        "detail": "market closed for this symbol; broker stop resumes at 09:30 ET"}
+    return out
 
 
 async def build_portfolio(st) -> dict:
@@ -20,8 +68,15 @@ async def build_portfolio(st) -> dict:
     if not st.broker.connected:
         raise HTTPException(409, "Broker is not connected")
     snap = await st.portfolio.snapshot()
-    return {**snap, "equity": st.portfolio.equity_today(),
-            "protective": st.db.protective(open_only=True)}
+    protective = st.db.protective(open_only=True)
+    session = order_session()
+    try:
+        prot = protection_states(snap.get("positions") or [], st.db.open_trades(), protective,
+                                 session, st.settings, st.db.get_kv)
+    except Exception:  # noqa: BLE001
+        prot = {}
+    return {**snap, "equity": st.portfolio.equity_today(), "protective": protective,
+            "protection": prot, "session": session}
 
 
 @router.get("/api/portfolio")

@@ -3,8 +3,14 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import Dialog from "./Dialog";
+import Section from "./ui/Section";
+import Segmented from "./ui/Segmented";
+import Mark from "./ui/Mark";
+import Empty from "./ui/Empty";
+import { num, pct } from "@/lib/format";
 import type { Autopsy } from "@/lib/types";
 import css from "./AutopsyView.module.css";
+import rcss from "./results/results.module.css";
 
 type Category = "process" | "good_process" | "outcome";
 
@@ -20,6 +26,10 @@ const categoryColor: Record<Category, string> = {
   outcome: "var(--color-outcome)",
 };
 
+const CAP = 25;
+const processTone = (c: string): "gain" | "loss" | "neutral" => c === "good" ? "gain" : c === "bad" ? "loss" : "neutral";
+const pnlCls = (v: number) => (v === 0 ? "" : v > 0 ? rcss["gain"] : rcss["loss"]);
+
 export default function AutopsyView() {
   const [autopsies, setAutopsies] = useState<Autopsy[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,6 +37,7 @@ export default function AutopsyView() {
   const [selectedAutopsy, setSelectedAutopsy] = useState<Autopsy | null>(null);
   const [filter, setFilter] = useState<"all" | "win" | "loss" | "breakeven">("all");
   const [symbolFilter, setSymbolFilter] = useState("");
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -37,117 +48,62 @@ export default function AutopsyView() {
     return () => { active = false; };
   }, []);
 
-  const filteredAutopsies = autopsies.filter((a) => {
+  const filtered = autopsies.filter((a) => {
     if (filter !== "all" && a.outcome_class !== filter) return false;
     if (symbolFilter && !a.symbol.toLowerCase().includes(symbolFilter.toLowerCase())) return false;
     return true;
   });
-
-  const processCounts = filteredAutopsies.reduce(
-    (acc, a) => {
-      acc[a.process_class]++;
-      return acc;
-    },
-    { bad: 0, good: 0, mixed: 0 } as Record<string, number>
-  );
+  const count = (c: string) => filtered.filter(a => a.process_class === c).length;
+  const shown = showAll ? filtered : filtered.slice(0, CAP);
+  const meta = `${filtered.length} reviewed · ${count("good")} good process · ${count("bad")} bad · ${count("mixed")} mixed`;
 
   return (
     <div className="autopsy-view">
-      <header className="view-header">
-        <h2>Trade Autopsies</h2>
-        <div className="view-stats">
-          <span className="stat stat-bad">Bad Process: {processCounts.bad}</span>
-          <span className="stat stat-good">Good Process: {processCounts.good}</span>
-          <span className="stat stat-mixed">Mixed: {processCounts.mixed}</span>
+      <Section title="Trade autopsies" meta={meta} right={
+        <div className={rcss["filters"]}>
+          <Segmented label="Outcome" value={filter} onChange={setFilter}
+            options={[{ value: "all", label: "All" }, { value: "win", label: "Wins" }, { value: "loss", label: "Losses" }, { value: "breakeven", label: "Breakeven" }]} />
+          <input type="text" aria-label="Filter by symbol" placeholder="Symbol" value={symbolFilter}
+            onChange={(e) => setSymbolFilter(e.target.value)} />
         </div>
-      </header>
-
-      <div className="filters">
-        <select value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
-          <option value="all">All Outcomes</option>
-          <option value="win">Wins</option>
-          <option value="loss">Losses</option>
-          <option value="breakeven">Breakeven</option>
-        </select>
-        <input
-          type="text"
-          placeholder="Filter by symbol..."
-          value={symbolFilter}
-          onChange={(e) => setSymbolFilter(e.target.value)}
-        />
-      </div>
-
-      {loading && <div className="loading">Loading autopsies…</div>}
-      {error && <div className="error">{error}</div>}
-
-      <table className={`${css["autopsy-table"]}`}>
-        <thead>
-          <tr>
-            <th>Trade</th>
-            <th>Symbol</th>
-            <th>Side</th>
-            <th>P&L</th>
-            <th>MAE</th>
-            <th>MFE</th>
-            <th>Hold</th>
-            <th>Process</th>
-            <th>Outcome</th>
-            <th>Top Cause</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {filteredAutopsies.map((a) => (
-            <tr
-              key={a.id}
-              className={selectedAutopsy?.id === a.id ? "selected" : ""}
-              onClick={() => setSelectedAutopsy(a)}
-            >
-              <td>#{a.trade_id}</td>
-              <td>{a.symbol}</td>
-              <td className={a.side === "BUY" ? "side-buy" : "side-sell"}>{a.side}</td>
-              <td className={a.pnl_pct > 0 ? "positive" : a.pnl_pct < 0 ? "negative" : "neutral"}>
-                {a.pnl_pct > 0 ? "+" : ""}{a.pnl_pct.toFixed(2)}%
-              </td>
-              <td className="negative">{a.mae_pct.toFixed(2)}%</td>
-              <td className="positive">{a.mfe_pct.toFixed(2)}%</td>
-              <td>{a.hold_hours.toFixed(1)}h</td>
-              <td>
-                <span className={`process-badge process-${a.process_class}`}>
-                  {a.process_class}
-                </span>
-              </td>
-              <td>
-                <span className={`outcome-badge outcome-${a.outcome_class}`}>
-                  {a.outcome_class}
-                </span>
-              </td>
-              <td className={`${css["top-cause"]}`}>
-                {a.causes.length > 0 ? (
-                  <>
-                    <span className={categoryColor[a.causes[0].category as Category]}>
-                      {a.causes[0].cause}
-                    </span>
-                    <span className="strength">({(a.causes[0].strength * 100).toFixed(0)}%)</span>
-                  </>
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td>
-                <button className="button button-quiet" onClick={(e) => { e.stopPropagation(); setSelectedAutopsy(a); }}>
-                  View
-                </button>
-              </td>
-            </tr>
-          ))}
-          {filteredAutopsies.length === 0 && (
-            <tr>
-              <td colSpan={11} className="empty">No autopsies found</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      }>
+        {loading && <p className="loading">Loading autopsies…</p>}
+        {error && <p className="error">{error}</p>}
+        {filtered.length === 0 && !loading ? (
+          <Empty>{autopsies.length === 0 ? "No autopsies yet. One is written after each closed trade." : "No autopsies match this filter."}</Empty>
+        ) : (
+          <div className={rcss["tableWrap"]}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Trade</th><th>Symbol</th><th>Side</th>
+                  <th className="num">Return</th><th className="num">Worst dip</th><th className="num">Best run</th><th className="num">Hold</th>
+                  <th>Process</th><th>Outcome</th><th>Top cause</th><th />
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((a) => (
+                  <tr key={a.id} onClick={() => setSelectedAutopsy(a)}>
+                    <td className="mono">#{a.trade_id}</td>
+                    <td>{a.symbol}</td>
+                    <td>{a.side}</td>
+                    <td className={`num mono ${pnlCls(a.pnl_pct)}`}>{pct(a.pnl_pct)}</td>
+                    <td className="num mono">{pct(a.mae_pct, { sign: false })}</td>
+                    <td className="num mono">{pct(a.mfe_pct, { sign: false })}</td>
+                    <td className="num mono">{num(a.hold_hours, 1)} h</td>
+                    <td><Mark tone={processTone(a.process_class)}>{a.process_class}</Mark></td>
+                    <td><Mark>{a.outcome_class}</Mark></td>
+                    <td>{a.causes.length > 0 ? <>{a.causes[0].cause} <span className={`mono ${rcss["dim"]}`}>({(a.causes[0].strength * 100).toFixed(0)}%)</span></> : "—"}</td>
+                    <td><button className="button" onClick={(e) => { e.stopPropagation(); setSelectedAutopsy(a); }}>View</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {!showAll && filtered.length > CAP &&
+          <button className={`button ${rcss["more"]}`} onClick={() => setShowAll(true)}>Show all {filtered.length}</button>}
+      </Section>
 
       {selectedAutopsy && (
         <AutopsyDetail autopsy={selectedAutopsy} onClose={() => setSelectedAutopsy(null)} />
@@ -155,6 +111,7 @@ export default function AutopsyView() {
     </div>
   );
 }
+
 
 function AutopsyDetail({ autopsy, onClose }: { autopsy: Autopsy; onClose: () => void }) {
   return (

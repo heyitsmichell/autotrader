@@ -6,6 +6,12 @@ import type { Lesson } from "@/lib/types";
 import { useConfirm } from "./ConfirmModal";
 import Dialog from "./Dialog";
 import css from "./LearningView.module.css";
+import rcss from "./results/results.module.css";
+import Section from "./ui/Section";
+import Segmented from "./ui/Segmented";
+import Mark from "./ui/Mark";
+import Empty from "./ui/Empty";
+import { dateTime, num } from "@/lib/format";
 
 const statusLabel: Record<string, string> = {
   proposed: "Proposed",
@@ -37,9 +43,9 @@ export function ApplyBadge({ lesson }: { lesson: Lesson }) {
   const state = lesson.apply_state || "pending";
   if (lesson.status !== "active" && state === "pending") return null;
   const label = state === "applied" ? "Applied" : state === "skipped" ? "Skipped" : "Not yet applied";
-  return <span className={`apply-badge apply-${state}`} title={lesson.apply_reason || undefined}>
+  return <Mark tone={state === "applied" ? "gain" : state === "skipped" ? "warn" : "neutral"} title={lesson.apply_reason || undefined}>
     {label}{lesson.apply_reason ? `: ${lesson.apply_reason}` : ""}
-  </span>;
+  </Mark>;
 }
 
 type Perform = (label: string, fn: () => Promise<unknown>) => Promise<void>;
@@ -134,104 +140,73 @@ export default function LearningView({ onAction }: { onAction?: Perform }) {
     });
   };
 
+  const statusTone = (s: string): "gain" | "loss" | "warn" | "neutral" =>
+    s === "active" ? "gain" : s === "rejected" ? "loss" : s === "proposed" ? "warn" : "neutral";
+  const meta = Object.entries(statusCounts).map(([s, c]) => `${c} ${(statusLabel[s] || s).toLowerCase()}`).join(" · ");
+  const btn = (label: string, fn: () => void) =>
+    <button className="button" onClick={(e) => { e.stopPropagation(); fn(); }}>{label}</button>;
+
   return (
     <div className="learning-view">
-      <header className="view-header">
-        <h2>Learning Health</h2>
-        <div className="view-stats">
-          {Object.entries(statusCounts).map(([status, count]) => (
-            <span key={status} className={`stat stat-${status}`} style={{ backgroundColor: statusColor[status] }}>
-              {statusLabel[status]}: {count}
-            </span>
-          ))}
-        </div>
-      </header>
-
-      <div className="filters">
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="all">All Statuses</option>
-          <option value="proposed">Proposed</option>
-          <option value="approved">Approved</option>
-          <option value="active">Active</option>
-          <option value="retired">Retired</option>
-          <option value="rejected">Rejected</option>
-        </select>
-      </div>
-
-      {loading && <div className="loading">Loading lessons…</div>}
-      {error && <div className="error">{error}</div>}
-
-      <table className={`${css["lessons-table"]}`}>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Version</th>
-            <th>Parameter</th>
-            <th>Value</th>
-            <th>Sample</th>
-            <th>Metric</th>
-            <th>Baseline</th>
-            <th>Proposed</th>
-            <th>p-value</th>
-            <th>Status</th>
-            <th>Created</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filteredLessons.map((lesson) => (
-            <tr
-              key={lesson.id}
-              className={selectedLesson?.id === lesson.id ? "selected" : ""}
-              onClick={() => setSelectedLesson(lesson)}
-            >
-              <td>#{lesson.id}</td>
-              <td>v{lesson.version}</td>
-              <td>{lesson.param_name}</td>
-              <td>{lesson.param_value.toFixed(4)}</td>
-              <td>{lesson.sample_size}</td>
-              <td>{lesson.metric_name || "—"}</td>
-              <td>{lesson.baseline_metric != null ? lesson.baseline_metric.toFixed(4) : "—"}</td>
-              <td>{lesson.proposed_metric != null ? lesson.proposed_metric.toFixed(4) : "—"}</td>
-              <td>{lesson.p_value != null ? lesson.p_value.toFixed(4) : "—"}</td>
-              <td>
-                <span className={`status-badge status-${lesson.status}`} style={{ backgroundColor: statusColor[lesson.status] }}>
-                  {statusLabel[lesson.status]}
-                </span>
-                <ApplyBadge lesson={lesson}/>
-              </td>
-              <td>{new Date(lesson.created_at).toLocaleDateString()}</td>
-              <td className="actions">
-                {lesson.status === "proposed" && (
-                  <>
-                    <button className="button button-quiet" onClick={(e) => { e.stopPropagation(); handleStatusChange(lesson, "approved"); }}>Approve</button>
-                    <button className="button button-quiet" onClick={(e) => { e.stopPropagation(); handleStatusChange(lesson, "rejected"); }}>Reject</button>
-                  </>
-                )}
-                {lesson.status === "approved" && (
-                  <button className="button button-quiet" onClick={(e) => { e.stopPropagation(); handleStatusChange(lesson, "active"); }}>Activate</button>
-                )}
-                {lesson.status === "active" && (
-                  <>
-                    <button className="button button-quiet" onClick={(e) => { e.stopPropagation(); handleStatusChange(lesson, "retired"); }}>Retire</button>
-                    {lesson.previous_version_id && (
-                      <button className="button button-quiet" onClick={(e) => { e.stopPropagation(); handleRollback(lesson); }}>Rollback</button>
-                    )}
-                  </>
-                )}
-                {lesson.status === "retired" && lesson.previous_version_id && (
-                  <button className="button button-quiet" onClick={(e) => { e.stopPropagation(); handleRollback(lesson); }}>Rollback</button>
-                )}
-              </td>
-            </tr>
-          ))}
-          {filteredLessons.length === 0 && (
-            <tr>
-              <td colSpan={12} className="empty">No lessons found</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      <Section title="Lessons" meta={meta || undefined} right={
+        <Segmented label="Status" value={statusFilter} onChange={setStatusFilter}
+          options={[{ value: "all", label: "All" }, ...Object.keys(statusLabel).map(s => ({ value: s, label: statusLabel[s] }))]} />
+      }>
+        {loading && <p className="loading">Loading lessons…</p>}
+        {error && <p className="error">{error}</p>}
+        {filteredLessons.length === 0 && !loading ? (
+          <Empty>{lessons.length === 0
+            ? "No lessons yet. A lesson is proposed when the autopsies show a pattern strong enough to test."
+            : "No lessons with this status."}</Empty>
+        ) : (
+          <div className={rcss["tableWrap"]}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Lesson</th><th>Parameter</th><th className="num">Value</th><th className="num">Sample</th>
+                  <th>Metric</th><th className="num">Baseline</th><th className="num">Proposed</th><th className="num">p-value</th>
+                  <th>Status</th><th>Created</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredLessons.map((lesson) => (
+                  <tr key={lesson.id} onClick={() => setSelectedLesson(lesson)}>
+                    <td className="mono">#{lesson.id} v{lesson.version}</td>
+                    <td>{lesson.param_name}</td>
+                    <td className="num mono">{num(lesson.param_value, 4)}</td>
+                    <td className="num mono">{lesson.sample_size}</td>
+                    <td>{lesson.metric_name || "—"}</td>
+                    <td className="num mono">{num(lesson.baseline_metric, 4)}</td>
+                    <td className="num mono">{num(lesson.proposed_metric, 4)}</td>
+                    <td className="num mono">{num(lesson.p_value, 4)}</td>
+                    <td>
+                      <Mark tone={statusTone(lesson.status)}>{statusLabel[lesson.status] || lesson.status}</Mark>{" "}
+                      <ApplyBadge lesson={lesson}/>
+                    </td>
+                    <td>{dateTime(lesson.created_at)}</td>
+                    <td>
+                      {lesson.status === "proposed" && (
+                        <>
+                          {btn("Approve", () => handleStatusChange(lesson, "approved"))}
+                          {btn("Reject", () => handleStatusChange(lesson, "rejected"))}
+                        </>
+                      )}
+                      {lesson.status === "approved" && btn("Activate", () => handleStatusChange(lesson, "active"))}
+                      {lesson.status === "active" && (
+                        <>
+                          {btn("Retire", () => handleStatusChange(lesson, "retired"))}
+                          {lesson.previous_version_id && btn("Rollback", () => handleRollback(lesson))}
+                        </>
+                      )}
+                      {lesson.status === "retired" && lesson.previous_version_id && btn("Rollback", () => handleRollback(lesson))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
 
       {selectedLesson && (
         <LessonDetail lesson={selectedLesson} onClose={() => setSelectedLesson(null)} />

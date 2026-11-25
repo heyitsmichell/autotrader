@@ -316,6 +316,27 @@ class Settings:
     options_quote_max_age_seconds: float = 5.0   # OPTIONS_QUOTE_MAX_AGE_SECONDS
     equity_quote_max_age_seconds: float = 15.0   # EQUITY_QUOTE_MAX_AGE_SECONDS
     options_iv_rank_min_history: int = 60      # OPTIONS_IV_RANK_MIN_HISTORY: days needed for a true IV rank
+    # Options auto-entry (HANDOFF section 0 item 9): long calls alongside the stock entry
+    options_auto_entry: bool = False           # OPTIONS_AUTO_ENTRY: buy a call when the stock gate passes
+    options_entry_target_delta: float = 0.70   # OPTIONS_ENTRY_TARGET_DELTA
+    options_entry_target_dte: int = 30         # OPTIONS_ENTRY_TARGET_DTE
+    options_entry_max_premium_usd: float = 500.0  # OPTIONS_ENTRY_MAX_PREMIUM_USD per trade
+    options_entry_max_open: int = 0            # OPTIONS_ENTRY_MAX_OPEN (0 = no limit)
+    options_entry_max_per_day: int = 0         # OPTIONS_ENTRY_MAX_PER_DAY (0 = no limit)
+    options_entry_earnings_days: int = 7       # OPTIONS_ENTRY_EARNINGS_DAYS: skip when earnings this close
+    options_entry_skip_open_close_minutes: int = 15  # OPTIONS_ENTRY_SKIP_OPEN_CLOSE_MINUTES
+    options_spread_log: bool = False           # OPTIONS_SPREAD_LOG: sample real option spreads
+    # TRUSTED_HOSTS: extra Host names the dashboard answers to besides loopback, e.g. the server's
+    # private Tailscale name. Only for private networks: the dashboard has no login.
+    trusted_hosts: list[str] = field(default_factory=list)
+    # Options ML (learning mode): ranks, explores and records outcomes; never widens risk
+    options_ml_enabled: bool = False           # OPTIONS_ML_ENABLED
+    options_ml_explore_pct: float = 0.20       # OPTIONS_ML_EXPLORE_PCT: share of entries that try a random delta/DTE arm
+    options_ml_min_p: float = 0.0              # OPTIONS_ML_MIN_P: skip when P(win) is below this (0 = never blocks)
+    options_ml_retrain_days: int = 7           # OPTIONS_ML_RETRAIN_DAYS
+    options_ml_live_weight: float = 5.0        # OPTIONS_ML_LIVE_WEIGHT: weight of a live outcome vs a modelled one
+    options_spread_log_times: str = "09:31,09:33,09:35,09:40,09:45,10:00,10:30,12:00,15:30,15:40,15:45,15:55"  # OPTIONS_SPREAD_LOG_TIMES (ET)
+    options_exit_underlying_stop: bool = True  # OPTIONS_EXIT_UNDERLYING_STOP: exit on the stock's stop
     # Entry quality
     entry_pullback_gate: bool = False          # ENTRY_PULLBACK_GATE (opt-in)
     entry_pullback_min_pct: float = 0.02       # ENTRY_PULLBACK_MIN_PCT
@@ -372,8 +393,6 @@ class Settings:
     size_from_risk: bool = False               # SIZE_FROM_RISK: size a BUY from the risk budget (budget / (entry - stop)); MAX_ORDER_USD no longer shrinks it (MAX_POSITION_USD, MAX_ORDER_QTY and buying power still cap it)
     risk_per_trade_pct: float = 0.0            # RISK_PER_TRADE_PCT: risk budget as % of equity (0 = use MAX_RISK_PER_TRADE_USD); needs the caller to pass equity
     backtest_live_exits: bool = False          # BACKTEST_LIVE_EXITS: backtester models the live profit rules (scale-outs, break-even, give-back, trailing, RSI exhaustion, no-TP bracket)
-    # remote access
-    trusted_hosts: tuple[str, ...] = ()        # TRUSTED_HOSTS: extra Host names the UI/API answer to besides localhost (e.g. a private Tailscale name like mypc.tailnet.ts.net). The app still binds to 127.0.0.1 and has no login: only list names reachable by you alone
 
     @property
     def is_live(self) -> bool:

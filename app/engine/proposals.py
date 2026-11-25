@@ -126,6 +126,14 @@ class ProposalsMixin:
                 buys_generated += 1
                 self.db.log("info", f"Deterministic BUY generated for {symbol}: {result}")
 
+        # --- Option entries (long calls alongside the stock); off unless OPTIONS_AUTO_ENTRY ---
+        if self.s.options_enabled and self.s.options_auto_entry:
+            try:
+                proposals_generated += await self.propose_option_entries(run_id, sigs)
+            except Exception as e:  # noqa: BLE001 - option entries must never stop the exits below
+                log.exception("option entries failed")
+                self.db.log("warn", f"Option entries failed: {type(e).__name__}: {e}")
+
         # --- SELL proposals: check held positions for exit signals ---
         # Rules live in app/exits.py (time stop, confirmed trend break, ML drop, and a TA exit
         # bar that sits below the entry bar so positions are not churned by small wobbles).

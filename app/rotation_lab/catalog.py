@@ -97,10 +97,6 @@ def m13612(c):
     return (rl(c, 21) + rl(c, 63) + rl(c, 126) + rl(c, 252)) / 4.0
 
 
-def sma_m(c, months):  # SMA of `months` month-ends incl. current ~ n*21-day mean of daily closes at month-ends (approx)
-    return c.rolling(months * 21, min_periods=months * 21).mean()
-
-
 def sma12_rel(c):  # Keller BAA: p0 / SMA(13 month-ends incl. today) - 1 ~ 13*21d... daily approximation
     return c / c.rolling(252, min_periods=252).mean() - 1.0
 

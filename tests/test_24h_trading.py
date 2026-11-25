@@ -23,6 +23,13 @@ def _b(sess, session, **kw):
 @pytest.fixture(autouse=True)
 def _restore(monkeypatch):
     monkeypatch.setattr("app.broker.orders.market.order_session", lambda at=None: "CORE")
+    # Some tests here move the global test clock (set_test_time) to the overnight session; put the
+    # session-wide frozen time back afterwards, or every later test runs "at night" (this broke
+    # tests/test_bracket_orders.py whenever it ran after this file).
+    import app.market as m
+    saved = m._test_time
+    yield
+    m.set_test_time(saved)
 
 
 async def _place(session, symbol="AAPL", side="BUY", order_type="LIMIT", **kw):

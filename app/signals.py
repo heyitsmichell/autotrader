@@ -273,11 +273,13 @@ class SignalService:
                     relative_strength = (sym_momentum - bench_momentum) * 100  # in percent
 
                 # Also compute market regime from benchmark
-                bench_features = indicators.features(bench_bars_list)
-                bench_ta = ta.analyze(bench_features[-1], self.s)
+                # indicators.features() returns the LATEST bar's feature dict, not a list
+                # (indexing it with [-1] raised KeyError whenever this regime path ran).
+                bench_latest = indicators.features(bench_bars_list)
+                bench_ta = ta.analyze(bench_latest, self.s)
                 market_trend = bench_ta.get("trend", "range")
                 market_strength = bench_ta.get("strength", "n/a")
-                market_adx = bench_features[-1].get("adx14")
+                market_adx = bench_latest.get("adx14")
 
         row = {
             "symbol": sym, "close": t["close"], "atr": t["atr"], "trend": t["trend"],

@@ -112,11 +112,21 @@ export interface OpenOrder {
   status?: string;
 }
 
+export interface OptionPositionRow {
+  symbol: string; underlying?: string | null; option_type?: string | null; strike?: number | null;
+  expiration?: string | null; qty: number; cost_basis?: number | null; mark_price?: number | null;
+  unrealized_pnl?: number | null;
+}
+
 export interface Portfolio {
   balance: Balance;
   positions: Position[];
   open_orders: OpenOrder[];
   protective?: Protective[];
+  protection?: Record<string, ProtectionInfo>;
+  /** Held option contracts (parsed from the same positions text; cost/mark are per-share premium). */
+  option_positions?: OptionPositionRow[];
+  session?: "CORE" | "ALL" | "NIGHT" | null;
   errors?: Record<string, string>;
 }
 
@@ -321,6 +331,19 @@ export interface Status {
     options_min_volume?: number;
     options_min_open_interest?: number;
     options_max_bid_ask_pct?: number;
+    options_auto_entry?: boolean;
+    options_entry_target_delta?: number;
+    options_entry_target_dte?: number;
+    options_entry_max_premium_usd?: number;
+    options_entry_max_open?: number;
+    options_exit_take_profit_pct?: number;
+    options_exit_stop_pct?: number;
+    options_exit_underlying_stop?: boolean;
+    eligibility_earnings_blackout_days?: number;
+    extended_hours_soft_stop?: boolean;
+    exit_max_hold_days?: number;
+    overnight_trading?: boolean;
+    overnight_symbols?: string[];
   };
 }
 
@@ -397,15 +420,6 @@ export interface Learning {
   min_outcomes?: number;
   review_every_days?: number;
   lessons?: string;
-}
-
-export interface ChartBar {
-  time: string | number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
 }
 
 export interface AutopsyCause {
@@ -494,4 +508,80 @@ export interface Lesson {
   /** M9: what the engine's auto-apply step did with this lesson. */
   apply_state?: "pending" | "applied" | "skipped" | string | null;
   apply_reason?: string | null;
+}
+
+export interface ProtectionInfo {
+  state: "broker" | "soft" | "inactive" | "closed" | "missing" | "soft_fired";
+  stop: number | null;
+  detail: string;
+}
+
+export interface ExperimentRow {
+  name: string;
+  kind: string;
+  cagr: number | null;
+  sharpe: number | null;
+  maxdd: number | null;
+  dsr: number | null;
+  universe: string;
+  survivorship_biased: boolean;
+}
+
+export interface ExperimentReport {
+  path: string;
+  title: string;
+  modified: string;
+  bytes: number;
+}
+
+export interface Experiments {
+  registry: { n_trials: number; by_lab: Record<string, number> };
+  leaderboard: ExperimentRow[];
+  benchmarks: ExperimentRow[];
+  intraday_entry: Record<string, unknown> | null;
+  reports: ExperimentReport[];
+}
+
+export interface OptionSpreadBucket {
+  minutes_from_open: number;
+  n: number;
+  median_spread_pct: number;
+  p75_spread_pct: number;
+  pct_pass: number;
+}
+
+export interface OptionSpreadsResponse {
+  rows: number;
+  days: number;
+  max_bid_ask_pct: number;
+  overall: OptionSpreadBucket[];
+  by_underlying: Record<string, OptionSpreadBucket[]>;
+}
+
+export interface OptionsModelRecent {
+  id: number;
+  symbol: string;
+  created_at: string | null;
+  status: string | null;
+  ml_p: number | null;
+  explore: boolean;
+  arm: [number, number] | null;
+  delta: number | null;
+  dte: number | null;
+  ret: number | null;
+  exit_reason: string | null;
+}
+
+export interface OptionsModelResponse {
+  available: boolean;
+  enabled: boolean;
+  version: string | null;
+  trained_at: string | null;
+  n_backtest: number | null;
+  n_live: number | null;
+  val_auc: number | null;
+  baseline_win_rate: number | null;
+  explore_pct: number;
+  min_p: number;
+  recent: OptionsModelRecent[];
 }

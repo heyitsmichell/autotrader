@@ -24,19 +24,6 @@ def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
     return v
 
 
-def _trusted_hosts(raw: str) -> tuple[str, ...]:
-    """TRUSTED_HOSTS: comma-separated host names (no ports, no wildcards). Names that look like a
-    catch-all ("*", "0.0.0.0", "::") are refused, since this app has no login."""
-    out = []
-    for h in (x.strip().lower().rstrip(".") for x in raw.split(",")):
-        if not h:
-            continue
-        if h in ("*", "0.0.0.0", "::", "[::]") or "*" in h or "/" in h or ":" in h:
-            raise ValueError(f"TRUSTED_HOSTS: refusing {h!r} (give exact host names, no ports or wildcards)")
-        out.append(h)
-    return tuple(out)
-
-
 def load_settings() -> Settings:
     broker_mode = _str("BROKER_MODE", "mock").lower()
     if broker_mode not in {"mock", "webull"}:
@@ -320,6 +307,23 @@ def load_settings() -> Settings:
         options_quote_max_age_seconds=max(0.0, _float("OPTIONS_QUOTE_MAX_AGE_SECONDS", 5.0)),
         equity_quote_max_age_seconds=max(0.0, _float("EQUITY_QUOTE_MAX_AGE_SECONDS", 15.0)),
         options_iv_rank_min_history=max(1, _int("OPTIONS_IV_RANK_MIN_HISTORY", 60)),
+        options_auto_entry=_bool("OPTIONS_AUTO_ENTRY", False),
+        options_entry_target_delta=min(1.0, max(0.05, _float("OPTIONS_ENTRY_TARGET_DELTA", 0.70))),
+        options_entry_target_dte=max(1, _int("OPTIONS_ENTRY_TARGET_DTE", 30)),
+        options_entry_max_premium_usd=max(0.0, _float("OPTIONS_ENTRY_MAX_PREMIUM_USD", 500.0)),
+        options_entry_max_open=max(0, _int("OPTIONS_ENTRY_MAX_OPEN", 0)),
+        options_entry_max_per_day=max(0, _int("OPTIONS_ENTRY_MAX_PER_DAY", 0)),
+        options_entry_earnings_days=max(0, _int("OPTIONS_ENTRY_EARNINGS_DAYS", 7)),
+        options_entry_skip_open_close_minutes=max(0, _int("OPTIONS_ENTRY_SKIP_OPEN_CLOSE_MINUTES", 15)),
+        options_spread_log=_bool("OPTIONS_SPREAD_LOG", False),
+        options_ml_enabled=_bool("OPTIONS_ML_ENABLED", False),
+        options_ml_explore_pct=min(1.0, max(0.0, _float("OPTIONS_ML_EXPLORE_PCT", 0.20))),
+        options_ml_min_p=min(1.0, max(0.0, _float("OPTIONS_ML_MIN_P", 0.0))),
+        options_ml_retrain_days=max(1, _int("OPTIONS_ML_RETRAIN_DAYS", 7)),
+        options_ml_live_weight=max(0.0, _float("OPTIONS_ML_LIVE_WEIGHT", 5.0)),
+        trusted_hosts=[h.strip().lower() for h in _str("TRUSTED_HOSTS", "").split(",") if h.strip()],
+        options_spread_log_times=_str("OPTIONS_SPREAD_LOG_TIMES", "09:31,09:33,09:35,09:40,09:45,10:00,10:30,12:00,15:30,15:40,15:45,15:55"),
+        options_exit_underlying_stop=_bool("OPTIONS_EXIT_UNDERLYING_STOP", True),
         entry_pullback_gate=_bool("ENTRY_PULLBACK_GATE", False),
         entry_pullback_min_pct=max(0.0, _float("ENTRY_PULLBACK_MIN_PCT", 0.02)),
         entry_pullback_max_pct=max(0.0, _float("ENTRY_PULLBACK_MAX_PCT", 0.05)),
@@ -368,7 +372,6 @@ def load_settings() -> Settings:
         market_notional_buffer_pct=min(10.0, max(0.0, _float("MARKET_NOTIONAL_BUFFER_PCT", 1.0))),
         # swing-strategy
         bracket_take_profit=_bool("BRACKET_TAKE_PROFIT", True),
-        trusted_hosts=_trusted_hosts(_str("TRUSTED_HOSTS", "")),
         size_from_risk=_bool("SIZE_FROM_RISK", False),
         risk_per_trade_pct=min(10.0, max(0.0, _float("RISK_PER_TRADE_PCT", 0.0))),
         backtest_live_exits=_bool("BACKTEST_LIVE_EXITS", False),

@@ -128,12 +128,12 @@ export default function OptionChain({ status, api, onSymbolSelect }: {
   };
 
   if (!status?.connected) {
-    return <section className="panel"><div className="panel-head"><div className="eyebrow">OPTION CHAIN</div><h2>Not connected</h2></div><p className="muted">Connect to broker to view option chains.</p></section>;
+    return <section className="panel"><div className="panel-head"><div className="eyebrow">Option chain</div><h2>Not connected</h2></div><p className="muted">Connect to broker to view option chains.</p></section>;
   }
 
   return <section className="panel" id="option-chain">
     <div className="panel-head">
-      <div><div className="eyebrow">OPTION CHAIN</div><h2>{underlying || "Select underlying"}</h2></div>
+      <div><div className="eyebrow">Option chain</div><h2>{underlying || "Select underlying"}</h2></div>
       <span className="muted">DTE {minDte}–{maxDte} · {data ? `${data.contracts.length} contracts` : "—"}</span>
     </div>
 
@@ -224,7 +224,7 @@ export default function OptionChain({ status, api, onSymbolSelect }: {
               <tr key={c.symbol} onClick={() => onSymbolSelect?.(c.symbol)} style={{ cursor: "pointer" }}>
                 <td><code>{c.symbol}</code></td>
                 <td>{c.expiration}</td>
-                <td><span className={c.type === "CALL" ? `${css["call-badge"]}` : `${css["put-badge"]}`}>{c.type}</span></td>
+                <td><span className={c.type === "CALL" ? `${css["call-badge"]}` : `${css["put-badge"]}`}>{c.type === "CALL" ? "Call" : "Put"}</span></td>
                 <td>{money(c.strike)}</td>
                 <td>{money(c.bid)}</td>
                 <td>{money(c.ask)}</td>

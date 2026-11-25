@@ -187,7 +187,7 @@ class RiskManager:
         elif s.max_trades_per_day <= 0:
             add("Daily trades", True, "no daily trade-count cap configured")
         else:
-            used = db.count_placed_today()
+            used = db.count_placed_today("equity")
             add("Daily trades", used < s.max_trades_per_day,
                 f"{used} of {s.max_trades_per_day} used today" if used < s.max_trades_per_day
                 else f"daily limit of {s.max_trades_per_day} placed trades reached")

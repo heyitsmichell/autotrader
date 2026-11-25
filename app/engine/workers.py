@@ -34,6 +34,7 @@ class Workers:
         self.errors: dict[str, str] = {}
         self.last_prune: dict | None = None
         self._first_signal_pass = True
+        self._ml_task: asyncio.Task | None = None
 
     @property
     def running(self) -> bool:
@@ -47,6 +48,8 @@ class Workers:
                                 name="worker-signals"),
             asyncio.create_task(self._forever("research", self.research_pass, 60.0, 5.0),
                                 name="worker-research"),
+            asyncio.create_task(self._forever("options_ml", self.options_ml_pass, 3600.0, 20.0),
+                                name="worker-options-ml"),
             asyncio.create_task(self._forever("maintenance", self.maintenance_pass,
                                               MAINTENANCE_SECONDS, 10.0),
                                 name="worker-maintenance"),
@@ -124,6 +127,23 @@ class Workers:
         if research is None or getattr(research, "_task", None) is not None:
             return False        # the service runs its own scan loop
         await research.refresh_if_due()
+        return True
+
+    # -- options ML retrain (background thread, never blocks trading) -------------------
+    async def options_ml_pass(self) -> bool:
+        """Train the options model when it is missing or older than OPTIONS_ML_RETRAIN_DAYS."""
+        eng = self.eng
+        if not eng.s.options_ml_enabled:
+            return False
+        from .. import options_ml
+        live = await asyncio.to_thread(options_ml.live_training_rows, eng.db)
+        if not options_ml.retrain_due(eng.s, n_live=len(live)):
+            return False
+        model = await asyncio.to_thread(options_ml.train, live,
+                                        live_weight=eng.s.options_ml_live_weight)
+        if model is None:
+            return False
+        eng.db.log("info", options_ml.report_line(model))
         return True
 
     # -- maintenance ---------------------------------------------------------------

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Double-click on macOS (or run on Linux). First run installs everything; later runs just start.
 cd "$(dirname "$0")" || exit 1
+if [ -f PC_BOT_DISABLED ]; then
+  echo "The bot runs on the Oracle server (ubuntu@168.107.87.233). Starting it on this PC would run two bots on the same account. Delete PC_BOT_DISABLED to override." >&2
+  read -n 1 -s -r -p "Press any key to close"; exit 1
+fi
 export PYTHONUTF8=1
 # The Webull MCP package supports Python 3.10-3.12 only; a newer python3 builds a broken .venv.
 PY=""

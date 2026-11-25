@@ -53,6 +53,7 @@ from .cycle import CycleMixin
 from .execution import ExecutionMixin
 from .flatten import FlattenMixin
 from .option_exits import HeldOption, OptionExitManager, evaluate_exit, parse_held_options
+from .option_entries import OptionEntriesMixin
 from .options_flow import OptionsFlowMixin, iv_rank, normalize_iv
 from .proposals import ProposalsMixin
 from .rebalance import RebalanceMixin
@@ -77,7 +78,7 @@ PROPOSAL_STATUSES = frozenset({
 })
 
 
-class Engine(CoreMixin, CycleMixin, ProposalsMixin, OptionsFlowMixin, ExecutionMixin,
+class Engine(CoreMixin, CycleMixin, ProposalsMixin, OptionsFlowMixin, OptionEntriesMixin, ExecutionMixin,
              ReconcileMixin, FlattenMixin, RebalanceMixin, SchedulerMixin, RiskLoopMixin,
              WorkersMixin):
     """The trading engine. See the module docstring for the lifecycle and the events."""

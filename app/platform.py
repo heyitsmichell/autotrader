@@ -15,11 +15,6 @@ IS_MACOS = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")
 
 
-def get_pid() -> int:
-    """Get current process ID."""
-    return os.getpid()
-
-
 def is_process_alive(pid: int) -> bool:
     """Check if a process with given PID is still alive."""
     if pid <= 0:
@@ -333,57 +328,3 @@ class SleepPreventer:
     @property
     def is_active(self) -> bool:
         return self._active
-
-
-# --- Platform check utility (Step 1.8) ---
-
-FORBIDDEN_PATTERNS = [
-    (r"\bfcntl\b", "fcntl (Unix-only)"),
-    (r"\bmsvcrt\b", "msvcrt (Windows-only)"),
-    (r"\bwinreg\b", "winreg (Windows-only)"),
-    (r"\bos\.fork\b", "os.fork (Unix-only)"),
-    (r"signal\.SIGKILL", "SIGKILL (Unix-only)"),
-    (r"signal\.SIGHUP", "SIGHUP (Unix-only)"),
-    (r"taskkill", "taskkill (Windows-only)"),
-    (r"lsof\b", "lsof (external command)"),
-    (r"Get-NetTCPConnection", "Get-NetTCPConnection (PowerShell)"),
-    (r"Get-Process", "Get-Process (PowerShell)"),
-    (r"Stop-Process", "Stop-Process (PowerShell)"),
-]
-
-ALLOWED_MODULES = {"app.platform", "scripts.trader"}
-
-
-def check_platform_compliance(file_path: Path) -> list[str]:
-    """Check a Python file for platform-specific code outside allowed modules."""
-    import re
-    violations = []
-
-    # Skip allowed modules
-    try:
-        file_path_resolved = file_path.resolve()
-        project_root = Path.cwd().resolve()
-        rel = file_path_resolved.relative_to(project_root)
-        module_path = str(rel).replace("/", ".").replace("\\", ".").replace(".py", "")
-        if any(module_path.startswith(allowed) for allowed in ALLOWED_MODULES):
-            return violations
-    except (ValueError, FileNotFoundError):
-        pass
-
-    try:
-        content = file_path.read_text(encoding="utf-8")
-    except Exception:
-        return violations
-
-    lines = content.splitlines()
-    for i, line in enumerate(lines, 1):
-        # Skip comments
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            continue
-
-        for pattern, desc in FORBIDDEN_PATTERNS:
-            if re.search(pattern, line):
-                violations.append(f"{file_path}:{i}: {desc} - {line.strip()[:80]}")
-
-    return violations

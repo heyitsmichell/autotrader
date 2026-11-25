@@ -529,6 +529,31 @@ class BacktestResult:
     exposure_curve: list[float] = field(default_factory=list)  # invested share of equity per day (live-exits mode)
 
 
+def _align_benchmark(bars: list[dict], bench_bars: list[dict] | None,
+                     bench_features: list[dict] | None) -> tuple[list[dict], list[dict], int]:
+    """Benchmark bars/features aligned by date to ``bars`` (same length).
+
+    A date the benchmark lacks takes its most recent PRIOR bar (point-in-time safe, no lookahead).
+    Leading dates with no prior benchmark bar hold a placeholder (first bar); the returned
+    ``first_valid`` index tells the caller to skip benchmark use before it.
+    """
+    if not bench_bars or not bench_features:
+        return [], [], len(bars)
+    bdates = [b["time"].date() for b in bench_bars]
+    out_b, out_f, j, first_valid = [], [], -1, None
+    for k, bar in enumerate(bars):
+        d = bar["time"].date()
+        while j + 1 < len(bdates) and bdates[j + 1] <= d:
+            j += 1
+        if j < 0:
+            out_b.append(bench_bars[0]); out_f.append(bench_features[0])
+        else:
+            if first_valid is None:
+                first_valid = k
+            out_b.append(bench_bars[j]); out_f.append(bench_features[j])
+    return out_b, out_f, (first_valid if first_valid is not None else len(bars))
+
+
 def run_backtest(settings: Settings, *,
                  universe: list[str] | None = None,
                  benchmark_symbol: str | None = None,
@@ -673,6 +698,7 @@ def run_backtest(settings: Settings, *,
                                      taf_per_share=taf_per_share, taf_max=taf_max)
     portfolio.cost_model = cost_model
     last_exit_i: dict[str, int] = {}
+    bench_aligned: dict[str, tuple] = {}
     seen_trades = 0
 
     def note_exits(day_i: int) -> None:
@@ -746,14 +772,19 @@ def run_backtest(settings: Settings, *,
                 continue
 
             # Get signal at prev_day close
-            # Get benchmark data for relative strength
-            benchmark_bars = valid_symbols.get(benchmark_symbol)
-            benchmark_features = all_features.get(benchmark_symbol)
+            # Benchmark series date-aligned to THIS symbol's bar list (signal_at indexes both by the
+            # same i). Cached per symbol; leading bars with no prior benchmark bar skip RS/regime.
+            aligned = bench_aligned.get(symbol)
+            if aligned is None:
+                aligned = bench_aligned[symbol] = _align_benchmark(
+                    bar_list, valid_symbols.get(benchmark_symbol), all_features.get(benchmark_symbol))
+            b_bars, b_feats, b_first = aligned
+            use_bench = prev_idx >= b_first + max(0, int(getattr(settings, "relative_strength_lookback", 20)))
             sig_result = signal_at(
                 bar_list, features, prev_idx, settings,
                 ml_predictor=ml_predictor,
-                benchmark_bars=benchmark_bars,
-                benchmark_features=benchmark_features
+                benchmark_bars=b_bars if use_bench else None,
+                benchmark_features=b_feats if use_bench else None
             )
             if not sig_result.get("ok"):
                 continue

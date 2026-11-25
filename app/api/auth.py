@@ -54,11 +54,15 @@ def token_ok(request: Request) -> bool:
     return hmac.compare_digest(given.encode(), expected.encode())
 
 
-def install_auth(app: FastAPI) -> None:
+def install_auth(app: FastAPI, trusted_hosts: list[str] | None = None) -> None:
+    """``trusted_hosts`` (TRUSTED_HOSTS) are extra Host names allowed besides loopback, e.g. the
+    server's private Tailscale name. Token and X-Trader checks apply to them unchanged."""
+    allowed = LOOPBACK_HOSTS | {h.lower() for h in (trusted_hosts or []) if h}
+
     @app.middleware("http")
     async def local_only(request: Request, call_next):
         host = request_hostname(request)
-        if host not in LOOPBACK_HOSTS and host not in getattr(request.app.state, "trusted_hosts", ()):
+        if host not in allowed:
             return JSONResponse({"detail": "forbidden host"}, status_code=403)
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             if request.url.path.startswith("/api/"):

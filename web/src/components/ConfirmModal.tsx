@@ -30,15 +30,14 @@ export default function ConfirmModal({ request, busy, onClose }: {
 
   return <Dialog
     title={request.title}
-    eyebrow="CONFIRM ACTION"
     danger={request.danger}
     dismissable={!busy}
     size="sm"
     onClose={onClose}
     footer={<>
-      <button className="button button-quiet" data-dialog-cancel disabled={busy} onClick={onClose}>Cancel</button>
+      <button className="button" data-dialog-cancel disabled={busy} onClick={onClose}>Cancel</button>
       <button
-        className={`button ${request.danger ? "button-danger" : "button-primary"}`}
+        className={`button ${request.danger ? "danger" : ""}`}
         disabled={!ready}
         onClick={() => void request.onConfirm(request.input ? value.trim() : undefined)}
       >{busy ? "Working…" : request.confirmLabel}</button>

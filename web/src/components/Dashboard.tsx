@@ -6,6 +6,7 @@ import AutopsyView from "./AutopsyView";
 import BannerRail from "./BannerRail";
 import CommandBar from "./CommandBar";
 import Today from "./Today";
+import Backtests from "./backtests/Backtests";
 import ConfirmModal, { ConfirmProvider, type ConfirmRequest } from "./ConfirmModal";
 import DecisionModal from "./DecisionModal";
 import ErrorBoundary from "./ErrorBoundary";
@@ -16,13 +17,12 @@ import MLScorecard from "./MLScorecard";
 import OptionChain from "./OptionChain";
 import OptionsStatus from "./OptionsStatus";
 import ProposalQueue, { type ApproveRequest } from "./ProposalCard";
-import ResearchPanel from "./ResearchPanel";
+import OptionsSettings from "./options/OptionsSettings";
 import SettingsPanel from "./SettingsPanel";
 import { AccountPanel, HealthPanel, OrdersPanel } from "./SidePanels";
 import SignalsTable from "./SignalsTable";
 import TopBar, { type Tab } from "./TopBar";
 import TradeLedgerView from "./TradeLedgerView";
-import YahooFinancePanel from "./YahooFinancePanel";
 import { useDashboardData } from "@/lib/useDashboardData";
 import type { Proposal, ProposalDetail } from "@/lib/types";
 import css from "./Dashboard.module.css";
@@ -32,7 +32,7 @@ const Panel = ({ name, children }: { name: string; children: ReactNode }) =>
 
 export default function Dashboard() {
   const {
-    mounted, status, portfolio, signals, proposals, runs, events, research, ml, learning, performance,
+    status, portfolio, signals, proposals, runs, events, ml, learning, performance,
     strategy, setStrategy, lessons, setLessons, refresh, refreshMl, api, error, 
     duplicateInstance, streamConnected, strategyLoaded, lessonsLoaded,
   } = useDashboardData();
@@ -209,24 +209,23 @@ export default function Dashboard() {
               performance={performance}
               events={events}
               pendingCount={pending.length}
+              signals={signals}
+              proposals={proposals}
+              api={api}
               onSymbol={sym => { setActiveTab("research"); window.setTimeout(() => chartSymbol(sym), 50); }}
               needsYou={queue}
-              controls={commandBar}
+              controls={null}
             />
           </Panel>}
 
           {activeTab === "research" && <>
-            <Panel name="Chart"><MarketChart symbols={status?.watchlist || []} api={api} signals={signals}/></Panel>
+            <Panel name="Chart"><MarketChart symbols={status?.watchlist || []} api={api} signals={signals} status={status}/></Panel>
             <Panel name="Signals">
               <SignalsTable signals={signals} status={status} ml={ml} onSelectSymbol={chartSymbol}/>
             </Panel>
             <Panel name="History">
               <HistoryTable proposals={proposals.slice(0, 10)} lastRun={lastRun} onOpen={p => void openProposal(p)}/>
             </Panel>
-            <Panel name="Yahoo Finance">
-              <YahooFinancePanel symbols={status?.watchlist || ["AAPL", "MSFT", "NVDA", "SPY", "QQQ"]} api={api}/>
-            </Panel>
-            <Panel name="Research"><ResearchPanel research={research}/></Panel>
           </>}
 
           {activeTab === "options" && status?.settings?.options_enabled && <>
@@ -235,20 +234,22 @@ export default function Dashboard() {
           </>}
 
           {activeTab === "learning" && <>
+            <Panel name="Trade ledger"><section className={`panel ${css["learning-panel"]}`}><TradeLedgerView/></section></Panel>
             <Panel name="Autopsies"><section className={`panel ${css["learning-panel"]}`}><AutopsyView/></section></Panel>
-            <Panel name="Lessons"><section className={`panel ${css["learning-panel"]}`}><LearningView onAction={perform}/></section></Panel>
             <Panel name="ML scorecard">
               <section className={`panel ${css["learning-panel"]}`}>
                 <MLScorecard ml={ml} onRefresh={refreshMl} onAction={perform} busy={!!busy}/>
               </section>
             </Panel>
-            <Panel name="Trade ledger"><section className={`panel ${css["learning-panel"]}`}><TradeLedgerView/></section></Panel>
+            <Panel name="Lessons"><section className={`panel ${css["learning-panel"]}`}><LearningView onAction={perform}/></section></Panel>
           </>}
 
+          {activeTab === "backtests" && <Panel name="Backtests"><Backtests api={api}/></Panel>}
+
           {activeTab === "settings" && <>
+            <div className={css["settings-grid"]}>
+            <div className={css["settings-col"]}>
             <Panel name="Engine"><section className="panel"><h2>Engine</h2>{commandBar}</section></Panel>
-            <Panel name="Account"><AccountPanel portfolio={portfolio} status={status} onRefresh={() => void refresh()}/></Panel>
-            <Panel name="Orders"><OrdersPanel portfolio={portfolio}/></Panel>
             <Panel name="Health">
               <HealthPanel
                 status={status}
@@ -257,6 +258,13 @@ export default function Dashboard() {
                 onTestAlert={() => void perform("Test alert sent", () => api("/api/alerts/test", "POST"))}
               />
             </Panel>
+            </div>
+            <div className={css["settings-col"]}>
+            <Panel name="Account"><AccountPanel portfolio={portfolio} status={status} onRefresh={() => void refresh()}/></Panel>
+            <Panel name="Orders"><OrdersPanel portfolio={portfolio}/></Panel>
+            <Panel name="Options settings"><OptionsSettings status={status} api={api}/></Panel>
+            </div>
+            </div>
             <Panel name="Reviewer notes">
               <SettingsPanel
                 status={status}
@@ -278,7 +286,6 @@ export default function Dashboard() {
 
       <footer className={`${css["app-footer"]}`}>
         <span>Times are in your local timezone. Shift+K opens the kill switch.</span>
-        <span>{mounted ? status?.model || "AI analyst" : "AI analyst"}</span>
       </footer>
 
       {selected && <DecisionModal

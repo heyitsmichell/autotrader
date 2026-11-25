@@ -131,6 +131,16 @@ class RiskLoop:
             self.errors += 1
             self.last_error = f"entry chase: {type(e).__name__}: {e}"
             log.exception("entry chase failed")
+        if eng.s.options_spread_log:
+            try:       # background task: sampling must never delay exits
+                sl = getattr(eng, "spread_logger", None)
+                if sl is None:
+                    from .spread_log import SpreadLogger
+                    sl = eng.spread_logger = SpreadLogger(eng)
+                if not sl.running:
+                    self._spread_task = asyncio.create_task(sl.maybe_sample())
+            except Exception as e:  # noqa: BLE001
+                log.debug("spread log scheduling failed: %s", e)
         manager = eng.option_exits
         idle = not manager.held and not eng.s.options_enabled
         if idle and time.monotonic() - self._last_poll < IDLE_INTERVAL_SECONDS:

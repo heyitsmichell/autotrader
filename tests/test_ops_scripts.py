@@ -79,3 +79,9 @@ def test_requirements_pinned():
     for pkg in ("pytest", "pytest-asyncio"):
         assert re.search(rf"^{pkg}==\S+", dev, re.M), pkg
     assert "pytest-cov" in dev
+
+
+def test_pc_launchers_have_bot_disabled_guard():
+    for name in ("Start_Trader.bat", "Start_Trader.command", "start.sh", "install_autostart.sh"):
+        assert "PC_BOT_DISABLED" in (ROOT / name).read_text(encoding="utf-8"), name
+    assert "PC_BOT_DISABLED" in (ROOT / "deploy/oracle/push_to_server.ps1").read_text(encoding="utf-8")

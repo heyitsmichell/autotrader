@@ -38,6 +38,7 @@ from .config import Settings
 from .db import DB
 from .engine import Engine
 from .learning import Learner
+from .logging_setup import trim_shared_logs
 from .market import ET, now_et, now_utc, session_close, start_of_today_et_utc
 from .portfolio import Portfolio
 
@@ -95,7 +96,11 @@ class Supervisor:
 
     async def _loop(self) -> None:
         await asyncio.sleep(5)
+        last_trim = 0.0
         while True:
+            if time.monotonic() - last_trim >= 720:  # ~12 min; a stat call per file
+                last_trim = time.monotonic()
+                trim_shared_logs()
             try:
                 await self.tick()
                 self.last_error = None
