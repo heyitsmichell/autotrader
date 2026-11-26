@@ -37,6 +37,7 @@ from .reviews import ReviewsRepo
 from .runs import RunsRepo
 from .schema import ADDED_COLUMNS, JSON_FIELDS, SCHEMA, _now, decode
 from .signals import SignalsRepo
+from .scanner import ScannerRepo
 from .shadows import ShadowsRepo
 from .sleeves import SleevesRepo
 
@@ -48,7 +49,7 @@ __all__ = [
 
 class DB(EventsRepo, KvRepo, RunsRepo, ProposalsRepo, SignalsRepo, EquityRepo, ProtectiveRepo,
          MLRepo, ReviewsRepo, ResearchRepo, LedgerRepo, AutopsiesRepo, LessonsRepo, AtmIvRepo, OptionSpreadsRepo,
-         OptionOutcomesRepo, SleevesRepo, ShadowsRepo,
+         OptionOutcomesRepo, SleevesRepo, ShadowsRepo, ScannerRepo,
          MaintenanceRepo, NotifyMixin, BaseRepo):
     def __init__(self, path: Path, broker_mode: str = "mock",
                  webull_environment: str | None = None, account_id: str | None = None) -> None:

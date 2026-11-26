@@ -27,7 +27,11 @@ class ValuationMixin:
             except Exception as exc:  # noqa: BLE001
                 log.warning("portfolio snapshot net_liq failed: %s", exc)
                 net_liq = None
-        return {"last": last, "raw_qty": raw_qty, "options": opts, "net_liq": net_liq, "cash": cash}
+        # per-share price the broker itself used for net liq (market value / qty); its "Last" can lag
+        mv_px = {r["symbol"]: float(r["market_value"]) / float(r["qty"]) for r in rows
+                 if r.get("market_value") is not None and r.get("qty")}
+        return {"last": last, "raw_qty": raw_qty, "options": opts, "net_liq": net_liq, "cash": cash,
+                "mv_px": mv_px}
 
     async def _price(self, sym: str, snap: dict) -> float | None:
         p = snap["last"].get(sym)
@@ -45,6 +49,7 @@ class ValuationMixin:
         """{sleeve: {equity, cash, invested}} plus 'total'. Swing = net liq minus the others."""
         out: dict[str, dict] = {}
         others = 0.0
+        others_cash = 0.0
         for sid in registry.NON_SWING:
             st = self.db.sleeve_state(sid)
             if not st:
@@ -59,7 +64,9 @@ class ValuationMixin:
                         unmarked = True   # estimate with cost for the swing remainder, but don't record it
                     invested += q * 100 * (mark if mark is not None else float(h.get("avg_cost") or 0))
                 else:
-                    px = snap["last"].get(h["symbol"]) or h.get("avg_cost") or 0.0
+                    # value at the broker's own mark so net liq minus sleeves leaves no price drift in swing
+                    px = (snap.get("mv_px") or {}).get(h["symbol"]) or snap["last"].get(h["symbol"]) \
+                        or h.get("avg_cost") or 0.0
                     invested += q * float(px)
             # sold lots leave holdings when the order is sent but cash arrives on fill: count the
             # still-unfilled proceeds so equity (and the drawdown check) doesn't dip mid-rebalance
@@ -74,10 +81,15 @@ class ValuationMixin:
             out[sid] = {"equity": round(cash + invested + pending, 2), "cash": round(cash, 2),
                         "invested": round(invested, 2), "unmarked": unmarked}
             others += cash + invested + pending
+            others_cash += cash
         nl = snap.get("net_liq")
+        bc = snap.get("cash")
         if nl is not None:
-            out["swing"] = {"equity": round(nl - others, 2), "cash": None, "invested": None}
-            out["total"] = {"equity": round(nl, 2), "cash": None, "invested": None}
+            # swing cash is derived: broker cash minus the other sleeves' ledger cash
+            swing_cash = round(bc - others_cash, 2) if bc is not None else None
+            out["swing"] = {"equity": round(nl - others, 2), "cash": swing_cash, "invested": None}
+            out["total"] = {"equity": round(nl, 2), "cash": round(bc, 2) if bc is not None else None,
+                            "invested": None}
         return out
 
     def _record(self, values: dict, snap: dict) -> None:

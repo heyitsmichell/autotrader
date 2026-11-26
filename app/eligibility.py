@@ -14,6 +14,24 @@ from .market import now_et, now_utc, market_is_open, is_premarket
 from .signals import SignalService
 
 log = logging.getLogger(__name__)
+
+# C16: broker statuses that mean a BUY is still live (incl. partial fills)
+_ONE_STARTER_OPEN = {"WORKING", "PENDING", "SUBMITTED", "NEW", "ACCEPTED", "PARTIAL", "PARTIALLY_FILLED",
+                     "PARTIAL_FILLED", "PENDING_NEW"}
+
+
+def _is_today(p: dict) -> bool:
+    """True when a proposal row was placed/created today (ET); unparseable -> True (conservative)."""
+    ts = p.get("placed_at") or p.get("created_at")
+    if not ts:
+        return True
+    try:
+        d = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        if d.tzinfo is not None:
+            d = d.astimezone(now_et().tzinfo)
+        return d.date() == now_et().date()
+    except Exception:
+        return True
 _yf = None
 
 
@@ -147,8 +165,8 @@ class EligibilityChecker:
         """Block new BUYs for EVENT_VETO_HOURS after a relevant negative hard-event headline
         (analyst downgrade, guidance cut, offering/dilution, SEC/DOJ probe or lawsuit, FDA
         rejection, bankruptcy/going concern, deal-pending takeover target, delisting).
-        Positive events never force a buy. A headline-store error lets the entry through: the
-        veto is an extra filter, not a data dependency."""
+        Positive events never force a buy. A headline-store error now REJECTS the entry
+        ("event veto unavailable", M12 2026-11-26): an unknown veto state must not pass silently."""
         from .news_events import event_label, find_negative_event, fmt_age
         db = self.db or getattr(getattr(self.signals, "sentiment", None), "db", None)
         if db is None:
@@ -159,8 +177,9 @@ class EligibilityChecker:
             items = db.news(symbol, since=since, limit=200)
             hit = find_negative_event(symbol, items, now=now_utc(), hours=hours)
         except Exception as e:  # noqa: BLE001
-            log.warning("Event veto lookup failed for %s: %s", symbol, e)
-            return EligibilityResult(ok=True)
+            log.warning("Event veto lookup failed for %s: %s (failing closed)", symbol, e)
+            return EligibilityResult(ok=False, reason="event veto unavailable",
+                                     details={"error": str(e)[:200]})
         if hit is None:
             return EligibilityResult(ok=True)
         return EligibilityResult(
@@ -278,7 +297,7 @@ class EligibilityChecker:
                 from .portfolio import parse_orders
                 orders = parse_orders(open_text)
                 for o in orders:
-                    if o.get("symbol") == symbol and o.get("side") == "BUY" and o.get("status") in ("WORKING", "PENDING", "SUBMITTED"):
+                    if o.get("symbol") == symbol and o.get("side") == "BUY" and (o.get("status") or "").upper() in _ONE_STARTER_OPEN:
                         return EligibilityResult(
                             ok=False,
                             reason=f"One starter per symbol: working BUY order for {symbol} at broker",
@@ -290,7 +309,10 @@ class EligibilityChecker:
             if self.db and self.s.trading_mode == "auto":
                 pending = self.db.proposals(symbol=symbol)
                 for p in pending:
-                    if p.get("side") == "BUY" and p.get("status") in ("pending", "placed", "unknown", "submitting"):
+                    st = p.get("status")
+                    if p.get("side") == "BUY" and st in ("pending", "placed", "unknown", "submitting"):
+                        if st == "placed" and not _is_today(p):
+                            continue  # stale placed BUY (older than today) must not block
                         return EligibilityResult(
                             ok=False,
                             reason=f"One starter per symbol: {p.get('status')} BUY proposal for {symbol} (id={p.get('id')}) will be auto-executed",
@@ -300,7 +322,7 @@ class EligibilityChecker:
             return EligibilityResult(ok=True)
         except Exception as e:
             log.warning(f"One starter check failed for {symbol}: {e}")
-            return EligibilityResult(ok=True)
+            return EligibilityResult(ok=False, reason=f"One starter check failed ({e}); failing closed")
 
     def _check_min_price(self, last_price: float) -> EligibilityResult:
         """Check minimum share price."""

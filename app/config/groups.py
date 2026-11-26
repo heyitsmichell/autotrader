@@ -1,9 +1,22 @@
-"""Grouped, read-only views over the flat Settings.
+"""Grouped, read-only typed views over the flat Settings.
 
-``Settings`` stays flat (``s.max_order_usd``) so existing code and
-``dataclasses.replace(settings, ...)`` keep working. ``s.risk``, ``s.options``,
-``s.ml``, ``s.sleeves``, ``s.news``, ``s.broker``, ``s.orders``, ``s.feed``, ``s.alerts``, ``s.backtest`` and ``s.llm`` return these frozen
-sub-models, each holding a copy of the relevant fields under the same names.
+``Settings`` stays flat (``s.max_order_usd``) and is the source of truth, so existing code,
+``dataclasses.replace(settings, ...)`` and test monkeypatching keep working. ``s.risk``,
+``s.options``, ``s.ml``, ``s.sleeves``, ``s.news``, ``s.broker``, ``s.orders``, ``s.feed``,
+``s.alerts``, ``s.backtest``, ``s.llm`` and ``s.core`` return frozen dataclasses, built on each
+access (no cache, so they can never go stale), with field types taken from Settings.
+Every Settings field belongs to exactly one group; ``core`` holds the leftovers (keys,
+watchlist, paths, shadows, misc) and is computed, so a new Settings field lands there until
+it is added to a group in GROUP_FIELDS.
+
+Migration plan (needs the user's go-ahead for stages 2 and 3):
+  Stage 1 (done): typed, exhaustive, non-overlapping groups + tests/test_settings_groups.py.
+  Stage 2: migrate call sites module by module from ``s.max_order_usd`` to
+    ``s.risk.max_order_usd`` (one module per commit, tests green each time). ``replace()`` keeps
+    using flat names until stage 3.
+  Stage 3: make the groups the stored state (Settings composed of group dataclasses), provide
+    a ``replace_group``/nested-replace helper, update loader, tests and replace() callers,
+    then drop the flat duplicates and the flat-name properties.
 """
 
 from __future__ import annotations
@@ -45,8 +58,7 @@ GROUP_FIELDS: dict[str, tuple[str, ...]] = {
     ),
     "FeedSettings": (
         "realtime_source", "poll_seconds", "feed_ring_size", "feed_max_subscriptions",
-        "feed_options_top_k", "stream_heartbeat_seconds", "broker_max_concurrency",
-        "broker_rate_limit_retries", "broker_backoff_seconds", "broker_execution",
+        "feed_options_top_k", "stream_heartbeat_seconds",
     ),
     "AlertSettings": (
         "alert_levels", "alert_dedupe_minutes", "alert_max_per_hour", "alert_daily_summary",
@@ -91,11 +103,28 @@ GROUP_FIELDS: dict[str, tuple[str, ...]] = {
         "broker_call_timeout_seconds", "broker_backoff_seconds", "broker_down_alert_minutes",
     ),
     "OrderSettings": (
-        "entry_order_type", "exit_order_type", "market_notional_buffer_pct", "bracket_orders",
+        "entry_order_type", "exit_order_type", "market_notional_buffer_pct",
         "bracket_take_profit", "fractional_enabled", "fractional_min_usd", "fractional_decimals",
-        "fractional_whitelist", "market_hours_only", "max_order_usd", "max_order_qty",
+        "fractional_whitelist", "market_hours_only",
     ),
 }
+
+
+def _core_names() -> tuple[str, ...]:
+    """Every Settings field not claimed by another group (secrets, watchlist, paths, shadows...)."""
+    from .settings import Settings
+    claimed = {n for names in GROUP_FIELDS.values() for n in names}
+    return tuple(f.name for f in fields(Settings) if f.name not in claimed)
+
+
+def _hints() -> dict[str, Any]:
+    from typing import get_type_hints
+
+    from .settings import Settings
+    try:
+        return get_type_hints(Settings)
+    except Exception:  # unresolvable annotation: fall back to untyped
+        return {}
 
 
 def _from_settings(cls, s: Any):
@@ -103,10 +132,11 @@ def _from_settings(cls, s: Any):
 
 
 def _make(name: str, names: tuple[str, ...]):
-    cls = make_dataclass(name, [(n, Any) for n in names], frozen=True,
+    hints = _hints()
+    cls = make_dataclass(name, [(n, hints.get(n, Any)) for n in names], frozen=True,
                          namespace={"from_settings": classmethod(_from_settings)})
     cls.__module__ = __name__
-    cls.__doc__ = f"Read-only view of the {name[:-8].lower()} settings."
+    cls.__doc__ = f"Read-only typed view of the {name[:-8].lower()} settings."
     return cls
 
 
@@ -121,3 +151,5 @@ SleevesSettings = _make("SleevesSettings", GROUP_FIELDS["SleevesSettings"])
 NewsSettings = _make("NewsSettings", GROUP_FIELDS["NewsSettings"])
 BrokerSettings = _make("BrokerSettings", GROUP_FIELDS["BrokerSettings"])
 OrderSettings = _make("OrderSettings", GROUP_FIELDS["OrderSettings"])
+GROUP_FIELDS["CoreSettings"] = _core_names()
+CoreSettings = _make("CoreSettings", GROUP_FIELDS["CoreSettings"])

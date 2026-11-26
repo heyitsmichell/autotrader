@@ -706,7 +706,7 @@ class Portfolio(MaeMfeMixin):
                     fill_price = o.get("avg_fill_price") or o.get("filled_price") or trade["limit_price"]
                     fill_time = o.get("filled_at") or o.get("placed_at") or _now()
                     # Use actual filled quantity from broker (handles partial fills)
-                    filled_qty = int(o.get("filled_qty") or trade["quantity_requested"])
+                    filled_qty = round(float(o.get("filled_qty") or trade["quantity_requested"]), 6)  # C16: keep fractional fills
                     slippage = fill_price - trade["limit_price"] if trade["side"] == "BUY" else trade["limit_price"] - fill_price
                     commission = o.get("commission") or 0.0
                     self.db.update_trade_fill(proposal_id, fill_price, fill_time,

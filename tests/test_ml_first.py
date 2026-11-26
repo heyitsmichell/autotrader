@@ -156,6 +156,12 @@ async def test_promoting_a_challenger_makes_it_the_champion(test_settings, test_
     ml = MLFilter(test_settings, test_db)
     assert test_db.champion_model() is None
     mid = test_db.add_model(status="challenger", path="x.pt", n_samples=10, n_symbols=2, metrics={}, params={})
+    # M4: an unloadable checkpoint is refused and the DB is left unchanged
+    with pytest.raises(ValueError):
+        ml.promote_challenger(mid)
+    assert test_db.champion_model() is None
+    # a checkpoint that loads is promoted
+    ml._load_checkpoint = lambda row: (None, None, None)
     out = ml.promote_challenger(mid)
     assert out["status"] == "champion"
     assert test_db.champion_model()["id"] == mid

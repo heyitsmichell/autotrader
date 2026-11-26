@@ -149,12 +149,34 @@ class ShadowManager:
         return now.time() >= now.time().replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
 
     def _due_month(self, sid: str) -> bool:
+        if sid == "amihud_quality":
+            return self._due_days(sid, strategies.AMIHUD_REBALANCE_DAYS)
         last = (self.db.shadow_state(sid) or {}).get("last_rebalance")
         if not last:
             return True
         d = datetime.fromisoformat(last).date()
         today = now_et().date()
         return (d.year, d.month) != (today.year, today.month)
+
+    @staticmethod
+    def _next_trading_days(frm: str | None, n: int) -> str:
+        d = datetime.fromisoformat(frm).date() if frm else now_et().date()
+        while n > 0:
+            d += timedelta(days=1)
+            n -= is_trading_day(d)
+        return d.isoformat()
+
+    def _due_days(self, sid: str, n: int) -> bool:
+        """True when no rebalance yet, or >= n trading days have passed since the last one."""
+        st = self.db.shadow_state(sid) or {}
+        last = st.get("last_rebalance")
+        if not last:      # first rebalance: the first trading day after the shadow was created
+            return (st.get("start_date") or "") < now_et().date().isoformat()
+        d, today, k = datetime.fromisoformat(last).date(), now_et().date(), 0
+        while d < today:
+            d += timedelta(days=1)
+            k += is_trading_day(d)
+        return k >= n
 
     # ------------------------------------------------------------------ state
     def _ensure_states(self) -> None:
@@ -224,16 +246,24 @@ class ShadowManager:
     async def _targets(self, d: registry.ShadowDef) -> dict[str, float] | None:
         meta = _meta(self.db.shadow_state(d.id))
         month = now_et().strftime("%Y-%m")
+        if d.id == "amihud_quality":
+            month = now_et().date().isoformat()         # signal recomputed per rebalance day
         if meta.get("targets_month") == month and meta.get("targets") is not None:
             return meta["targets"]
         if time.monotonic() < self._retry_after.get(d.id, 0):
             return None
-        ohlc = await asyncio.to_thread(data.daily_ohlc, d.symbols())
+        if d.id == "amihud_quality":
+            ohlc = await asyncio.to_thread(data.daily_ohlcv, d.symbols(), "2y")
+            for k, df in list(ohlc.items()):          # signal at the last COMPLETED close: drop today's bar
+                if len(df) and df.index[-1].date() >= now_et().date():
+                    ohlc[k] = df.iloc[:-1]
+        else:
+            ohlc = await asyncio.to_thread(data.daily_ohlc, d.symbols())
         close = ohlc.get("close")
         if close is not None and not close.empty:
             self._yahoo[d.id] = {str(c): float(close[c].dropna().iloc[-1]) for c in close.columns
                                  if close[c].notna().any()}
-        tg = strategies.compute(d.id, ohlc, TOP_N)
+        tg = strategies.compute(d.id, ohlc, strategies.AMIHUD_TOP_N if d.id == "amihud_quality" else TOP_N)
         if not tg:
             self._retry_after[d.id] = time.monotonic() + 1800
             self.db.log("warn", f"Shadow {d.id}: could not compute targets (price history missing); "
@@ -325,6 +355,8 @@ class ShadowManager:
         last_rb = st.get("last_rebalance")
         nxt = (self._next_replay_day(d.id) if not d.monthly else next_rebalance_day(datetime.fromisoformat(last_rb).date()).isoformat()
                if last_rb else now_et().date().isoformat())
+        if d.id == "amihud_quality":
+            nxt = self._next_trading_days(last_rb or st.get("start_date"), strategies.AMIHUD_REBALANCE_DAYS if last_rb else 1)
         return {
             "id": d.id, "name": d.name, "description": d.description, "rule": d.rule,
             "start_date": st.get("start_date"), "start_capital": start,

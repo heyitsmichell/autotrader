@@ -133,11 +133,21 @@ async def test_unconfirmed_cancel_keeps_protective_row_tracked():
         from app.broker import BrokerError
         raise BrokerError("Validation error: order already filled")
 
-    e.broker = SimpleNamespace(cancel_order=cancel)
+    async def no_orders(*a, **k):
+        return ""
+
+    async def hist(*a, **k):    # the stop is listed as FILLED (live/unknown status blocks the sell)
+        return ("Client Order ID: gsl1\n  Client Order ID: sl1\n  Symbol: AAPL\n  Side: SELL\n"
+                "  Status: FILLED\n  Total Quantity: 5\n")
+
+    e.broker = SimpleNamespace(cancel_order=cancel, open_orders_text=no_orders,
+                               order_history_text=hist)
     e.db = SimpleNamespace(protective=lambda sym: rows, log=lambda *a, **k: None,
                            set_protective=lambda *a, **k: marked.append(a))
     out = await e._cancel_protective("AAPL", "sell1")
-    assert out == [] and marked == []                      # refused cancel: row not marked cancelled
+    # C5: a refused cancel means NO sell (None) unless the stop is confirmed cancelled;
+    # the row is still not marked cancelled
+    assert out is None and marked == []
 
 
 def test_mock_rejects_all_day_like_webull_us():

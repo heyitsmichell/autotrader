@@ -181,9 +181,10 @@ class FastLoop:
         # the engine's settings, so lessons applied at runtime reach the fast loop's gate too
         self.s = getattr(self.engine, "s", None) or self.s
         self.last_tick_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        if self.engine.kill_switch or not self.broker.connected or not self._session_open():
+        if not self.broker.connected or not self._session_open():
             self._set_armed([])
             return []
+        killed = bool(self.engine.kill_switch)   # S18: kill gates entries only, never exits
         if self.engine._run_lock.locked():
             return []  # the slow cycle is working; don't race it
 
@@ -208,7 +209,7 @@ class FastLoop:
         cooling = {sym for sym, until in self._cooldown_until.items() if until > now}
         sell_cooling = {sym for sym, until in self._sell_cooldown_until.items() if until > now}
 
-        armed = select_armed(rows, held, pending_buys, cooling, self.s)
+        armed = [] if killed else select_armed(rows, held, pending_buys, cooling, self.s)
         exit_watch = (
             [sym for sym in held if sym in by_symbol and sym not in pending_sells and sym not in sell_cooling]
             if getattr(self.s, "ml_enabled", False) and getattr(self.s, "exit_ml_drop_enabled", True)
@@ -228,7 +229,7 @@ class FastLoop:
                 pass
 
         for sym in exit_watch:
-            if self._blocked():
+            if not self.broker.connected:
                 break
             price = await self._price(sym)
             if price is None:
@@ -288,6 +289,13 @@ class FastLoop:
             return None
         return float(px) if px and px > 0 else None
 
+    def _ml_score(self, sym: str, bars: list[dict]) -> float | None:
+        """ML probability on the last COMPLETED daily bar (matches training), with SPY RS (M1/M9)."""
+        cache = getattr(self.signals, "_bars_cache", None) or {}
+        hit = cache.get(getattr(self.s, "market_regime_symbol", "SPY"))
+        f = indicators.ml_features(bars, hit[1] if hit else None)
+        return self.signals.ml.predict(f) if f else None
+
     async def _check(self, sym: str, price: float, row: dict) -> dict | None:
         bars = self.signals.cached_bars(sym, BARS_MAX_AGE_SECONDS)
         if not bars:
@@ -300,7 +308,7 @@ class FastLoop:
         sig = {**row, "close": t["close"], "atr": t["atr"], "trend": t["trend"],
                "strength": t["strength"], "vol": t["vol"], "ta_score": t["ta_score"],
                "ta_components": t["ta_components"], "features": f,
-               "ml_p": self.signals.ml.predict(f), "live": True, "live_price": price}
+               "ml_p": self._ml_score(sym, bars), "live": True, "live_price": price}
         p = {"symbol": sym, "side": "BUY", "quantity": 1, "limit_price": round(price, 2),
              "confidence": 0.7,
              "rationale": (f"Fast loop: live price {price:.2f} brought {sym} into the setup "
@@ -331,11 +339,11 @@ class FastLoop:
         f = indicators.features(adjusted)
         if not f:
             return None
-        ml_p = self.signals.ml.predict(f)
+        ml_p = self._ml_score(sym, bars)
         if ml_p is None:
             return None
         floor = self.s.ml_min_p - getattr(self.s, "exit_ml_drop_margin", 0.0)
-        if ml_p >= floor or self._blocked():
+        if ml_p >= floor or not self.broker.connected:
             return None
 
         t = ta.analyze(f, self.s)

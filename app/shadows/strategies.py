@@ -65,6 +65,30 @@ def vaa_g4_targets(closes: pd.DataFrame) -> dict[str, float]:
     return {k: v for k, v in w.items() if v > 0}
 
 
+AMIHUD_WINDOW = 90
+AMIHUD_TOP_N = 20
+AMIHUD_QUALITY_PCT = 0.5
+AMIHUD_REBALANCE_DAYS = 21
+
+
+def amihud_quality_targets(closes: pd.DataFrame, volumes: pd.DataFrame, n: int = AMIHUD_TOP_N,
+                           window: int = AMIHUD_WINDOW, q: float = AMIHUD_QUALITY_PCT) -> dict[str, float]:
+    """Amihud = mean(|ret| / (close*volume)) over ``window`` rows (last row = t); eligible = 12m-return
+    cross-sectional percentile >= q; top ``n`` by Amihud, equal weight. Uses rows up to the last only."""
+    if closes is None or volumes is None or len(closes) < 253:
+        return {}
+    cols = [c for c in closes.columns if c in volumes.columns]
+    c, v = closes[cols], volumes[cols].reindex(closes.index)
+    dv = (c * v).replace(0, np.nan)
+    illiq = (c.pct_change(fill_method=None).abs() / dv).iloc[-window:]
+    if len(illiq) < window:
+        return {}
+    score = illiq.mean(skipna=False)
+    ret252 = c.iloc[-1] / c.iloc[-1 - 252] - 1
+    elig = ret252.rank(pct=True) >= q
+    return _top(score[elig.reindex(score.index).fillna(False)], n)
+
+
 def compute(shadow_id: str, ohlc: dict, n: int = 10) -> dict[str, float]:
     if shadow_id == "mom_skip1w":
         return mom_skip1w_targets(ohlc.get("close"), n)
@@ -72,4 +96,6 @@ def compute(shadow_id: str, ohlc: dict, n: int = 10) -> dict[str, float]:
         return overnight_mom_targets(ohlc.get("open"), ohlc.get("close"), n)
     if shadow_id == "vaa_g4":
         return vaa_g4_targets(ohlc.get("close"))
+    if shadow_id == "amihud_quality":
+        return amihud_quality_targets(ohlc.get("close"), ohlc.get("volume"), n)
     return {}

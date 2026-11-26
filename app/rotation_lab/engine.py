@@ -128,11 +128,30 @@ def build_targets(score: np.ndarray, elig: np.ndarray, vol: np.ndarray, regime: 
     return W, flag
 
 
+def _ffill(A: np.ndarray) -> np.ndarray:
+    """Forward-fill NaN down each column (leading NaNs stay NaN -> 0% return via nan_to_num)."""
+    A = np.array(A, dtype=float, copy=True)
+    for j in range(A.shape[1]):
+        col = A[:, j]
+        ok = np.isfinite(col)
+        if ok.all() or not ok.any():
+            continue
+        idx = np.where(ok, np.arange(len(col)), 0)
+        np.maximum.accumulate(idx, out=idx)
+        filled = col[idx]
+        filled[: np.argmax(ok)] = np.nan
+        A[:, j] = filled
+    return A
+
+
 def run(O: np.ndarray, C: np.ndarray, W: np.ndarray, flag: np.ndarray, costs: bool = True):
     """O,C: T x (M+1) open/close incl. risk-off col. Returns daily returns, traded notional/day."""
     T, M1 = O.shape
     w = np.zeros(M1); w[-1] = 1.0
     rets = np.zeros(T); turn = np.zeros(T)
+    # M17: a missing open means "no trade, hold previous price": carry the last valid price forward
+    # so the gap yields the move on the next valid price instead of a fake 0% return.
+    O = _ffill(O); C = _ffill(C)
     with np.errstate(all="ignore"):
         R = np.empty((T, M1))
         R[:-1] = O[1:] / O[:-1] - 1.0

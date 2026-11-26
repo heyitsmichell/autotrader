@@ -84,6 +84,8 @@ class ReconcileMixin(_Host):
                 if st == "FILLED" or st in ACTIVE or st.startswith(("PENDING", "PARTIAL")):
                     self.db.update_proposal(p["id"], status="placed",
                                             reason=f"confirmed at the broker ({st})")
+                    if coid and hasattr(self, "uncount_failure"):
+                        self.uncount_failure(coid)   # S4: the "no reply" was not a real failure
                     if p.get("side") == "BUY" and self.db.get_trade(p["id"]) is None:
                         # followup-correctness: execution.py records the ledger entry only when
                         # the send is acknowledged. A timed-out send settled here must get it
@@ -104,7 +106,13 @@ class ReconcileMixin(_Host):
                     self.db.log("warn", f"Order {what} did not go through: broker reports {st}",
                                 alert=True)
                 else:
-                    continue   # a status we don't know: look again next time
+                    # S20: unknown status: same give-up timer as a missing order
+                    if age_min <= self.s.reconcile_give_up_minutes:
+                        continue
+                    self.db.update_proposal(p["id"], status="failed",
+                                            reason=f"unrecognised broker status {st!r} after {age_min:.0f} min")
+                    self.db.log("error", f"Order {what}: unrecognised broker status {st!r} for "
+                                         f"{age_min:.0f} min; marked failed. Check Webull.", alert=True)
                 changed += 1
             elif not coid and age_min > 2:
                 self.db.update_proposal(p["id"], status="failed",

@@ -48,8 +48,8 @@ const ROWS: Row[] = [
   { label: "Day P&L", cell: s => signedCell(`${money(s.day_pnl, { sign: true })} (${pct(s.day_pnl_pct)})`, s.day_pnl) },
   { label: "Drawdown from peak", cell: s => <>{pct(s.drawdown_pct)}<Meter s={s}/></> },
   { label: "Invested / collateral", cell: s => `${money(s.invested)} (${pct(s.invested_pct, { sign: false, digits: 0 })})${s.id === "putwrite" ? " collateral" : ""}` },
-  { label: "Cash", cell: s => s.cash == null
-    ? <span title="swing is the account remainder">n/a</span> : money(s.cash) },
+  { label: "Cash", cell: s => s.cash == null ? "—"
+    : s.id === "swing" ? <span title="Derived: broker cash minus the other sleeves' cash">{money(s.cash)}</span> : money(s.cash) },
   { label: "Positions", cell: s => String(s.positions_n ?? "—") },
   { label: "Live Sharpe", cell: liveSharpe },
   { label: "Backtest (expected)", group: true },

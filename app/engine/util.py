@@ -74,6 +74,30 @@ def _session_rejection(e: BrokerError) -> bool:
     return (("not support" in msg or "outside" in msg or "unsupported" in msg)
             and any(word in msg for word in ("session", "hours")))
 
+_AUTH_TOKENS = ("unauthorized", "unauthorised", "forbidden", "token expired", "expired token",
+                "invalid token", "token is expired", "authentication", "auth failed",
+                "invalid signature", "invalid api key", "permission denied", "login token",
+                "token missing", "device not registered")
+
+def classify_order_error(e: BrokerError) -> str:
+    """Classify a failed order call: "transport" (no reply), "rate_limit", "session", "auth",
+    or "order_rejected" (a definite price/size/buying-power style rejection). Only
+    "order_rejected" counts toward the consecutive-failure kill."""
+    from ..broker.parsers import is_rate_limited
+    msg = str(e)
+    if getattr(e, "transport", False):
+        return "transport"
+    if is_rate_limited(msg):
+        return "rate_limit"
+    if _session_rejection(e):
+        return "session"
+    low = msg.lower()
+    if any(t in low for t in _AUTH_TOKENS) or re.search(r"\b2fa\b", low):
+        return "auth"
+    if re.search(r"\bhttp\s*40[13]\b|\b40[13]\s+(?:client error|error|unauthor|forbidden)|"
+                 r"\bstatus(?:\s*code)?\W{0,3}40[13]\b|\bcode\W{0,3}40[13]\b", low):
+        return "auth"
+    return "order_rejected"
 
 
 _OCC_RE = re.compile(r"^([A-Z]{1,5})(\d{2})(\d{2})(\d{2})([CP])(\d{8})$")

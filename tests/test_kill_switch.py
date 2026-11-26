@@ -127,5 +127,6 @@ class TestKillSwitch:
         assert r is not None
         assert "daily loss" in r
 
+        test_engine.kill_reason = f"automatic: {r}"   # on_release acks only the trigger that tripped
         sup.on_release()
         assert sup._money_trigger({"net_liq": 9_000.0, "day_pnl": -150.0}) is None

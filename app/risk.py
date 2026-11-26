@@ -130,6 +130,17 @@ class RiskManager:
             return False, f"quantity {qty} exceeds {s.fractional_decimals} decimal places"
         return True, "ok"
 
+    @staticmethod
+    def _net_sleeve_pnl(broker, pnl: float) -> float:
+        other = (getattr(broker, "sleeve_day_pnl_provider", None)
+                 or (getattr(broker, "__dict__", {}) or {}).get("sleeve_day_pnl"))
+        if other is not None:
+            try:
+                pnl -= float(other() or 0.0)
+            except Exception:  # noqa: BLE001 - fall back to the account figure
+                log.debug("sleeve day P&L unavailable", exc_info=True)
+        return pnl
+
     async def check(self, p: dict, broker: Broker, db: DB, *, kill_switch: bool,
                     at_execution: bool, watchlist: list[str] | None = None) -> Verdict:
         s = self.s
@@ -326,13 +337,7 @@ class RiskManager:
                     # other sleeves' day P&L (provider set by SleeveManager) is taken out
                     # Documented hook: ``Broker.sleeve_day_pnl_provider: Callable[[], float] | None``
                     # (set by SleeveManager). The legacy ``__dict__["sleeve_day_pnl"]`` is still read.
-                    other = (getattr(broker, "sleeve_day_pnl_provider", None)
-                             or (getattr(broker, "__dict__", {}) or {}).get("sleeve_day_pnl"))
-                    if other is not None:
-                        try:
-                            pnl -= float(other() or 0.0)
-                        except Exception:  # noqa: BLE001 - fall back to the account figure
-                            log.debug("sleeve day P&L unavailable", exc_info=True)
+                    pnl = self._net_sleeve_pnl(broker, pnl)
                     hit = pnl <= -s.max_daily_loss_usd
                     add("Daily loss", not hit,
                         f"day P&L ${pnl:,.2f} hit the ${s.max_daily_loss_usd:,.2f} daily loss "
@@ -465,6 +470,36 @@ class OptionRiskManager:
             return (exp_date - today).days
         except ValueError:
             return -1
+
+    async def check_option_open_account(self, p: dict, broker: Broker, db: DB) -> tuple[bool, list[str]]:
+        """Account-level checks for an OPENING option order (S14): the daily-loss limit and the
+        daily trade-count cap, same rules as for equity BUYs. Closing orders are never blocked.
+        Call this next to ``check_single_leg`` at proposal time and at execution."""
+        s = self.s
+        intent = p.get("position_intent", "BUY_TO_OPEN")
+        if intent in ("BUY_TO_CLOSE", "SELL_TO_CLOSE"):
+            return True, []
+        reasons: list[str] = []
+        if s.max_trades_per_day > 0:
+            used = db.count_placed_today("option")      # S14: option entries only
+            if p.get("id") and p.get("status") in ("placed", "unknown", "submitting"):
+                used -= 1                               # this order is already counted
+            if used >= s.max_trades_per_day:
+                reasons.append(f"daily limit of {s.max_trades_per_day} placed trades reached")
+        if s.max_daily_loss_usd > 0:
+            try:
+                pnl = await broker.day_pnl()
+            except BrokerError as e:
+                return False, reasons + [f"could not read account balance: {e}"]
+            if pnl is None:
+                reasons.append("day P&L unavailable; cannot verify the daily loss limit, so no "
+                               "new opening orders (fails closed)")
+            else:
+                pnl = RiskManager._net_sleeve_pnl(broker, pnl)
+                if pnl <= -s.max_daily_loss_usd:
+                    reasons.append(f"day P&L ${pnl:,.2f} hit the ${s.max_daily_loss_usd:,.2f} "
+                                   "daily loss limit; no new opening orders today")
+        return not reasons, reasons
 
     def check_single_leg(self, p: dict) -> tuple[bool, list[str]]:
         """Check a single-leg option order proposal.

@@ -23,7 +23,7 @@ def normalize_rows(source: str, rows, store: BarStore | None = None, add_feature
         r = dict(r)
         r["source"] = source
         if r.get("holdout") in (None, ""):
-            r["holdout"] = is_holdout(r.get("entry_date"))
+            r["holdout"] = is_holdout(r.get("entry_date"), r.get("exit_date"))
         sd = r.get("signal_date")
         if add_features and sd and not any(str(k).startswith("f_") for k in r):
             f = features_at(r["symbol"], sd, store)

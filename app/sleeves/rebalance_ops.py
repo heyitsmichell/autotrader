@@ -25,7 +25,15 @@ class RebalanceMixin:
             return None
         from . import data
         if sid == "momentum":
-            closes = await asyncio.to_thread(data.daily_closes, data.sp500_symbols())
+            syms = data.sp500_symbols()
+            closes = await asyncio.to_thread(data.daily_closes, syms)
+            got = 0 if closes is None else len(getattr(closes, "columns", []))
+            if syms and got < 0.9 * len(syms):
+                # M18: partial download would rank a shrunken universe; don't cache the month.
+                self._retry_after[sid] = time.monotonic() + 1800
+                self.db.log("warn", f"Sleeve {sid}: downloaded {got}/{len(syms)} symbols (<90%); "
+                                    "targets not cached, retrying in 30 min")
+                return None
             tg = momentum.targets(closes, n=int(self.s.sleeve_momentum_n))
         else:
             closes = await asyncio.to_thread(data.daily_closes, VAA_SYMBOLS)

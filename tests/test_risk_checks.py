@@ -84,7 +84,7 @@ class TestRiskChecks:
             portfolio = Portfolio(tight_settings, db, broker)
             tight_engine = Engine(tight_settings, db, broker, signals, portfolio)
             # Override signals.ensure to return bullish signal (async function)
-            async def agree(sym: str, max_age_minutes: int = 20):
+            async def agree(sym: str, max_age_minutes: int = 20, allow_stale: bool = False):
                 return {"id": 1, "symbol": sym, "close": 150.0, "atr": 3.0, "trend": "up",
                         "ta_score": 0.6, "sent_score": 0.3, "sent_n": 6, "ml_p": 0.6, "features": {}}
             tight_engine.signals.ensure = agree

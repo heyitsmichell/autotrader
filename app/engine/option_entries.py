@@ -42,7 +42,7 @@ def entry_limit_price(bid: float, ask: float) -> float:
     raw = mid + 0.5 * (ask - mid)
     tick = option_tick(raw)
     px = round(round(raw / tick) * tick, 2)
-    return round(min(px, ask), 2)
+    return round(min(max(px, bid), ask), 2)   # C15: never below the bid
 
 
 def minutes_outside_edges(now: datetime) -> tuple[float, float]:
@@ -120,11 +120,15 @@ class OptionEntriesMixin(_Host):
                 occ = parse_occ(pr["symbol"])
                 if occ:
                     busy[occ["underlying"]] = "an option order is already pending"
+        working_occ: set[str] = set()
         for sym in working_buy_symbols(self.db):
             occ = parse_occ(sym)
             if occ:
                 busy.setdefault(occ["underlying"], "an option order is already working")
-        open_count = len({r.symbol for r in held}) + pending_buys
+                working_occ.add(sym)
+        held_syms = {r.symbol for r in held}
+        # C9: placed-but-unfilled option BUYs count toward the open cap
+        open_count = len(held_syms) + pending_buys + len(working_occ - held_syms)
         placed_today = self.db.count_placed_today("option") + pending_buys
 
         ml_on = bool(s.options_ml_enabled)
@@ -265,6 +269,9 @@ class OptionEntriesMixin(_Host):
                 if c and c > 0]
         budget = min(caps) if caps else s.options_entry_max_premium_usd
         qty = int(budget // (ask * 100))
+        cap_n = int(getattr(s, "options_max_contracts_per_order", 0) or 0)
+        if cap_n > 0:
+            qty = min(qty, cap_n)   # C8: clamp instead of being refused downstream
         if qty < 1:
             return skip(f"one contract costs ${ask * 100:,.0f}, budget ${budget:,.0f}", "budget")
         limit = entry_limit_price(bid, ask)

@@ -750,3 +750,12 @@ export interface BtMl {
   options_model?: Record<string, unknown> | null;
   experiments?: BtPipelineEntry[]; summary?: string;
 }
+
+/* ---- Shadow -> live promotion check ---- */
+export interface PromotionCriterion {
+  id: string; label: string; value: number | null; target_value: number | null; pass: boolean; gate: boolean;
+}
+export interface PromotionCheck {
+  shadow: string; target: string; days: number; min_days: number; criteria: PromotionCriterion[];
+  passed: boolean; verdict: string; first_day: string | null; last_day: string | null;
+}

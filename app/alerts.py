@@ -36,6 +36,12 @@ from .platform import send_desktop_notification
 
 log = logging.getLogger(__name__)
 
+# S2: critical alerts bypass the hourly cap and the duplicate filter
+CRITICAL = re.compile(r"KILL SWITCH ON|Could not re-protect|Kill action|FLATTEN done|Flatten stopped|Flatten requested|Broker disconnected|broker transport failed|"
+                      r"no (protective )?stop", re.I)
+SEND_ATTEMPTS = 3                 # S17: per-channel tries
+SEND_BACKOFF = (1.0, 3.0)         # seconds before the 2nd and 3rd try
+
 PRIORITY = {"error": "high", "warn": "default", "info": "default"}
 
 
@@ -72,7 +78,7 @@ class Alerts:
     # -- entry points ----------------------------------------------------------
     def _on_event(self, level: str, message: str, alert: bool) -> None:
         if alert or level in self.s.alert_levels:
-            self.notify(message, level=level)
+            self.notify(message, level=level, force=bool(CRITICAL.search(message)))
 
     def notify(self, message: str, level: str = "info", title: str | None = None,
                force: bool = False) -> bool:
@@ -111,26 +117,36 @@ class Alerts:
         body = f"{message}\n\n[{env}]"
         results: dict[str, str] = {}
 
-        # Always send local notification (desktop toast + flag file for dashboard)
-        try:
-            await self._local(title, body, level)
-            results["local"] = "ok"
-        except Exception as e:
-            results["local"] = f"{type(e).__name__}: {e}"
-            log.warning("local alert failed: %s", e)
+        # Local notification runs concurrently (the toast is a slow subprocess; S3)
+        async def local() -> None:
+            try:
+                await self._local(title, body, level)
+                results["local"] = "ok"
+            except Exception as e:  # noqa: BLE001
+                results["local"] = f"{type(e).__name__}: {e}"
+                log.warning("local alert failed: %s", e)
+        local_task = asyncio.ensure_future(local())
 
         # External channels
         senders = {"ntfy": self._ntfy, "telegram": self._telegram, "webhook": self._webhook,
                    "email": self._email}
         for name in self.channels:
-            try:
-                await senders[name](title, body, level)
-                results[name] = "ok"
-            except Exception as e:  # noqa: BLE001 - report, never raise
-                err = self._redact(f"{type(e).__name__}: {e}")
-                results[name] = err
-                self.last_error = f"{name}: {err}"
-                log.warning("alert via %s failed: %s", name, err)   # never the raw exception (H4)
+            for attempt in range(SEND_ATTEMPTS):          # S17: retry with backoff
+                try:
+                    await senders[name](title, body, level)
+                    results[name] = "ok"
+                    break
+                except Exception as e:  # noqa: BLE001 - report, never raise
+                    err = self._redact(f"{type(e).__name__}: {e}")
+                    results[name] = err
+                    self.last_error = f"{name}: {err}"
+                    log.warning("alert via %s failed (try %d): %s", name, attempt + 1, err)  # never the raw exception (H4)
+                    if attempt + 1 < SEND_ATTEMPTS:
+                        await asyncio.sleep(SEND_BACKOFF[min(attempt, len(SEND_BACKOFF) - 1)])
+        await local_task
+        ext = [v for k, v in results.items() if k != "local"]
+        if ext and not any(v == "ok" for v in ext):
+            self._recent.pop(message, None)   # S17: nothing got through; let a repeat try again
         if any(v == "ok" for v in results.values()):
             self.sent += 1
         return results
@@ -138,7 +154,7 @@ class Alerts:
     async def _local(self, title: str, body: str, level: str) -> None:
         """Send local desktop notification and write flag file for dashboard banner."""
         # Desktop toast (Windows/macOS/Linux)
-        send_desktop_notification(title, body, urgent=(level == "error"))
+        await asyncio.to_thread(send_desktop_notification, title, body, level == "error")  # S3: off the loop
 
         # Write flag file for dashboard banner
         from .config import DATA_DIR

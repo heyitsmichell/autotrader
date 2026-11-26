@@ -595,6 +595,11 @@ class SentimentEngine:
         if self.s.sentiment_llm if with_llm is None else with_llm:
             self._spawn_llm_scoring()
 
+    @property
+    def news_down(self) -> bool:
+        """True while the news outage alert state is active (no headlines for news_outage_minutes)."""
+        return bool(getattr(self, "_outage_alerted", False))
+
     def _check_outage(self, fetched: int, per_source: dict[str, int]) -> None:
         now = time.monotonic()
         if fetched > 0:
@@ -692,8 +697,8 @@ class SentimentEngine:
         hours = float(getattr(self.s, "event_veto_hours", 48.0))
         events = []
         for it in items:
-            age = (now - parse_ts(it.get("published_at") or it.get("fetched_at"))).total_seconds() / 3600 \
-                if parse_ts(it.get("published_at") or it.get("fetched_at")) else None
+            pub = parse_ts(it.get("published_at"))  # M13: undated headlines are not "fresh"
+            age = (now - pub).total_seconds() / 3600 if pub else None
             if age is None or age > hours:
                 continue
             ev = effective_event(it, symbol)
@@ -705,7 +710,12 @@ class SentimentEngine:
         log.debug("sentiment summary for %s: relevant=%d scored=%d by=%s chosen_source=%s score=%s",
                   symbol, agg["n_relevant"], agg["n"], agg["by_scorer"], src, chosen)
 
+        # M12: during a news outage the consensus must see "news unavailable", not neutral.
+        news_unavailable = self.news_down
+        if news_unavailable:
+            state = "unavailable"
         return {"score": chosen, "n": n, "source": src, "state": state, "webull": wb, "llm": llm,
+                "news_unavailable": news_unavailable,
                 "n_relevant": agg["n_relevant"], "pending": agg["pending"],
                 "events": events[:5], "ingest": self.ingest_stats,
                 "fear_greed": (self.fear_greed or {}).get("current"),

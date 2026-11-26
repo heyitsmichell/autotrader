@@ -525,8 +525,11 @@ def effective_event(item: dict, symbol: str, title: str | None = None) -> str | 
         rel = item.get("llm_relevance")
         if rel is not None and float(rel) < LLM_MIN_RELEVANCE:
             return None
-        ev = item.get("llm_event")
-        return ev if ev in NEGATIVE_EVENTS or ev in POSITIVE_EVENTS else None
+        # M13: keep the stronger of the two; a keyword hit survives an LLM "none" label.
+        for cand in (item.get("llm_event"), item.get("event_type"), classify_event(title, symbol)):
+            if cand in NEGATIVE_EVENTS or cand in POSITIVE_EVENTS:
+                return cand
+        return None
     for cand in (item.get("event_type"), item.get("llm_event"), classify_event(title, symbol)):
         if cand in NEGATIVE_EVENTS or cand in POSITIVE_EVENTS:
             return cand
@@ -538,7 +541,8 @@ def find_negative_event(symbol: str, items: list[dict], *, now: datetime, hours:
     keyword event, the LLM label, or a fresh keyword pass). Returns a dict or None."""
     best = None
     for it in items:
-        age = age_hours(it, now)
+        pub = parse_ts(it.get("published_at"))  # M13: undated headlines are not fresh
+        age = None if pub is None else max(0.0, (now - pub).total_seconds() / 3600.0)
         if age is None or age > hours:
             continue
         title = it.get("title") or ""

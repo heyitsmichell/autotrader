@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 ET = ZoneInfo("America/New_York")
 PREMARKET_OPEN = time(4, 0)      # 4:00 AM ET
 AFTERHOURS_CLOSE = time(20, 0)   # 8:00 PM ET: end of after-hours, start of Webull overnight
+EARLY_AFTERHOURS_CLOSE = time(17, 0)  # after-hours ends 17:00 ET on early-close days
 OPEN, CLOSE, EARLY_CLOSE = time(9, 30), time(16, 0), time(13, 0)
 
 # Test time override - set to a datetime to freeze time for testing
@@ -165,13 +166,22 @@ def market_is_open(at: datetime | None = None) -> bool:
     return close is not None and OPEN <= t.time() < close
 
 
-def market_is_open_extended(at: datetime | None = None) -> bool:
-    """Extended-hours session: premarket + regular + after-hours (4:00-20:00 ET)."""
-    t = (at or _now_et()).astimezone(ET)
-    close = session_close(t.date())
+def afterhours_end(d: date) -> time | None:
+    """End of after-hours on date d: 20:00, or 17:00 on early-close days."""
+    close = session_close(d)
     if close is None:
+        return None
+    return EARLY_AFTERHOURS_CLOSE if close == EARLY_CLOSE else AFTERHOURS_CLOSE
+
+
+def market_is_open_extended(at: datetime | None = None) -> bool:
+    """Extended-hours session: premarket + regular + after-hours (4:00-20:00 ET,
+    4:00-17:00 on early-close days)."""
+    t = (at or _now_et()).astimezone(ET)
+    end = afterhours_end(t.date())
+    if end is None:
         return False
-    return PREMARKET_OPEN <= t.time() < AFTERHOURS_CLOSE
+    return PREMARKET_OPEN <= t.time() < end
 
 
 def is_premarket(at: datetime | None = None) -> bool:
@@ -187,20 +197,33 @@ def is_afterhours(at: datetime | None = None) -> bool:
     """After-hours (regular close to 20:00 ET) on a trading day."""
     t = (at or _now_et()).astimezone(ET)
     close = session_close(t.date())
-    return close is not None and close <= t.time() < AFTERHOURS_CLOSE
+    end = afterhours_end(t.date())
+    return close is not None and end is not None and close <= t.time() < end
+
+
+def _overnight_evening(d: date) -> bool:
+    """Does the evening of date d (20:00 on) have a Webull overnight session?
+
+    Only when the next day is a trading day and d is a Sunday or a full trading
+    day (no overnight after a holiday or an early close), minus OVERNIGHT_CLOSED_DATES."""
+    if d in _env_dates("OVERNIGHT_CLOSED_DATES"):
+        return False
+    if not is_trading_day(d + timedelta(days=1)):
+        return False
+    if d.weekday() == 6:
+        return True
+    return session_close(d) == CLOSE
 
 
 def is_overnight(at: datetime | None = None) -> bool:
-    """Webull overnight session: 20:00 to 04:00 ET, Sunday evening through Friday
-    morning (the evening of a trading day, or the early morning after one)."""
+    """Webull overnight session: 20:00 to 04:00 ET, the evening of a full trading
+    day (or Sunday) before a trading day, and the early morning after it."""
     t = (at or _now_et()).astimezone(ET)
     d = t.date()
     if t.time() >= AFTERHOURS_CLOSE:
-        # evening: the session belongs to the next trading day
-        return is_trading_day(d + timedelta(days=1)) or (
-            d.weekday() == 6 and is_trading_day(d + timedelta(days=1)))
+        return _overnight_evening(d)
     if t.time() < PREMARKET_OPEN:
-        return is_trading_day(d)
+        return is_trading_day(d) and _overnight_evening(d - timedelta(days=1))
     return False
 
 

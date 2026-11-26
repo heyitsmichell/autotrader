@@ -177,13 +177,17 @@ class CycleMixin(_Host):
 
                 # Generate proposals deterministically (from signals already in hand)
                 proposals_generated = 0
+                gen_failed = False
                 try:
                     proposals_generated = await self._generate_proposals_deterministic(run_id, sigs)
                 except Exception as e:  # noqa: BLE001
+                    gen_failed = True
                     log.exception("deterministic proposal generation failed")
                     self.db.log("error", f"Proposal generation failed: {type(e).__name__}: {e}")
+                    self._failed("run", f"proposal generation failed: {type(e).__name__}: {e}")
 
-                self.run_failures = 0
+                if not gen_failed:
+                    self.run_failures = 0
                 # No LLM cost for deterministic runs
                 self.db.finish_run(
                     run_id, "ok", summary=f"Deterministic run: {proposals_generated} proposal(s) generated", tool_calls=[],

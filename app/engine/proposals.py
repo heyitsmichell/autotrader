@@ -55,7 +55,7 @@ class ProposalsMixin(_Host):
             positions = await self.broker.positions()
         except BrokerError as e:
             self.db.log("warn", f"Could not read positions for deterministic proposals: {e}")
-            positions = {}
+            positions = None     # unknown (not "flat"): no profit-state reset, no SELL section
 
         # --- BUY proposals: symbols where consensus gate passes ---
         # ML-first: best model score first, and at most ML_FIRST_TOP_N new BUYs per cycle.
@@ -89,7 +89,7 @@ class ProposalsMixin(_Host):
                 continue
 
             # Check if we already hold this symbol
-            held = positions.get(symbol, 0.0)
+            held = (positions or {}).get(symbol, 0.0)
             if held > 0:
                 continue  # Already have a position, don't double up
 
@@ -148,12 +148,16 @@ class ProposalsMixin(_Host):
         entry_times: dict[str, str] = {}
         entry_prices: dict[str, float] = {}
         try:
-            for tr in reversed(self.db.open_trades()):          # oldest first, so oldest wins
+            for tr in reversed(self.db.open_trades()):          # oldest first, so the NEWEST wins
+                if not tr.get("entry_fill_price"):
+                    continue          # unfilled rows must not reset the time stop / profit entry
                 entry_times[tr["symbol"]] = tr.get("entry_fill_time") or tr.get("created_at")
-                if tr.get("entry_fill_price"):
-                    entry_prices[tr["symbol"]] = float(tr["entry_fill_price"])
+                entry_prices[tr["symbol"]] = float(tr["entry_fill_price"])
         except Exception as e:  # noqa: BLE001 - ledger problems must not stop exits
             self.db.log("warn", f"Could not read open trades for time stops: {e}")
+
+        if positions is None:
+            return proposals_generated      # positions unreadable: skip the reset and the SELLs
 
         # Forget profit-taking state for positions that no longer exist, so a re-entry starts clean.
         for key in list(self.db.get_kv("profit_state_symbols", [])):
@@ -171,7 +175,7 @@ class ProposalsMixin(_Host):
 
             # Get signal for this symbol
             try:
-                sig = await self.signals.ensure(symbol, max_age_minutes=60)
+                sig = await self.signals.ensure(symbol, max_age_minutes=60, allow_stale=True)
             except Exception as e:
                 self.db.log("warn", f"Could not get signal for {symbol}: {e}")
                 continue
@@ -365,6 +369,10 @@ class ProposalsMixin(_Host):
             ok, reasons = self.option_risk.check_single_leg(p)
             if not ok:
                 return f"REJECTED (options risk): {'; '.join(reasons)}"
+            # S14: opening option orders obey the account-level daily-loss / trade-count limits
+            ok, reasons = await self.option_risk.check_option_open_account(p, self.broker, self.db)
+            if not ok:
+                return f"REJECTED (options risk): {'; '.join(reasons)}"
 
             # For options, run the option consensus gate (IV rank, delta, liquidity)
             sig = None
@@ -429,7 +437,7 @@ class ProposalsMixin(_Host):
             sig = sig_override or self.signal_store.get(p["symbol"], max_age=20 * 60)
             if sig is None:
                 try:   # the warm store missed: one bounded refresh for this symbol
-                    sig = await asyncio.wait_for(self.signals.ensure(p["symbol"]), 60)
+                    sig = await asyncio.wait_for(self.signals.ensure(p["symbol"], allow_stale=(p["side"] == "SELL")), 60)
                 except asyncio.TimeoutError:
                     sig = None
             if not sig:

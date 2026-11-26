@@ -27,9 +27,12 @@ EXTRA_COLS = [
 ALL_COLS = BASE_COLS + EXTRA_COLS + FEATURE_COLS + SPY_COLS
 
 
-def is_holdout(entry_date) -> int:
-    """1 when the entry is dated after 2025-11-23 (inside the locked holdout)."""
-    s = "" if entry_date is None else str(entry_date)
-    if s in ("", "NaT", "nan", "None"):
-        return 0
-    return int(s[:10] >= HOLDOUT_START)
+def is_holdout(entry_date, exit_date=None) -> int:
+    """1 when the entry OR exit is dated on/after HOLDOUT_START (inside the locked holdout)."""
+    for v in (entry_date, exit_date):
+        s = "" if v is None else str(v)
+        if s in ("", "NaT", "nan", "None"):
+            continue
+        if s[:10] >= HOLDOUT_START:
+            return 1
+    return 0

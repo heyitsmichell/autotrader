@@ -33,6 +33,7 @@ class Data:
         self.close = pd.DataFrame({s: raw[s]["close"].reindex(idx) for s in self.syms})
         sp = sorted(ext.glob("sp500_list_*.csv"))
         self.sp500 = []
+        self.survivorship_biased = True  # M17: sp500 universe = today's list, not point-in-time
         if sp:
             lst = pd.read_csv(sp[-1])["Symbol"].astype(str).str.replace(".", "-", regex=False)
             self.sp500 = [s for s in lst if s in raw]

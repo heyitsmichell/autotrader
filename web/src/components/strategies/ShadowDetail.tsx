@@ -5,6 +5,7 @@ import type { Api } from "@/lib/api";
 import type { ConfirmRequest } from "@/components/ConfirmModal";
 import { dateTime, money, num, pct } from "@/lib/format";
 import type { Shadow, ShadowDetail as Detail } from "@/lib/types";
+import PromotionPanel from "./PromotionPanel";
 import css from "./Strategies.module.css";
 
 export default function ShadowDetail({ api, shadow, onConfirm, onAction, onReset }: {
@@ -60,6 +61,7 @@ export default function ShadowDetail({ api, shadow, onConfirm, onAction, onReset
             <td>{t.reason || "—"}</td></tr>)}</tbody>
         </table></div>}
     </>}
+    <PromotionPanel api={api} shadow={shadow} onConfirm={onConfirm} onAction={onAction}/>
     <p><button type="button" className={css["linkBtn"]} onClick={reset}>Reset</button></p>
   </div>;
 }

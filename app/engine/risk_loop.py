@@ -25,7 +25,7 @@ import logging
 import time
 
 from ..broker import BrokerError
-from ..market import order_session
+from ..market import now_et, order_session, session_phase
 from ..portfolio import ACTIVE, DONE_CANCELLED, parse_orders
 
 from .chase import EntryChaser
@@ -38,7 +38,8 @@ log = logging.getLogger("app.engine")
 MIN_INTERVAL_SECONDS = 0.25
 SOFT_STOP_OFFSET_PCT = 0.005     # soft-stop limit sits this far below the bid so it is marketable
 SOFT_STOP_RETRY_SECONDS = 15.0   # after a definite broker rejection
-SOFT_STOP_CONFIRM_SECONDS = 30.0  # S6: readings below the stop must span at least this long
+SOFT_STOP_BACKOFF_SECONDS = (15.0, 60.0, 300.0)   # S8: then once per session
+SOFT_STOP_CONFIRM_SECONDS = 30.0 # S6: readings below the stop must span at least this long
 SOFT_STOP_MIN_READINGS = 2
 POSITIONS_TTL_SECONDS = 5.0      # positions() is not called every second by the soft-stop loop
 IDLE_INTERVAL_SECONDS = 30.0     # polling cadence while no option is held and options are off
@@ -55,7 +56,9 @@ class RiskLoop:
         self.last_error: str | None = None
         self._last_poll = 0.0
         self.soft_stops = 0
-        self._soft_retry_at: dict[int, float] = {}
+        self._soft_retry_at: dict[str, float] = {}   # S8: keyed per SYMBOL
+        self._soft_rejects: dict[str, int] = {}      # S8: definite rejections per symbol
+        self._soft_reject_session: dict[str, tuple] = {}   # S8: session key of the last reject
         self._clock = time.monotonic             # tests replace it
         self._below: dict[str, dict] = {}        # symbol -> {first, n}: readings below the stop
         self._pos_cache: tuple[float, dict | None] = (0.0, None)
@@ -116,6 +119,14 @@ class RiskLoop:
         if not eng.broker.connected:
             return []
         try:
+            await self._run_pending_flatten()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            self.errors += 1
+            self.last_error = f"pending flatten: {type(e).__name__}: {e}"
+            log.exception("pending flatten failed")
+        try:
             await self._soft_stops()
         except asyncio.CancelledError:
             raise
@@ -172,6 +183,22 @@ class RiskLoop:
         return actions
 
 
+    async def _run_pending_flatten(self) -> bool:
+        """S10: a flatten requested while every session was closed is persisted as the kv flag
+        ``pending_flatten`` and run here once a session is open."""
+        eng = self.eng
+        v = eng.db.get_kv("pending_flatten")
+        if not v or getattr(eng, "flattening", False) \
+                or order_session() not in ("ALL", "CORE"):
+            return False
+        eng.db.set_kv("pending_flatten", None)      # cleared first: never loops
+        v = v if isinstance(v, dict) else {}
+        eng.db.log("warn", "Running the flatten that was requested while the market was closed.",
+                   alert=True)
+        self._flatten_task = asyncio.create_task(
+            eng.flatten(v.get("actor", "pending"), v.get("reason", "pending flatten")))
+        return True
+
     async def _positions(self) -> dict:
         """positions() throttled to POSITIONS_TTL_SECONDS: the soft-stop loop runs every second."""
         now = self._clock()
@@ -218,6 +245,12 @@ class RiskLoop:
         if not getattr(eng.s, "extended_hours_soft_stop", False):
             return []
         session = order_session()
+        skey = (now_et().date().isoformat(), session_phase())
+        for s_ in list(self._soft_reject_session):
+            if self._soft_reject_session[s_] != skey:       # S8: backoff is once per session
+                self._soft_reject_session.pop(s_, None)
+                self._soft_rejects.pop(s_, None)
+                self._soft_retry_at.pop(s_, None)       # also lift an "inf" (once-per-session) wait
         if session in ("ALL", "NIGHT", "CORE"):
             await self._soft_followups(session)
         if session not in ("ALL", "NIGHT"):
@@ -231,7 +264,7 @@ class RiskLoop:
         by_sym: dict[str, list[dict]] = {}
         sym_cache: dict = {}
         for t in trades:
-            if self._soft_retry_at.get(t["id"], 0.0) > now:
+            if self._soft_retry_at.get(t["symbol"], 0.0) > now:
                 continue
             if eng.db.get_kv(f"soft_stop:{t['id']}") and not self._soft_stop_reusable(t, sym_cache):
                 continue
@@ -306,13 +339,19 @@ class RiskLoop:
         ids = [x["id"] for x in (group or [t])]
         for i in ids:                       # once per symbol: every trade in it is covered
             eng.db.set_kv(f"soft_stop:{i}", marker)
-        stops = await eng._cancel_protective(sym, coid)
+        cancel_partial: list = []
+        stops = await eng._cancel_protective(sym, coid, cancel_partial)
         if stops is None:                   # cancel got no reply: do not sell; retry shortly
+            partial = list(cancel_partial)
+            if partial:                     # C4: stops already cancelled must go back on
+                await eng._reprotect_partial({"id": t["proposal_id"], "symbol": sym}, held, partial)
+                eng.db.settle_stops(coid, "soft stop not sent; stop protection restored")
             for i in ids:
                 eng.db.set_kv(f"soft_stop:{i}", None)
-            self._soft_retry_at[tid] = self._clock() + SOFT_STOP_RETRY_SECONDS
+            self._soft_retry_at[sym] = self._clock() + SOFT_STOP_RETRY_SECONDS
+            self._below.pop(sym, None)
             return False
-        row = eng.db.add_protective(t["proposal_id"], sym, "sl", coid, held, stop, "unknown",
+        row =eng.db.add_protective(t["proposal_id"], sym, "sl", coid, held, stop, "unknown",
                                     f"extended-hours soft stop: {session} limit sell")
         try:
             await eng.broker.place_order(sym, "SELL", held, limit, coid, trading_session=session,
@@ -325,11 +364,21 @@ class RiskLoop:
             eng.db.set_protective(row, "closed", f"soft stop sell rejected: {e}")
             for i in ids:
                 eng.db.set_kv(f"soft_stop:{i}", None)
-            self._soft_retry_at[tid] = self._clock() + SOFT_STOP_RETRY_SECONDS
-            eng.db.log("error", f"{sym}: soft-stop sell rejected ({e}); the stop is restored if "
-                                "the periodic check finds it missing. Retrying shortly.", alert=True)
+            # S8: put the cancelled stops back NOW, settle, and back off per symbol (growing)
+            if stops:
+                await eng._reprotect({"id": t["proposal_id"], "symbol": sym}, held, list(stops))
+            eng.db.settle_stops(coid, "soft stop sell rejected; stop protection restored")
+            n = self._soft_rejects.get(sym, 0)
+            self._soft_rejects[sym] = n + 1
+            self._soft_reject_session[sym] = (now_et().date().isoformat(), session_phase())
+            delay = SOFT_STOP_BACKOFF_SECONDS[n] if n < len(SOFT_STOP_BACKOFF_SECONDS) else float("inf")
+            self._soft_retry_at[sym] = self._clock() + delay
+            self._below.pop(sym, None)
+            eng.db.log("error", f"{sym}: soft-stop sell rejected ({e}); the stop was restored. "
+                                f"Retry in {delay:g}s.", alert=True)
             return False
         eng.db.set_protective(row, "active", f"extended-hours soft stop: {session} limit sell")
+        self._soft_rejects.pop(sym, None)       # S8: a successful soft stop resets the backoff
         self.soft_stops += 1
         eng.db.log("warn", f"SOFT STOP {sym}: price {ref:.2f} <= stop {stop:.2f} in the {session} "
                            f"session; resting stop cancelled, LIMIT SELL {held:g} @ {limit:.2f} sent.",
@@ -375,6 +424,15 @@ class RiskLoop:
                 continue
             if o is None:
                 if time.time() - float(v.get("at", 0)) > 600:
+                    # S19: the history may lag; confirm the coid is gone from the open orders
+                    # (fresh read) before restoring the CORE stop beside a possibly-live sell.
+                    try:
+                        fresh = {x["client_order_id"] for x in
+                                 parse_orders(await eng.broker.open_orders_text())}
+                    except BrokerError:
+                        continue
+                    if coid in fresh:
+                        continue
                     settle(group, v)
                     await self._restore_after_soft(t, held, session)
                 continue

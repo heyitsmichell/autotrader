@@ -85,7 +85,7 @@ async def fractional_engine(fractional_settings, fractional_broker, fractional_d
     engine = Engine(fractional_settings, fractional_db, fractional_broker, signals, portfolio)
 
     # Override signals.ensure to always return bullish for testing
-    async def agree(sym: str, max_age_minutes: int = 20):
+    async def agree(sym: str, max_age_minutes: int = 20, allow_stale: bool = False):
         return {"id": 1, "symbol": sym, "close": 150.0, "atr": 3.0, "trend": "up",
                 "ta_score": 0.6, "sent_score": 0.3, "sent_n": 6, "ml_p": 0.6, "features": {}}
     engine.signals.ensure = agree
@@ -209,7 +209,7 @@ class TestFractionalShares:
         portfolio = Portfolio(fractional_settings_with_brackets, db, broker)
         engine = Engine(fractional_settings_with_brackets, db, broker, signals, portfolio)
 
-        async def agree(sym: str, max_age_minutes: int = 20):
+        async def agree(sym: str, max_age_minutes: int = 20, allow_stale: bool = False):
             return {"id": 1, "symbol": sym, "close": 150.0, "atr": 3.0, "trend": "up",
                     "ta_score": 0.6, "sent_score": 0.3, "sent_n": 6, "ml_p": 0.6, "features": {}}
         engine.signals.ensure = agree
@@ -251,7 +251,7 @@ class TestFractionalShares:
         portfolio = Portfolio(fractional_settings_with_brackets, db, broker)
         engine = Engine(fractional_settings_with_brackets, db, broker, signals, portfolio)
 
-        async def agree(sym: str, max_age_minutes: int = 20):
+        async def agree(sym: str, max_age_minutes: int = 20, allow_stale: bool = False):
             return {"id": 1, "symbol": sym, "close": 150.0, "atr": 3.0, "trend": "up",
                     "ta_score": 0.6, "sent_score": 0.3, "sent_n": 6, "ml_p": 0.6, "features": {}}
         engine.signals.ensure = agree

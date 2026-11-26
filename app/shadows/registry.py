@@ -20,6 +20,9 @@ class ShadowDef:
         if self.kind == "sp500":
             from ..sleeves import data
             return data.sp500_symbols()
+        if self.kind == "amihud_quality":
+            from ..sleeves import data
+            return data.sp500_symbols()
         if self.kind == "swing_dynamic":
             return []                   # replayed daily, no monthly targets (app/shadows/swing_dynamic.py)
         return list(dict.fromkeys(VAA_G4_OFFENSE + VAA_G4_DEFENSE))
@@ -49,6 +52,15 @@ SHADOWS: tuple[ShadowDef, ...] = (
               "dollar volume of (S&P 500 + live universe), ranked on the previous day's data; no entries "
               "before the shadow started.", "swing_dynamic"),
 )
+AMIHUD_QUALITY = ShadowDef(
+    "amihud_quality", "Amihud illiquidity + quality",
+    "Holds the 20 least liquid (highest price impact per dollar traded) S&P 500 stocks among those with "
+    "12-month return in the top 50%, rebalanced every 21 trading days. Forward test on live data, so it is "
+    "survivorship-free; the backtest it came from used today's S&P 500 members and is survivorship-biased.",
+    "Every 21 trading days: Amihud = mean(|daily return| / dollar volume) over 90 days; eligible = 12-month "
+    "return percentile >= 0.5 (proxy for quality); top 20 by Amihud, equal weight. Signal at close, trade next open.",
+    "amihud_quality")
+SHADOWS = SHADOWS + (AMIHUD_QUALITY,)
 IDS = [d.id for d in SHADOWS]
 _BY_ID = {d.id: d for d in SHADOWS}
 

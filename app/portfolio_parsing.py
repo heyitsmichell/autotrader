@@ -42,6 +42,7 @@ def parse_balance(text: str) -> dict:
             out[key] = m.group(1) if key == "currency" else _num(m.group(1))
     if out.get("net_liq") is None and out.get("cash") is not None:
         out["net_liq"] = (out.get("cash") or 0) + (out.get("market_value") or 0)
+        out["net_liq_derived"] = True   # S7: not a real Net Liquidation; money triggers ignore it
     return out
 
 

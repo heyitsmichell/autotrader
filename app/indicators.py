@@ -197,10 +197,36 @@ def feature_series(bars: list[dict], bench: list[dict] | None = None) -> list[di
     return rows
 
 
-def features(bars: list[dict]) -> dict:
-    """Numbers that describe the setup on the latest daily bar."""
-    rows = feature_series(bars)
+def features(bars: list[dict], bench: list[dict] | None = None) -> dict:
+    """Numbers that describe the setup on the latest daily bar (``bench`` enables rs_63d/126d)."""
+    rows = feature_series(bars, bench)
     return rows[-1] if rows else {}
+
+
+def completed_bars(bars: list[dict], at=None) -> list[dict]:
+    """Daily bars without today's (ET) partial bar while the session is still open.
+
+    The ML model is trained on completed daily bars, so live scoring must use the same
+    distribution (M1)."""
+    from . import market
+    if not bars:
+        return bars
+    now = at or market.now_et()
+    today = now.date()
+    t = bars[-1].get("time")
+    try:
+        last = bar_day(t)
+    except Exception:  # noqa: BLE001
+        return bars
+    close = market.session_close(today)
+    if last == today and close is not None and now.time() < close:
+        return bars[:-1]
+    return bars
+
+
+def ml_features(bars: list[dict], bench: list[dict] | None = None, at=None) -> dict:
+    """Feature vector for ML scoring: last COMPLETED daily bar."""
+    return features(completed_bars(bars, at), bench)
 
 
 def summarize(symbol: str, bars: list[dict]) -> str:

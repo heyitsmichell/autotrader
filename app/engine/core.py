@@ -293,6 +293,8 @@ class CoreMixin(_Host):
         else:
             self.run_failures = self.order_failures = 0
             self.last_failure = None
+            self._counted_transport = set()
+            self.db.set_kv("pending_flatten", None)     # a release cancels a queued flatten
             self.db.log("info", "Kill switch released", alert=True)
 
     def _failed(self, kind: str, message: str) -> None:

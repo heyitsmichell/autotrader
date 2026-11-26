@@ -7,6 +7,7 @@ Nothing here edits app/backtest or the harness: signal_at / segment_metrics are 
 """
 from __future__ import annotations
 
+import contextlib
 import csv
 import hashlib
 import json
@@ -82,9 +83,9 @@ def _gate_worker(job: dict) -> dict:
     spy = pd.read_csv(bars_dir / "SPY.csv", parse_dates=["date"]).set_index("date").close
     spyc = {d.date(): float(v) for d, v in spy.items()}
 
-    orig_sig, orig_seg = engine.signal_at, harness.segment_metrics
+    orig_hook, orig_seg = harness.entry_hook, harness.segment_metrics
 
-    def with_rs(blist, features, index, settings, **kw):
+    def add_rs(blist, features, index):
         f = features[index] if 0 <= index < len(features) else None
         if f is not None and index >= 126 and "rs_126d_done" not in f:
             d1, d0 = blist[index]["time"].date(), blist[index - 126]["time"].date()
@@ -92,7 +93,17 @@ def _gate_worker(job: dict) -> dict:
             if b1 and b0 and blist[index - 126]["close"]:
                 f["rs_126d"] = (blist[index]["close"] / blist[index - 126]["close"] - b1 / b0) * 100
             f["rs_126d_done"] = True
-        return orig_sig(blist, features, index, settings, **kw)
+
+    @contextlib.contextmanager
+    def hook_rs(*a, **kw):
+        # run_backtest(signal_fn=...) hook: inject rs_126d, then delegate (engine.signal_at untouched)
+        with orig_hook(*a, **kw) as hooks:
+            inner = hooks["signal_fn"]
+
+            def sig(symbol, blist, features, index, settings, **skw):
+                add_rs(blist, features, index)
+                return inner(symbol, blist, features, index, settings, **skw)
+            yield {**hooks, "signal_fn": sig}
 
     def seg(res, s0, s1):
         m = orig_seg(res, s0, s1)
@@ -100,14 +111,14 @@ def _gate_worker(job: dict) -> dict:
         return m
 
     if job["scoring"] == "v3":
-        engine.signal_at = with_rs
+        harness.entry_hook = hook_rs
     harness.segment_metrics = seg
     try:
         name = f"ta_{job['scoring']}|{job['exit_style']}|min{job['ta_min']:.2f}"
         v = Variant(name, "consensus", job["exit_style"], False, {"consensus_ta_min": job["ta_min"]})
         r = harness.run_variant(v, "research", n_trials=registry_count())
     finally:
-        engine.signal_at, harness.segment_metrics = orig_sig, orig_seg
+        harness.entry_hook, harness.segment_metrics = orig_hook, orig_seg
     r["job"] = job
     r.pop("trade_rs", None)
     return r

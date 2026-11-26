@@ -211,7 +211,13 @@ class ResearchService:
             # list. Keep the list bounded and refresh it from current scan evidence.
             eligible_symbols = sorted((qualifying_movers & qualifying_active)
                                       - set(self.manual_symbols))[:10]
-            self.auto_symbols = eligible_symbols
+            screeners_ok = {k for a, k, _ in raw_results} & {"equity_movers", "equity_activity"}
+            if screeners_ok:
+                self.auto_symbols = eligible_symbols
+            else:
+                log.warning("Research screeners returned nothing; keeping previous auto list (%d)",
+                            len(self.auto_symbols))
+                eligible_symbols = list(self.auto_symbols)
 
             for key, (asset, evidence) in candidates.items():
                 symbol = key.split(":", 1)[1]

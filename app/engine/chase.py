@@ -25,9 +25,10 @@ import time
 from datetime import datetime
 
 from ..broker import BrokerError
-from ..market import now_utc, order_session
+from ..market import ET, OPEN, now_et, now_utc, order_session
 from ..order_style import cancel_reply_confirmed, marketable_buy_price, within_band
 from ..risk import reprice_violation
+from ..sizing import max_allowed_qty
 from ..portfolio import ACTIVE, DONE_CANCELLED, parse_orders
 from .util import _coid, _is_option_symbol
 
@@ -74,6 +75,8 @@ class EntryChaser:
             if (not prop or prop.get("status") != "placed" or not prop.get("client_order_id")
                     or _age_seconds(prop) < secs):
                 continue
+            if not float(prop.get("quantity") or 0).is_integer():
+                continue        # C10: the chase re-send is whole-share QTY only; never chase fractional
             out.append((t, prop))
         return out
 
@@ -109,9 +112,24 @@ class EntryChaser:
             held = (await fresh_positions(eng.broker)).get(sym, 0.0)
         except BrokerError:
             return None
-        why = reprice_violation(eng.s, qty=float(prop["quantity"]), px=px, sl=prop.get("sl"),
+        qty = float(prop["quantity"])
+        why = reprice_violation(eng.s, qty=qty, px=px, sl=prop.get("sl"),
                                 tp=prop.get("tp"), held=held, last=float(q.last))
         if why:
+            # Sizing fills a cap exactly, so any price above the limit breaks it: shrink the
+            # quantity to what is allowed at the new price instead of giving up (C2).
+            new_qty = max_allowed_qty(eng.s, limit_price=px, last_price=float(q.last), held=held,
+                                      stop_loss=prop.get("sl"), max_qty_override=qty)
+            if new_qty < qty and new_qty >= 1 and not eng.s.fractional_enabled:
+                new_qty = float(int(new_qty))
+                why = reprice_violation(eng.s, qty=new_qty, px=px, sl=prop.get("sl"),
+                                        tp=prop.get("tp"), held=held, last=float(q.last))
+                if not why:
+                    prop["quantity"] = int(new_qty)
+                    prop["_shrunk"] = True          # _resend persists it
+                    eng.db.log("info", f"{sym}: entry chase shrunk {qty:g} -> {new_qty:g} "
+                                       f"shares to fit the limits at {px}")
+                    return px
             eng.db.log("info", f"{sym}: entry chase not re-priced: {why}")
             return None
         return px
@@ -137,7 +155,36 @@ class EntryChaser:
                 self._retry_at[prop["id"]] = time.monotonic() + RETRY_SECONDS
         return done
 
+    @staticmethod
+    def _placed_before_today_open(prop: dict) -> bool:
+        stamp = prop.get("placed_at") or prop.get("created_at")
+        try:
+            dt = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return True                                     # unreadable stamp: do not chase
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=now_utc().tzinfo)
+        open_dt = datetime.combine(now_et().date(), OPEN, tzinfo=ET)
+        return dt < open_dt
+
     async def _chase_one(self, t: dict, prop: dict, orders: dict[str, dict]) -> bool:
+        """Wrapper: the ``chase_cancel`` marker lives only while a cancel this chase CONFIRMED is
+        waiting for its re-send. Every other exit path (unconfirmed, raised, filled, aborted,
+        stale) clears it, so a later EXPIRED/cancelled status can never resume the chase (C1)."""
+        eng, pid = self.eng, prop["id"]
+        marker = f"chase_cancel:{pid}"
+        try:
+            return await self._chase_inner(t, prop, orders)
+        finally:
+            try:
+                m = eng.db.get_kv(marker)
+                if m and not (isinstance(m, dict) and m.get("confirmed_at")
+                              and not eng.db.get_kv(f"chase:{pid}")):
+                    eng.db.set_kv(marker, None)
+            except Exception:  # noqa: BLE001 - cleanup must not mask the real result
+                log.exception("could not clear %s", marker)
+
+    async def _chase_inner(self, t: dict, prop: dict, orders: dict[str, dict]) -> bool:
         eng, pid, sym = self.eng, prop["id"], prop["symbol"]
         coid = prop["client_order_id"]
         marker = f"chase_cancel:{pid}"
@@ -148,11 +195,15 @@ class EntryChaser:
         filled = float(o.get("filled_qty") or 0.0)
         if filled > 0 or status.startswith("PARTIAL"):
             return False                                    # never chase a (partly) filled entry
+        if status == "EXPIRED" or self._placed_before_today_open(prop):
+            return False                                    # yesterday's signal: never re-buy
         if status in DONE_CANCELLED:
-            if not eng.db.get_kv(marker):
-                return False                                # cancelled by someone else: leave it
+            m = eng.db.get_kv(marker)
+            if not (isinstance(m, dict) and m.get("confirmed_at")):
+                return False                                # not a cancel this chase confirmed
         elif status in ACTIVE:
             if await self._plan(prop) is None:
+                self._retry_at[pid] = time.monotonic() + RETRY_SECONDS   # no re-quote every tick
                 return False
             eng.db.set_kv(marker, {"coid": coid, "at": time.time()})   # BEFORE the cancel
             try:
@@ -182,6 +233,7 @@ class EntryChaser:
             if not confirmed:
                 self._retry_at[pid] = time.monotonic() + RETRY_SECONDS
                 return False
+            eng.db.set_kv(marker, {"coid": coid, "at": time.time(), "confirmed_at": time.time()})
         else:
             return False                                    # FILLED or an unknown state
 
@@ -208,6 +260,13 @@ class EntryChaser:
             eng.db.log("error", f"{sym}: entry chase aborted: the ledger row for proposal #{pid} "
                                 "could not be re-opened; the entry is not re-sent.", alert=True)
             return False
+        if prop.get("_shrunk"):                             # C2: persist the quantity actually sent
+            eng.db.update_proposal(pid, quantity=qty)
+            ns_where, ns_args = eng.db._ns_where()
+            eng.db.conn.execute(
+                f"UPDATE trade_ledger SET quantity_requested=?, quantity_requested_real=? "
+                f"WHERE proposal_id=? AND entry_fill_price IS NULL AND {ns_where}",
+                (int(qty), float(qty), pid, *ns_args))
         old_legs = [r for r in eng.db.protective(sym)
                     if r.get("proposal_id") == pid and r["status"] == "waiting"]
         bracket = bool(old_legs and eng.s.bracket_orders and prop.get("sl") and prop.get("tp"))

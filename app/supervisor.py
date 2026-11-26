@@ -48,6 +48,10 @@ AUTH_PATTERNS = re.compile(r"token|2FA|PENDING|Device Not Registered|401|403|una
                            r"auth", re.I)
 TOKEN_LIFETIME_DAYS = 15
 SUMMARY_DELAY_MIN = 10
+STEP_FAIL_ALERT_TICKS = 3        # S6: alert after this many consecutive failed ticks of a step
+TRANSPORT_FAIL_RECONNECT = 3     # S5: consecutive failed balance reads before a forced reconnect
+RUN_STUCK_SECONDS = 600.0        # S15: reconnect even with engine.running after the broker was down this long
+CONFIRM_READINGS = 2             # S7: consecutive readings before a money trip / peak raise
 
 
 class Supervisor:
@@ -56,6 +60,8 @@ class Supervisor:
         self.s, self.db, self.broker, self.engine = settings, db, broker, engine
         self.portfolio, self.alerts = portfolio, alerts
         self.learner = learner
+        # S16: a burst of failed orders trips the kill switch at once (not on the next 30 s tick)
+        engine.error_trip_cb = self._error_trip
         self.down_since: float | None = None
         self._down_alerted = False
         self._backoff = 30.0
@@ -81,6 +87,19 @@ class Supervisor:
         # Daily performance row (Phase 0), checked at most every few minutes.
         self._last_benchmark_check: float = 0.0
         self._benchmark_day: str | None = None
+        self._step_fail: dict[str, int] = {}
+        self._transport_fails = 0
+        self._last_snap = None
+        self._auth_alerted = False
+        self._money_breach: dict[str, int] = {}
+        self._peak_cand: float | None = None
+        self._step_err_name: str | None = None
+        self._fresh = True
+        self._last_money_snap = None
+        self._forced_gap = 0.0
+        self._next_forced = 0.0
+        self._forced_streak = 0
+        self._nightly_task: asyncio.Task | None = None
 
     # -- lifecycle -----------------------------------------------------------
     def start(self) -> None:
@@ -103,7 +122,8 @@ class Supervisor:
                 trim_shared_logs()
             try:
                 await self.tick()
-                self.last_error = None
+                if self._step_err_name is None:
+                    self.last_error = None
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001 - keep the loop alive
@@ -111,15 +131,38 @@ class Supervisor:
                 self.last_error = f"{type(e).__name__}: {e}"
             await asyncio.sleep(self.s.watchdog_seconds)
 
+    async def _step(self, name: str, fn) -> None:
+        """Run one tick step; a failure in it must not skip the others (S6)."""
+        try:
+            res = fn()
+            if asyncio.iscoroutine(res):
+                await res
+            self._step_fail[name] = 0
+            if self._step_err_name == name:
+                self.last_error, self._step_err_name = None, None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            n = self._step_fail.get(name, 0) + 1
+            self._step_fail[name] = n
+            self.last_error = f"{name}: {type(exc).__name__}: {exc}"
+            self._step_err_name = name
+            log.exception("supervisor step %s failed", name)
+            if n == STEP_FAIL_ALERT_TICKS:
+                self.db.log("error", f"Supervisor step '{name}' failed {n} ticks in a row: "
+                                     f"{type(exc).__name__}: {exc}", alert=True)
+
     async def tick(self) -> None:
         self.last_tick = now_utc().isoformat(timespec="seconds")
-        await self.broker_health()
+        await self._step("broker_health", self.broker_health)
         if self.broker.connected:
-            await self.engine.reconcile_orders()
-            self.auto_start_scheduler()
-            await self.check_kill_triggers()
-            await self.check_spy_benchmark()
-            await self.daily_benchmark()
+            # reconcile first so timed-out orders it confirms are un-counted before the error
+            # kill is judged; each step is isolated by _step, so reconcile cannot starve it (S6)
+            await self._step("reconcile", self.engine.reconcile_orders)
+            await self._step("kill_triggers", self.check_kill_triggers)
+            await self._step("auto_start", self.auto_start_scheduler)
+            await self._step("spy_benchmark", self.check_spy_benchmark)
+            await self._step("daily_benchmark", self.daily_benchmark)
             # Core-satellite rebalance check (periodic)
             if self._tick_count % self._core_rebalance_interval == 0:
                 try:
@@ -132,8 +175,8 @@ class Supervisor:
                     await self.engine._verify_protective_stops()
                 except Exception as e:
                     self.db.log("warn", f"Protective stop verification failed: {e}")
-        self.check_token()
-        await self.daily_summary()
+        await self._step("token", self.check_token)
+        await self._step("daily_summary", self.daily_summary)
         # Periodic WAL checkpoint to keep db-wal size bounded
         self._tick_count += 1
         if self._tick_count % self._wal_checkpoint_interval == 0:
@@ -146,6 +189,9 @@ class Supervisor:
     # -- 1. broker -----------------------------------------------------------
     async def broker_health(self) -> None:
         now = time.time()
+        if self.broker.connected and self._transport_fails >= TRANSPORT_FAIL_RECONNECT:
+            await self._force_reconnect()
+            return
         if self.broker.connected:
             if self.down_since is not None:
                 mins = (now - self.down_since) / 60
@@ -165,7 +211,10 @@ class Supervisor:
                                  f"and reconnects keep failing: {err}.{hint} Stops already at "
                                  "Webull stay active.", alert=True)
             self._down_alerted = True
-        if self.engine.running or self.engine.flattening or now < self._next_reconnect:
+        run_blocks = self.engine.running and now - self.down_since < RUN_STUCK_SECONDS   # S15
+        if run_blocks or self.engine.flattening or now < self._next_reconnect:
+            return
+        if self._order_in_flight():
             return
         try:
             await self.broker.start()
@@ -175,6 +224,55 @@ class Supervisor:
             self._next_reconnect = now + self._backoff
             log.info("reconnect failed (next try in %.0fs): %s", self._backoff, e)
             self._backoff = min(self._backoff * 2, 600.0)
+
+    def _order_in_flight(self) -> bool:
+        lock = getattr(self.engine, "_exec_lock", None)
+        return bool(lock is not None and lock.locked())
+
+    def _note_transport(self, snap: dict) -> None:
+        """S5: count consecutive failed balance reads (new snapshots only)."""
+        if snap is self._last_snap:
+            return
+        self._last_snap = snap
+        err = (snap.get("errors") or {}).get("balance")
+        if not err:
+            self._transport_fails = 0
+            self._forced_gap, self._next_forced, self._forced_streak = 0.0, 0.0, 0   # S5: read ok: reset
+            return
+        self._transport_fails += 1
+        if AUTH_PATTERNS.search(str(err)) and not self._auth_alerted and self.s.broker_mode == "webull":
+            self._auth_alerted = True
+            self.db.log("error", f"Broker reply looks like a login problem ({err}): run ./auth.sh "
+                                 "or .\\auth.ps1 and approve it in the Webull app.", alert=True)
+
+    async def _force_reconnect(self) -> None:
+        """S5: the session object exists but the transport is dead; restart it. Never while an
+        order is mid-flight."""
+        if self._order_in_flight() or self.engine.flattening or time.time() < self._next_forced:
+            return
+        self._forced_streak += 1
+        msg = (f"Broker transport failed {self._transport_fails} reads in a row; "
+               "restarting the broker connection.")
+        if self._forced_streak == 1:
+            self.db.log("error", msg, alert=True)      # S5: alert only the first of a streak
+        else:
+            self.db.log("warn", msg)
+        # S5: back off forced restarts: 90 s, doubling, up to 30 min; reset when a read succeeds
+        self._forced_gap = min(max(self._forced_gap * 2, 90.0), 1800.0)
+        self._next_forced = time.time() + self._forced_gap
+        self._transport_fails = 0
+        try:
+            await self.broker.stop()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("broker stop failed: %s", exc)
+        try:
+            await self.broker.start()
+            self.portfolio.invalidate()
+            self._auth_alerted = False
+            self.db.log("info", "Broker connection restarted")
+        except BrokerError as exc:
+            first = self._forced_streak == 1
+            self.db.log("error" if first else "warn", f"Broker restart failed: {exc}", alert=first)
 
     # -- 3. scheduler ----------------------------------------------------------
     def auto_start_scheduler(self) -> None:
@@ -188,11 +286,28 @@ class Supervisor:
         """Trip the kill switch if a trigger fires. Returns the reason, or None."""
         e, s = self.engine, self.s
         # drawdown is a health figure: keep it current even while the kill switch is already on
+        snap, bal_ok = None, False
         try:
-            self._track_drawdown((await self.portfolio.snapshot(max_age=120))["balance"])
+            snap = await self.portfolio.snapshot(max_age=120)
+            self._note_transport(snap)
+            fresh = snap is not self._last_money_snap      # S7: a cached dict is one reading, not many
+            self._last_money_snap = snap
+            self._fresh = fresh
+            bal = snap["balance"]
+            # S7: only trust a fresh, real Net Liquidation reading
+            bal_ok = (not bal.get("stale") and not bal.get("net_liq_derived")
+                      and not (snap.get("errors") or {}).get("balance")
+                      and bal.get("net_liq") is not None)
+            money_on = s.kill_max_drawdown_pct > 0 or s.kill_daily_loss_usd > 0
+            if (money_on and bal.get("net_liq_derived") and not bal.get("stale")
+                    and self.db.get_kv("net_liq_warn_date") != now_et().date().isoformat()):
+                self.db.set_kv("net_liq_warn_date", now_et().date().isoformat())
+                self.db.log("warn", "money kill triggers inactive: broker balance has no Net Liquidation",
+                            alert=True)
+            if bal_ok and (e.kill_switch or not money_on):   # else _money_trigger tracks (once per tick)
+                self._track_drawdown(bal)
         except Exception as exc:  # noqa: BLE001 - health display only
             log.debug("drawdown tracking failed: %s", exc)
-            pass
         if e.kill_switch:
             return None
         reason = None
@@ -202,11 +317,19 @@ class Supervisor:
             reason = (f"{max(e.run_failures, e.order_failures)} failed {what} in a row "
                       f"(last: {e.last_failure})")
         if reason is None and (s.kill_max_drawdown_pct > 0 or s.kill_daily_loss_usd > 0):
-            try:
-                bal = (await self.portfolio.snapshot(max_age=120))["balance"]
-            except BrokerError:
-                bal = {}
-            reason = self._money_trigger(bal)
+            if not bal_ok:
+                self._money_breach.clear()      # stale/errored balance: skip, and break the streak
+            elif self._fresh:           # S7: same cached snapshot again: not a new reading
+                money = self._money_trigger(snap["balance"])
+                kind = money.split(":")[0] if money else None
+                for k in list(self._money_breach):
+                    if k != kind:
+                        del self._money_breach[k]
+                if kind:
+                    self._money_breach[kind] = self._money_breach.get(kind, 0) + 1
+                    if self._money_breach[kind] >= CONFIRM_READINGS:
+                        reason = money
+                        self._money_breach.clear()
         if reason:
             await self.trip(reason)
         return reason
@@ -217,9 +340,21 @@ class Supervisor:
         if net is None or net <= 0:
             return None
         peak = self.db.get_kv("equity_peak")
-        if peak is None or net > peak:
+        if peak is None:
             peak = net
             self.db.set_kv("equity_peak", peak)
+        elif not self._fresh:
+            pass            # S7: same cached snapshot; only a new reading advances the candidate
+        elif net > peak:
+            # S7: one inflated read must not raise the peak; need two in a row
+            if self._peak_cand is not None:
+                peak = min(self._peak_cand, net)
+                self.db.set_kv("equity_peak", peak)
+                self._peak_cand = None
+            else:
+                self._peak_cand = net
+        else:
+            self._peak_cand = None
         self.drawdown_pct = round((1 - net / peak) * 100, 2) if peak else None
         return peak
 
@@ -297,6 +432,8 @@ class Supervisor:
             return None
         if self.engine.kill_switch:
             return None  # already stopped; a trip must not repeat
+        if self.db.get_kv("spy_ack") == now_et().date().isoformat():
+            return None  # released today (S12)
 
         import time
         now = time.time()
@@ -321,7 +458,10 @@ class Supervisor:
                   f"{res['days']:g}d (alpha {alpha:+.2f}%, need {s.spy_benchmark_min_outperformance_pct:+g}%). {verb}.")
         action = s.spy_benchmark_action
         if action == "warn":
-            self.db.log("warn", reason, alert=True)
+            today = now_et().date().isoformat()
+            if self.db.get_kv("spy_warn_date") != today:   # S12: warn once per day
+                self.db.set_kv("spy_warn_date", today)
+                self.db.log("warn", reason, alert=True)
         elif action == "pause":
             await self.engine.set_kill_switch(True, f"automatic SPY benchmark: {reason}")
         elif action == "kill":
@@ -332,8 +472,19 @@ class Supervisor:
                 self.db.log("error", f"SPY benchmark flatten failed: {e}", alert=True)
         return reason
 
+    def _error_trip(self, reason: str) -> None:
+        """Called by the engine the moment the consecutive-failure threshold is reached."""
+        if getattr(self, "_error_trip_task", None) and not self._error_trip_task.done():
+            return
+        try:
+            self._error_trip_task = asyncio.get_running_loop().create_task(self.trip(reason))
+        except RuntimeError:        # no running loop (sync tests): the 30 s tick still trips
+            pass
+
     async def trip(self, reason: str) -> None:
         e, action = self.engine, self.s.kill_action
+        if e.kill_switch:       # S16: the other path already tripped it; do not run the action twice
+            return
         await e.set_kill_switch(True, f"automatic: {reason}")
         try:
             if action == "cancel_entries":
@@ -344,11 +495,18 @@ class Supervisor:
             self.db.log("error", f"Kill action '{action}' could not finish: {err}", alert=True)
 
     def on_release(self) -> None:
-        """You released the kill switch: start the drawdown peak fresh from the current
-        value and stop the daily-loss trigger from firing again today."""
-        self.db.set_kv("equity_peak", None)
-        self.db.set_kv("daily_loss_ack", now_et().date().isoformat())
-        self.drawdown_pct = None
+        """You released the kill switch (called while it is still on, so kill_reason is the
+        trigger): acknowledge only the trigger that tripped it (S1/S12)."""
+        reason = (self.engine.kill_reason or "").lower()
+        today = now_et().date().isoformat()
+        if reason.startswith("automatic: daily loss"):
+            self.db.set_kv("daily_loss_ack", today)
+        if reason.startswith("automatic: drawdown"):
+            self.db.set_kv("equity_peak", None)
+            self.drawdown_pct = None
+            self._peak_cand = None
+        if reason.startswith("automatic spy benchmark"):
+            self.db.set_kv("spy_ack", today)
 
     # -- 5. Webull login -------------------------------------------------------
     def check_token(self, force: bool = False) -> dict | None:
@@ -401,8 +559,8 @@ class Supervisor:
                            title="Trader daily summary", force=True)
 
         # Phase 7: Run nightly learning job after daily summary
-        if self.learner is not None:
-            await self.run_nightly_job()
+        if self.learner is not None and (self._nightly_task is None or self._nightly_task.done()):
+            self._nightly_task = asyncio.create_task(self.run_nightly_job(), name="nightly-job")   # S13
 
     async def run_nightly_job(self) -> dict | None:
         """Run the Phase 7 nightly learning job (after market close)."""

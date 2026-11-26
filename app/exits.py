@@ -22,6 +22,7 @@ SELLs still always pass the consensus gate; nothing here can block an exit.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -313,7 +314,7 @@ def sell_quantity(qty: float, s, symbol: str) -> float:
         # Round DOWN to the allowed precision so we never try to sell more than we hold.
         d = getattr(s, "fractional_decimals", 2)
         factor = 10 ** d
-        return int(qty * factor) / factor
+        return math.floor(round(qty * factor, 6)) / factor
     return whole
 
 
@@ -327,7 +328,7 @@ def partial_quantity(qty: float, fraction: float, s, symbol: str) -> float:
             x.upper() for x in getattr(s, "fractional_whitelist", [])}:
         d = getattr(s, "fractional_decimals", 2)
         f = 10 ** d
-        sold = int(target * f) / f
+        sold = math.floor(round(target * f, 6)) / f
         return sold if 0 < sold < qty else 0
     sold = int(target)
     return float(sold) if 0 < sold < qty else 0

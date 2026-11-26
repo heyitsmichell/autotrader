@@ -36,6 +36,7 @@ from .broker import Broker, BrokerError
 from .config import MODEL_DIR, Settings
 from .db import DB, decode
 from .universe import get_universe, build_universe_config
+from .ml_data.schema import HOLDOUT_START
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +67,85 @@ MIN_SYMBOLS = 3             # Minimum distinct symbols in test set
 TRIPLE_BARRIER_LABELS = {"tp": 1, "sl": 0, "time": 0}  # time expiry = label 0 (barrier not hit), not dropped
 
 
+def _et_day(ts) -> str:
+    """ET calendar date (YYYY-MM-DD) of a fill timestamp; naive timestamps are UTC. '' if unparseable."""
+    s = str(ts or "").strip()
+    if not s:
+        return ""
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    try:
+        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return s[:10] if len(s) >= 10 else ""
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return d.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+
+
+def _bar_date(bar: dict) -> str:
+    from .indicators import bar_day
+    try:
+        return bar_day(bar["time"]).isoformat()
+    except Exception:  # noqa: BLE001
+        return str(bar.get("date") or bar.get("time") or "")[:10]
+
+
+def _champion_comparison(fold_records: list[dict], ta_min: float, p_min: float,
+                         after: str | None = None) -> dict | None:
+    """Challenger vs champion on the SAME test folds (M2): mean per-fold hit rate and avg return of the
+    rule-approved rows the model also approves (ta >= ta_min and p >= p_min). With `after` (the champion's
+    train_end), only test rows dated strictly after it are scored, so the champion is never judged
+    in-sample. Returns {"skipped": True, "beats": True, ...} when no such rows exist."""
+    if after:
+        fold_records = [dict(rec, **_after_filter(rec, after)) for rec in fold_records]
+        if not any(rec["rows"] for rec in fold_records):
+            return {"skipped": True, "beats": True,
+                    "note": "champion comparison skipped: no out-of-sample rows"}
+
+    def score(key: str):
+        hits, rets = [], []
+        for rec in fold_records:
+            ps = rec.get(key)
+            if ps is None:
+                return None
+            sel = [r for r, p in zip(rec["rows"], ps) if (r.get("ta") or 0) >= ta_min and p >= p_min]
+            if sel:
+                hits.append(sum(r["y"] for r in sel) / len(sel))
+                rets.append(sum(r["fwd"] for r in sel) / len(sel))
+        if not hits:
+            return 0.0, 0.0
+        return sum(hits) / len(hits), sum(rets) / len(rets)
+
+    ch, cp = score("ps"), score("cps")
+    if ch is None or cp is None:
+        return None
+    return {"challenger_hit": round(ch[0], 4), "challenger_ret": round(ch[1], 4),
+            "champion_hit": round(cp[0], 4), "champion_ret": round(cp[1], 4),
+            "beats": ch[0] > cp[0] and ch[1] > cp[1]}
+
+
+def _after_filter(rec: dict, after: str) -> dict:
+    keep = [i for i, r in enumerate(rec["rows"]) if str(r.get("date") or "") > after]
+    out = {"rows": [rec["rows"][i] for i in keep]}
+    for k in ("ps", "cps"):
+        if rec.get(k) is not None:
+            out[k] = [rec[k][i] for i in keep]
+    return out
+
+
+def _row_train_end(row: dict | None) -> str | None:
+    """params["train_end"] of a models row (params is JSON text or a dict); None for legacy models."""
+    p = (row or {}).get("params")
+    try:
+        if isinstance(p, str):
+            p = json.loads(p)
+        te = p.get("train_end") if isinstance(p, dict) else None
+    except (json.JSONDecodeError, TypeError):
+        te = None
+    return str(te) if te else None
+
+
 def vector(f: dict) -> list[float] | None:
     vals = [f.get(k) for k in FEATURES]
     if any(v is None for v in vals):
@@ -74,7 +154,7 @@ def vector(f: dict) -> list[float] | None:
 
 
 def build_dataset(bars_by_symbol: dict[str, list[dict]], db: DB | None = None,
-                   settings: Settings | None = None) -> list[dict]:
+                   settings: Settings | None = None, holdout_cutoff: str | None = None) -> list[dict]:
     """Build the training dataset using triple-barrier labels.
 
     Every symbol and day in the universe is labelled by simulating the take-profit / stop-loss
@@ -84,6 +164,18 @@ def build_dataset(bars_by_symbol: dict[str, list[dict]], db: DB | None = None,
     its own bad trades.
     """
     rows = []
+    dropped_ledger = 0
+    dropped_bars = 0
+
+    # M7: with a holdout_cutoff (YYYY-MM-DD), no bar on/after it is used, so every simulated label
+    # window (20 bars forward) ends before it. Ledger trades with entry or exit on/after it are dropped.
+    if holdout_cutoff:
+        cut_bars: dict[str, list[dict]] = {}
+        for sym, bars in bars_by_symbol.items():
+            kept = [b for b in bars if _bar_date(b) < holdout_cutoff]
+            dropped_bars += len(bars) - len(kept)
+            cut_bars[sym] = kept
+        bars_by_symbol = cut_bars
 
     # Real closed trades from the ledger. These used to replace the dataset once there were
     # 400 of them, but they only cover setups the rules already approved (selection bias).
@@ -110,11 +202,17 @@ def build_dataset(bars_by_symbol: dict[str, list[dict]], db: DB | None = None,
                 continue
 
             x = vector(features)
-            entry_day = str(trade.get("entry_fill_time") or "")[:10]  # same YYYY-MM-DD form as bar rows
+            entry_day = _et_day(trade.get("entry_fill_time"))  # ET date, same YYYY-MM-DD form as bar rows (M16)
             if x is None or not entry_day:
                 continue
+            if holdout_cutoff:
+                exit_day = _et_day(trade.get("exit_fill_time"))
+                if entry_day >= holdout_cutoff or (exit_day and exit_day >= holdout_cutoff):
+                    dropped_ledger += 1
+                    continue
 
             ledger_rows.append({
+                "proposal_id": trade.get("proposal_id") or trade.get("id"),
                 "date": entry_day,
                 "symbol": trade["symbol"],
                 "x": x,
@@ -177,7 +275,9 @@ def build_dataset(bars_by_symbol: dict[str, list[dict]], db: DB | None = None,
 
                 if bar_low <= sl:
                     label = 0.0  # SL hit
-                    fwd_ret = (sl / entry - 1) * 100
+                    # M5: a bar that gaps open below the stop fills at the open, not at the stop
+                    fill = min(bars[i + j].get("open") or sl, sl)
+                    fwd_ret = (fill / entry - 1) * 100
                     break
                 if bar_high >= tp:
                     label = 1.0  # TP hit
@@ -213,9 +313,21 @@ def build_dataset(bars_by_symbol: dict[str, list[dict]], db: DB | None = None,
     # Real outcomes beat simulated ones: a ledger trade replaces the simulated row for the same
     # symbol and entry day; ledger trades with no matching simulated row are added as they are.
     if ledger_rows:
-        real = {(r["symbol"], r["date"]): r for r in ledger_rows}
-        rows = [r for r in rows if (r["symbol"], r["date"]) not in real]
+        # M16: keyed by proposal id so several same-day trades of a symbol all survive.
+        real = {}
+        for n, r in enumerate(ledger_rows):
+            real[r["proposal_id"] if r["proposal_id"] is not None else ("row", n)] = r
+        real_days = {(r["symbol"], r["date"]) for r in real.values()}
+        rows = [r for r in rows if (r["symbol"], r["date"]) not in real_days]
         rows.extend(real.values())
+
+    if holdout_cutoff:
+        log.info("ML holdout %s: dropped %d bar(s) and %d ledger trade(s) on/after it "
+                 "(entry, exit or 20-bar label window); %d training rows remain",
+                 holdout_cutoff, dropped_bars, dropped_ledger, len(rows))
+        if db is not None:
+            db.log("info", f"ML training holdout {holdout_cutoff}: dropped {dropped_bars} bars and "
+                           f"{dropped_ledger} ledger rows on/after it; {len(rows)} rows remain")
 
     rows.sort(key=lambda r: (r["date"], r["symbol"]))
     return rows
@@ -228,11 +340,29 @@ def _net(d: int):
 
 def _fit(rows: list[dict], seed: int = 7, epochs: int = 300, patience: int = 20):
     torch.manual_seed(seed)
+    # M15: validation = last 15% by date. The training part is purged of the SIM_MAX_HOLD_BARS dates
+    # before the validation start (their labels look into the validation window), and normalisation is
+    # fitted on that purged training part only.
+    rows = sorted(rows, key=lambda r: r.get("date") or "")
+    cut = max(1, int(len(rows) * 0.85))
+    if cut < len(rows):
+        dates = sorted({r.get("date") for r in rows if r.get("date")})
+        val_date = rows[cut].get("date")
+        keep = cut
+        if val_date and val_date in dates:
+            first_bad = dates[max(0, dates.index(val_date) - SIM_MAX_HOLD_BARS)]
+            keep = sum(1 for r in rows[:cut] if (r.get("date") or "") < first_bad)
+        elif not val_date:
+            keep = max(0, cut - SIM_MAX_HOLD_BARS)
+        if keep >= 1:
+            rows = rows[:keep] + rows[cut:]
+            cut = keep
     x = torch.tensor([r["x"] for r in rows], dtype=torch.float32)
     y = torch.tensor([[r["y"]] for r in rows], dtype=torch.float32)
-    mean, std = x.mean(0), x.std(0).clamp_min(1e-6)
+    mean, std = x[:cut].mean(0), x[:cut].std(0).clamp_min(1e-6)
+    if cut < 2:
+        std = torch.ones_like(std)
     xn = (x - mean) / std
-    cut = max(1, int(len(rows) * 0.85))            # last 15% (by date) for early stopping
     model = _net(len(FEATURES))
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-3)
     loss_fn = nn.BCEWithLogitsLoss()
@@ -445,6 +575,7 @@ class MLFilter:
         self.model_id: int | None = None
         self.training = False
         self.last_error: str | None = None
+        self.champion_train_end: str | None = None
         self._load_champion()
 
     @property
@@ -457,58 +588,82 @@ class MLFilter:
         if row is None:
             # Fallback to legacy 'active' status for backward compatibility
             row = self.db.active_model()
-        if row is None or torch is None or not row.get("path"):
+        if torch is None:
+            return
+        if row is None or not row.get("path"):
+            self.model = self.mean = self.std = None      # M4: no champion row, no in-memory model
+            self.model_id = None
             return
         try:
-            # Refuse legacy/invalid models: no provenance or stored metrics that trip the leakage guard.
-            if row.get("broker_mode") is None:
-                raise ValueError("model has no provenance (trained before provenance tracking); retrain it")
-            stored = decode(row).get("metrics") or {}
-            stored_auc = stored.get("mean_auc") if isinstance(stored, dict) else None
-            if stored_auc is not None and stored_auc > MAX_AUC:
-                raise ValueError(f"stored mean AUC {stored_auc} exceeds {MAX_AUC} (possible leakage)")
-            ckpt = torch.load(row["path"], weights_only=True)
-
-            # Verify provenance matches current settings
-            ckpt_provenance = ckpt.get("provenance", {})
-            if ckpt_provenance:
-                if ckpt_provenance.get("broker_mode") != self.s.broker_mode:
-                    raise ValueError(f"Model provenance mismatch: trained in {ckpt_provenance.get('broker_mode')} mode, "
-                                     f"but current mode is {self.s.broker_mode}. Refusing to load.")
-                if self.s.broker_mode == "webull":
-                    if ckpt_provenance.get("webull_environment") != self.s.webull_environment:
-                        raise ValueError(f"Model provenance mismatch: trained in {ckpt_provenance.get('webull_environment')} environment, "
-                                         f"but current is {self.s.webull_environment}. Refusing to load.")
-                    if ckpt_provenance.get("account_id") and ckpt_provenance.get("account_id") != self.s.webull_account_id:
-                        log.warning(f"Model was trained on account {ckpt_provenance.get('account_id')}, "
-                                    f"current account is {self.s.webull_account_id}")
-
-            model = _net(len(ckpt["features"]))
-            model.load_state_dict(ckpt["state"])
-            model.eval()
-            if list(ckpt["features"]) != FEATURES:
-                raise ValueError("feature list changed since this model was trained")
-            self.model, self.model_id = model, row["id"]
-            self.mean = torch.tensor(ckpt["mean"])
-            self.std = torch.tensor(ckpt["std"])
+            model, mean, std = self._load_checkpoint(row)
+            self.model, self.model_id, self.mean, self.std = model, row["id"], mean, std
+            self.champion_train_end = _row_train_end(row)
         except Exception as e:  # noqa: BLE001
+            # M4: never keep predicting with a stale model under a different id.
+            self.model = self.mean = self.std = None
+            self.model_id = None
             self.last_error = f"Could not load champion model #{row['id']}: {e}"
             log.warning(self.last_error)
 
-    def _load_challenger(self, mid: int) -> tuple | None:
-        """Load a challenger model by ID for shadow evaluation."""
-        row = self.db.get_model_by_id(mid)
-        if row is None or torch is None or not row.get("path"):
-            return None
+    def _load_checkpoint(self, row: dict | None) -> tuple:
+        """Load and validate a model row's checkpoint; raises on any problem (no state is changed)."""
+        if torch is None:
+            raise RuntimeError(TORCH_ERROR or "PyTorch is not installed")
+        if row is None or not row.get("path"):
+            raise ValueError("model row has no checkpoint path")
+        # Refuse legacy/invalid models: no provenance or stored metrics that trip the leakage guard.
+        if row.get("broker_mode") is None:
+            raise ValueError("model has no provenance (trained before provenance tracking); retrain it")
+        stored = decode(row).get("metrics") or {}
+        stored_auc = stored.get("mean_auc") if isinstance(stored, dict) else None
+        if stored_auc is not None and stored_auc > MAX_AUC:
+            raise ValueError(f"stored mean AUC {stored_auc} exceeds {MAX_AUC} (possible leakage)")
+        ckpt = torch.load(row["path"], weights_only=True)
+
+        # Verify provenance matches current settings
+        ckpt_provenance = ckpt.get("provenance", {})
+        if ckpt_provenance:
+            if ckpt_provenance.get("broker_mode") != self.s.broker_mode:
+                raise ValueError(f"Model provenance mismatch: trained in {ckpt_provenance.get('broker_mode')} mode, "
+                                 f"but current mode is {self.s.broker_mode}. Refusing to load.")
+            if self.s.broker_mode == "webull":
+                if ckpt_provenance.get("webull_environment") != self.s.webull_environment:
+                    raise ValueError(f"Model provenance mismatch: trained in {ckpt_provenance.get('webull_environment')} environment, "
+                                     f"but current is {self.s.webull_environment}. Refusing to load.")
+                if ckpt_provenance.get("account_id") and ckpt_provenance.get("account_id") != self.s.webull_account_id:
+                    log.warning(f"Model was trained on account {ckpt_provenance.get('account_id')}, "
+                                f"current account is {self.s.webull_account_id}")
+
+        if list(ckpt["features"]) != FEATURES:
+            raise ValueError("feature list changed since this model was trained")
+        model = _net(len(ckpt["features"]))
+        model.load_state_dict(ckpt["state"])
+        model.eval()
+        return model, torch.tensor(ckpt["mean"]), torch.tensor(ckpt["std"])
+
+    def check_champion_age(self) -> bool:
+        """M14: alert (once per day) when the champion is older than 2x ml_retrain_days."""
         try:
-            ckpt = torch.load(row["path"], weights_only=True)
-            model = _net(len(ckpt["features"]))
-            model.load_state_dict(ckpt["state"])
-            model.eval()
-            return model, torch.tensor(ckpt["mean"]), torch.tensor(ckpt["std"])
-        except Exception as e:
-            log.warning(f"Could not load challenger model #{mid}: {e}")
-            return None
+            days = int(self.s.ml_retrain_days or 0)
+            champ = self.db.champion_model()
+            if days <= 0 or not champ or not champ.get("created_at"):
+                return False
+            from datetime import datetime, timezone
+            created = datetime.fromisoformat(str(champ["created_at"]).replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - created).total_seconds() / 86400.0
+            if age <= 2 * days:
+                return False
+            today = datetime.now(timezone.utc).date().isoformat()
+            if getattr(self, "_age_alert_day", None) != today:
+                self._age_alert_day = today
+                self.db.log("warn", f"ML champion #{champ['id']} is {age:.0f} days old (> 2x retrain interval "
+                                    f"of {days} days); retrains are being rejected or failing", alert=True)
+            return True
+        except Exception as e:  # noqa: BLE001 - an age check must never break status/training
+            log.warning("champion age check failed: %s", e)
+            return False
 
     def predict(self, f: dict) -> float | None:
         """Predict using the champion model."""
@@ -517,16 +672,8 @@ class MLFilter:
         x = vector(f)
         return None if x is None else round(_predict(self.model, self.mean, self.std, [x])[0], 4)
 
-    def predict_challenger(self, f: dict, mid: int) -> float | None:
-        """Predict using a challenger model (for shadow evaluation)."""
-        loaded = self._load_challenger(mid)
-        if loaded is None:
-            return None
-        model, mean, std = loaded
-        x = vector(f)
-        return None if x is None else round(_predict(model, mean, std, [x])[0], 4)
-
     def status(self) -> dict:
+        self.check_champion_age()
         champion = decode(self.db.champion_model())
         challenger = decode(self.db.challenger_model())
 
@@ -581,10 +728,13 @@ class MLFilter:
             raise RuntimeError("Training is disabled in mock mode. Synthetic data produces "
                                "misleading models that don't generalize to real markets.")
         # Check if there's already a challenger in progress
+        # M2: an old unpromoted challenger (auto-promote off) must not block retraining forever.
+        # A fresh train supersedes it: the old one is retired and logged.
         existing_challenger = self.db.challenger_model()
         if existing_challenger:
-            raise ValueError(f"A challenger model #{existing_challenger['id']} is already in shadow evaluation. "
-                           f"Wait for it to complete or reject it first.")
+            self.db.set_model_status(existing_challenger["id"], "retired")
+            self.db.log("info", f"Challenger #{existing_challenger['id']} superseded by a new training run; retired")
+        self.check_champion_age()
 
         self.training = True
         try:
@@ -632,7 +782,8 @@ class MLFilter:
     def _train_sync(self, bars: dict[str, list[dict]]) -> dict:
         torch.set_num_threads(2)
         # Use trade ledger for triple-barrier labels if available, else simulate from bars
-        rows = build_dataset(bars, db=self.db, settings=self.s)
+        # M7: the locked holdout stays untouched, nothing on/after HOLDOUT_START is trained or tested on.
+        rows = build_dataset(bars, db=self.db, settings=self.s, holdout_cutoff=HOLDOUT_START)
         if len(rows) < 400:
             raise ValueError(f"Only {len(rows)} usable rows; need at least 400 "
                              "(more daily history or more symbols)")
@@ -645,6 +796,9 @@ class MLFilter:
 
         # Define model factory and predict functions for the new walkforward
         last_fold: dict = {}
+        fold_records: list[dict] = []      # per test fold: rows, challenger ps, champion ps (M2)
+        champ_loaded = self.model is not None and self.model_id is not None
+        champ_model, champ_mean, champ_std = self.model, self.mean, self.std
 
         def model_factory(train_rows):
             model, mean, std = _fit(train_rows)
@@ -655,6 +809,13 @@ class MLFilter:
             ps = _predict(model, mean, std, [r["x"] for r in test_rows])
             last_fold["model"] = model_tuple
             last_fold["rows"] = test_rows
+            cps = None
+            if champ_loaded:
+                try:
+                    cps = _predict(champ_model, champ_mean, champ_std, [r["x"] for r in test_rows])
+                except Exception as e:  # noqa: BLE001
+                    log.warning("could not score the champion on a test fold: %s", e)
+            fold_records.append({"rows": test_rows, "ps": ps, "cps": cps})
             return ps
 
         # Run purged/embargoed walk-forward
@@ -666,6 +827,7 @@ class MLFilter:
         params = {"features": FEATURES, "hidden": HIDDEN, "horizon": HORIZON,
                   "symbols": sorted(bars), "bars_per_symbol": self.s.ml_history_bars,
                   "label_type": "triple_barrier",
+                  "train_end": max((str(r.get("date") or "") for r in rows), default="") or None,
                   "walkforward": {
                       "n_folds": wf_config.n_folds,
                       "embargo_bars": wf_config.embargo_bars,
@@ -734,9 +896,53 @@ class MLFilter:
         except Exception as e:  # scorecard extras must never break training
             self.db.log("warning", f"scorecard extras failed: {e}")
 
-        if not wf_result.passed:
+        # M2: the challenger must also beat the CURRENT champion on the same folds/data.
+        champ_te = self.champion_train_end
+        if champ_loaded and not champ_te:
+            champ_cmp = {"skipped": True, "beats": True,
+                         "note": "champion comparison skipped: legacy champion (no train_end)"}
+        elif champ_loaded:
+            champ_cmp = _champion_comparison(fold_records, self.s.consensus_ta_min, self.s.ml_min_p,
+                                             after=champ_te)
+            if champ_cmp is None:
+                champ_cmp = {"skipped": True, "beats": True,
+                             "note": "champion comparison skipped: champion scoring failed"}
+            if champ_cmp.get("skipped") and champ_te:
+                # With the locked holdout every compliant champion's test rows predate its train_end,
+                # so compare the challenger's out-of-sample walk-forward estimates with the
+                # champion's stored ones instead; promote only if both are at least as good.
+                try:
+                    cm = decode(self.db.champion_model() or {}).get("metrics") or {}
+                    ch, cr = cm.get("mean_hit_rate"), cm.get("mean_avg_return")
+                    nh, nr = wf_result.mean_hit_rate, wf_result.mean_avg_return
+                    if None not in (ch, cr, nh, nr):
+                        champ_cmp = {"skipped": False, "beats": bool(nh >= ch and nr >= cr),
+                                     "method": "stored walk-forward metrics",
+                                     "challenger_hit": nh, "challenger_ret": nr,
+                                     "champion_hit": ch, "champion_ret": cr}
+                except Exception as e:  # noqa: BLE001 - a comparison problem must not block training
+                    log.warning("stored-metrics champion comparison failed: %s", e)
+        else:
+            champ_cmp = None
+        passed = bool(wf_result.passed)
+        rejection_note = wf_result.rejection_reason
+        if champ_cmp is not None:
+            beats = champ_cmp["beats"]
+            wf_dict["champion_comparison"] = champ_cmp
+            wf_dict["checks"] = dict(wf_dict.get("checks") or {}, beats_champion=beats)
+            if not beats:
+                self.db.log("info", f"Challenger does not beat champion #{self.model_id} on the same folds "
+                                    f"(challenger hit {champ_cmp['challenger_hit']} / ret {champ_cmp['challenger_ret']} vs "
+                                    f"champion hit {champ_cmp['champion_hit']} / ret {champ_cmp['champion_ret']})")
+                if passed:
+                    rejection_note = "did not beat the current champion on the same walk-forward folds"
+                passed = False
+            wf_dict["passed"] = passed
+        else:
+            wf_dict["checks"] = dict(wf_dict.get("checks") or {}, beats_champion=True)  # no champion: rules comparison suffices
+
+        if not passed:
             base_note = "Did not beat the rules out-of-sample (purged walk-forward); not used"
-            rejection_note = wf_result.rejection_reason
             note = f"{base_note}" + (f" ({rejection_note})" if rejection_note else "")
             mid = self.db.add_model(status="rejected", n_samples=len(rows), n_symbols=len(bars),
                                     metrics=wf_dict, params=params,
@@ -800,6 +1006,14 @@ class MLFilter:
         champion = self.db.champion_model()
         replaced_id = champion["id"] if champion else None
 
+        # M4: the new checkpoint must load and validate before the DB changes.
+        try:
+            self._load_checkpoint(challenger)
+        except Exception as e:  # noqa: BLE001
+            msg = f"Promotion of model #{challenger['id']} aborted, checkpoint will not load: {e}"
+            self.db.log("error", msg)
+            raise ValueError(msg) from e
+
         # Promote challenger to champion
         self.db.promote_challenger(challenger["id"], replaced_id)
 
@@ -841,6 +1055,15 @@ class MLFilter:
         if not replaced_id:
             raise ValueError("No previous champion to rollback to")
 
+        # M4: the old checkpoint must load before the DB changes.
+        prev = self.db.get_model_by_id(replaced_id)
+        try:
+            self._load_checkpoint(prev)
+        except Exception as e:  # noqa: BLE001
+            msg = f"Rollback to model #{replaced_id} aborted, checkpoint will not load: {e}"
+            self.db.log("error", msg)
+            raise ValueError(msg) from e
+
         # Rollback to previous champion
         self.db.rollback_to_champion(replaced_id)
 
@@ -850,85 +1073,9 @@ class MLFilter:
         self.db.log("info", f"Rolled back to champion #{replaced_id}")
         return {"id": replaced_id, "status": "champion", "rolled_back_from": champion["id"]}
 
-    def log_challenger_outcome(self, mid: int, hit: bool, return_pct: float) -> None:
-        """Log a trade outcome for challenger shadow evaluation."""
-        self.db.log_challenger_outcome(mid, hit, return_pct)
-
-    def evaluate_challenger(self, mid: int | None = None) -> dict:
-        """Evaluate challenger performance and decide promotion/rejection.
-
-        Uses settings:
-        - ml_challenger_min_trades: minimum trades before evaluation (default 20)
-        - ml_challenger_min_hit_rate_improvement: minimum hit rate improvement (default 0.02 = 2%)
-        - ml_challenger_min_return_improvement: minimum return improvement (default 0.1 = 10bps)
-        - ml_challenger_max_days: max days in shadow before forced decision (default 14)
-
-        Returns:
-            Dict with evaluation result and recommended action.
-        """
-        challenger = self.db.challenger_model() if mid is None else self.db.get_model_by_id(mid)
-        if not challenger or challenger["status"] != "challenger":
-            return {"action": "none", "reason": "No challenger to evaluate"}
-
-        trades = challenger.get("shadow_trades", 0)
-        hit_rate = challenger.get("shadow_hit_rate", 0.0)
-        avg_return = challenger.get("shadow_avg_return", 0.0)
-
-        min_trades = getattr(self.s, "ml_challenger_min_trades", 20)
-        min_hit_improvement = getattr(self.s, "ml_challenger_min_hit_rate_improvement", 0.02)
-        min_ret_improvement = getattr(self.s, "ml_challenger_min_return_improvement", 0.1)
-        max_days = getattr(self.s, "ml_challenger_max_days", 14)
-
-        # Get champion baseline metrics
-        champion = self.db.champion_model()
-        champ_hit_rate = 0.0
-        champ_avg_return = 0.0
-        if champion and champion.get("metrics"):
-            champ_metrics = decode(champion).get("metrics", {})
-            pooled = champ_metrics.get("pooled", {})
-            champ_hit_rate = pooled.get("rules_model", {}).get("hit", 0.0) or pooled.get("rules", {}).get("hit", 0.0)
-            champ_avg_return = pooled.get("rules_model", {}).get("avg_fwd", 0.0) or pooled.get("rules", {}).get("avg_fwd", 0.0)
-
-        hit_improvement = hit_rate - champ_hit_rate
-        ret_improvement = avg_return - champ_avg_return
-
-        # Check if enough trades for evaluation
-        if trades < min_trades:
-            return {
-                "action": "continue",
-                "reason": f"Only {trades}/{min_trades} trades in shadow evaluation",
-                "trades": trades,
-                "hit_rate": hit_rate,
-                "avg_return": avg_return,
-                "champion_hit_rate": champ_hit_rate,
-                "champion_avg_return": champ_avg_return,
-                "hit_improvement": hit_improvement,
-                "ret_improvement": ret_improvement,
-            }
-
-        # Check max days
-        if challenger.get("shadow_started_at"):
-            from datetime import datetime
-            started = datetime.fromisoformat(challenger["shadow_started_at"])
-            days = (datetime.utcnow() - started).days
-            if days >= max_days:
-                # Force evaluation at max days
-                pass  # fall through to evaluation
-
-        # Evaluate
-        hit_ok = hit_improvement >= min_hit_improvement
-        ret_ok = ret_improvement >= min_ret_improvement
-
-        if hit_ok and ret_ok:
-            return {"action": "promote", "reason": "Challenger outperforms champion",
-                    "trades": trades, "hit_improvement": hit_improvement, "ret_improvement": ret_improvement}
-        elif not hit_ok and not ret_ok:
-            return {"action": "reject", "reason": "Challenger underperforms champion on both metrics",
-                    "trades": trades, "hit_improvement": hit_improvement, "ret_improvement": ret_improvement}
-        else:
-            # Mixed results - continue shadow evaluation
-            return {"action": "continue", "reason": "Mixed results, continuing evaluation",
-                    "trades": trades, "hit_improvement": hit_improvement, "ret_improvement": ret_improvement}
+    # Shadow evaluation (log_challenger_outcome / evaluate_challenger / predict_challenger) was removed:
+    # nothing ever fed it outcomes and it compared against the wrong baseline (M2). A challenger is now
+    # judged against the champion on the same walk-forward folds inside _train_sync.
 
     def deactivate(self) -> None:
         """Retire the current champion model."""

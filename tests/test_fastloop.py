@@ -114,7 +114,8 @@ def test_tick_triggers_once_through_the_normal_proposal_path_then_cools_down(mon
     monkeypatch_attrs = {
         "market_is_open": lambda: True,
         "now_et": lambda: datetime(2026, 11, 20, 11, 0),
-        "indicators": SimpleNamespace(features=lambda b: {"close": b[-1]["close"]}),
+        "indicators": SimpleNamespace(features=lambda b, bench=None: {"close": b[-1]["close"]},
+                                      ml_features=lambda b, bench=None: {"close": b[-1]["close"]}),
         "ta": SimpleNamespace(
             analyze=lambda f, s: {"close": f["close"], "atr": 2.0, "trend": "up", "strength": 0.5,
                                   "vol": "normal", "ta_score": 0.40, "ta_components": []},

@@ -7,7 +7,15 @@ current prices; no broker or database access.
 
 from __future__ import annotations
 
+import math
+
 from .config import Settings
+
+
+def _floor_dec(x: float, decimals: int) -> float:
+    """Floor to ``decimals`` places (never rounds up past a cap); round(,9) absorbs float noise."""
+    f = 10 ** int(decimals)
+    return math.floor(round(x * f, 6)) / f
 
 
 def risk_budget_usd(settings: Settings, equity: float | None = None) -> float:
@@ -60,7 +68,7 @@ def max_allowed_qty(settings: Settings, *, limit_price: float, last_price: float
         max_qty = min(max_qty, max_qty_override)
     # Round to fractional precision if fractional trading is enabled
     if s.fractional_enabled:
-        max_qty = round(max_qty, s.fractional_decimals)
+        max_qty = _floor_dec(max_qty, s.fractional_decimals)
     else:
         max_qty = float(int(max_qty))
     return max(max_qty, 0.0)
@@ -108,13 +116,14 @@ def volatility_scaled_qty(settings: Settings, base_qty: float, atr: float | None
     scale = target_atr_pct / current_atr_pct
 
     # Cap the scale factor
+    max_factor = max(1.0, max_factor)   # C12: a factor < 1 would flip the clamp
     scale = max(1.0 / max_factor, min(max_factor, scale))
 
     scaled_qty = base_qty * scale
 
     # Round to fractional precision if enabled
     if s.fractional_enabled:
-        scaled_qty = round(scaled_qty, s.fractional_decimals)
+        scaled_qty = _floor_dec(scaled_qty, s.fractional_decimals)
     else:
         scaled_qty = float(int(scaled_qty))
 

@@ -40,16 +40,31 @@ else:
     _Host = object
 
 class FlattenMixin(_Host):
+    def _sleeve_closing_coids(self) -> set[str]:
+        """Client order ids of open sleeve orders that CLOSE positions (SELL or *_TO_CLOSE)."""
+        try:
+            from ..db.sleeves import OPEN_ORDER_STATUSES
+            rows = self.db.sleeve_orders(limit=500, statuses=list(OPEN_ORDER_STATUSES))
+        except Exception:  # noqa: BLE001 - no sleeve tables: nothing to protect
+            return set()
+        return {r["client_order_id"] for r in rows if r.get("client_order_id") and (
+            (r.get("side") or "").upper() == "SELL"
+            or "CLOSE" in (r.get("position_intent") or "").upper())}
+
     async def cancel_open_orders(self, include_protective: bool, why: str) -> int:
         """Cancel working orders at the broker. With include_protective=False only
         entries (BUYs) are cancelled, and every stop and target stays in place.
         Raises BrokerError if the open orders can't be read."""
         n = 0
         unconfirmed: set[str] = set()       # cancels with no confirmation: the order may be live
+        sleeve_closing = self._sleeve_closing_coids()
         for o in parse_orders(await self.broker.open_orders_text()):
             st = (o.get("status") or "").upper()
             if not (st in ACTIVE or st.startswith(("PENDING", "PARTIAL"))):
                 continue
+            if o.get("client_order_id") in sleeve_closing:
+                continue                    # S10: sleeve exits (BUY_TO_CLOSE / SELL) stay
+                # NOTE: sleeve HOLDINGS are left alone by flatten (separate strategies)
             if not include_protective and (o.get("side") or "").upper() != "BUY":
                 continue
             try:
@@ -94,25 +109,36 @@ class FlattenMixin(_Host):
     async def _flatten_locked(self, actor: str, reason: str) -> dict:
         await self.set_kill_switch(True, f"flatten: {reason}")
         if order_session() is None:
+            self.db.set_kv("pending_flatten", {"actor": actor, "reason": reason,
+                                               "at": now_utc().isoformat(timespec="seconds")})
             self.db.log("error", "Flatten requested while every trading session is closed: the "
-                                 "kill switch is on, nothing was sold, and stops at Webull stay "
-                                 "in place.", alert=True)
-            raise ValueError("No trading session is open. The kill switch is on, but positions "
-                             "can only be sold during a trading session; stops at Webull stay "
-                             "in place.")
+                                 "kill switch is on, nothing was sold yet, and the flatten is "
+                                 "queued for the next session. Stops at Webull stay in place.",
+                        alert=True)
+            raise ValueError("No trading session is open. The kill switch is on and the flatten "
+                             "is queued for the next session; stops at Webull stay in place.")
         result: dict = {"cancelled": 0, "orders": [], "errors": []}
         try:
             # flatten_mode exempts these orders from the broker guard's kill-switch check (the
             # kill switch was just turned on above, and flatten is the one thing it must allow).
             async with self.broker.flatten_mode(), self._exec_lock:
                 try:
+                    self._flatten_stops = {}     # S11: stops cancelled here, per symbol
+                    for x in self.db.protective():
+                        if (x["kind"] == "sl" and x["status"] in ("active", "unknown")
+                                and not (x.get("note") or "").startswith("exit:")):
+                            ent = self._flatten_stops.setdefault(x["symbol"], [x["proposal_id"], []])
+                            ent[1].append(float(x["price"]))
                     result["cancelled"] = await self.cancel_open_orders(True, f"flatten: {reason}")
                     await asyncio.sleep(1)          # let the cancels settle at the broker
                     held = await fresh_positions(self.broker)
                     # a cancel that did not take leaves a live SELL: don't sell those shares twice
                     working: dict[str, float] = {}
+                    sleeve_closing = self._sleeve_closing_coids()
                     for o in parse_orders(await self.broker.open_orders_text()):
                         st = (o.get("status") or "").upper()
+                        if o.get("client_order_id") in sleeve_closing:
+                            continue        # sleeve shares are not in `held`
                         if (o.get("side") or "").upper() == "SELL" and (
                                 st in ACTIVE or st.startswith(("PENDING", "PARTIAL"))):
                             q = o.get("quantity") or o.get("qty") or 0
@@ -148,6 +174,27 @@ class FlattenMixin(_Host):
 
     async def _flatten_symbol(self, sym: str, qty: float, actor: str, reason: str,
                               result: dict) -> None:
+        """Sell a symbol; S11: shares that were not sold (rejected) get their cancelled stops back."""
+        n0 = len(result["orders"])
+        sell = getattr(self, "_flatten_symbol_sell", None)
+        if sell is None:                    # bare-namespace callers (tests)
+            sell = lambda *a: FlattenMixin._flatten_symbol_sell(self, *a)  # noqa: E731
+        await sell(sym, qty, actor, reason, result)
+        mine = result["orders"][n0:]
+        if any(o["status"] == "unknown" for o in mine):
+            return                          # a sell may be live: do not stack a stop on it
+        sold = sum(o["quantity"] for o in mine if o["status"] == "placed")
+        unsold = qty - sold
+        pid, stops = (getattr(self, "_flatten_stops", None) or {}).get(sym, (None, []))
+        if unsold > 1e-9 and stops:
+            try:
+                await self._reprotect({"id": pid, "symbol": sym}, unsold, list(stops))
+                self.db.log("warn", f"Flatten: {unsold:g} {sym} not sold; stop re-placed.", alert=True)
+            except Exception as e:  # noqa: BLE001
+                self.db.log("error", f"Flatten: could not re-protect {unsold:g} {sym}: {e}", alert=True)
+
+    async def _flatten_symbol_sell(self, sym: str, qty: float, actor: str, reason: str,
+                                   result: dict) -> None:
         # Handle fractional shares when fractional trading is enabled
         is_frac = self.s.fractional_enabled and qty != int(qty)
         whole = int(qty)
@@ -234,6 +281,7 @@ class FlattenMixin(_Host):
         if pid is not None:
             self.db.update_proposal(pid, status="placed", broker_response=response)
         self.order_failures = 0
+        self._counted_transport = set()
         self.db.log("info", f"Flatten fractional sell of {qty:g} {sym} @ ${limit:.2f} placed ({actor}).")
         return "placed"
 

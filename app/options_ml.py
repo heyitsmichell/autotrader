@@ -200,8 +200,20 @@ def live_training_rows(db) -> list[dict]:
             continue
         out.append({"proposal_id": r["proposal_id"], "features": sel.get("features") or {},
                     "delta": sel.get("delta"), "dte": sel.get("dte"), "iv": sel.get("iv"),
-                    "ret": float(r["ret"]), "closed_at": r.get("closed_at")})
+                    "ret": float(r["ret"]), "closed_at": r.get("closed_at"),
+                    "opened_at": r.get("opened_at")})
     return out
+
+
+def drop_holdout_rows(live_rows: list[dict]) -> list[dict]:
+    """M7: live outcomes opened or closed on/after HOLDOUT_START stay out of training and validation."""
+    from .ml_data.schema import HOLDOUT_START
+    kept = [r for r in live_rows
+            if not any(str(r.get(k) or "")[:10] >= HOLDOUT_START for k in ("opened_at", "closed_at"))]
+    if len(kept) != len(live_rows):
+        log.info("options ML: excluded %d live outcome(s) dated on/after the locked holdout %s",
+                 len(live_rows) - len(kept), HOLDOUT_START)
+    return kept
 
 
 def _live_matrix(rows: list[dict]):
@@ -217,7 +229,7 @@ def train(live_rows: list[dict] | None = None, *, dataset: Path | None = None,
     little data (no dataset and fewer than MIN_LIVE_ONLY_ROWS live outcomes)."""
     from .ml_data import DATASET_PATH
     dataset = Path(dataset or DATASET_PATH)
-    live_rows = live_rows or []
+    live_rows = drop_holdout_rows(live_rows or [])
     Xl, yl = _live_matrix(live_rows)
     have_ds = dataset.exists()
     if not have_ds and len(live_rows) < MIN_LIVE_ONLY_ROWS:
@@ -232,13 +244,18 @@ def train(live_rows: list[dict] | None = None, *, dataset: Path | None = None,
         tr = dates < VAL_START
         va = ~tr
         if tr.sum() >= 50 and va.sum() >= 20:
-            Xt = np.vstack([Xb[tr], Xl]) if len(Xl) else Xb[tr]
-            yt = np.concatenate([yb[tr], yl]) if len(Xl) else yb[tr]
-            wt = np.concatenate([np.ones(int(tr.sum())), np.full(len(Xl), live_weight)])
+            # M10: live rows dated on/after the cut belong to validation, never to training.
+            ltr = np.array([str(r.get("closed_at") or "")[:10] < VAL_START for r in live_rows], bool)
+            Xlt, ylt = Xl[ltr], yl[ltr]
+            Xt = np.vstack([Xb[tr], Xlt]) if len(Xlt) else Xb[tr]
+            yt = np.concatenate([yb[tr], ylt]) if len(Xlt) else yb[tr]
+            wt = np.concatenate([np.ones(int(tr.sum())), np.full(len(Xlt), live_weight)])
             beta, med, mean, std = _fit_scaled(Xt, yt, wt)
-            sc = _sigmoid(beta[0] + _transform(Xb[va], med, mean, std) @ beta[1:])
-            auc = auc_score(yb[va], sc)
-            n_val = int(va.sum())
+            Xv = np.vstack([Xb[va], Xl[~ltr]]) if (~ltr).any() else Xb[va]
+            yv = np.concatenate([yb[va], yl[~ltr]]) if (~ltr).any() else yb[va]
+            sc = _sigmoid(beta[0] + _transform(Xv, med, mean, std) @ beta[1:])
+            auc = auc_score(yv, sc)
+            n_val = int(len(yv))
     Xa = np.vstack([Xb, Xl]) if len(Xl) else Xb
     ya = np.concatenate([yb, yl]) if len(Xl) else yb
     wa = np.concatenate([np.ones(len(Xb)), np.full(len(Xl), live_weight)])

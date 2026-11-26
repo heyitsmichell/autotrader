@@ -83,8 +83,8 @@ def test_lexicon_does_not_punish_resolutions():
 async def test_llm_label_overrides_keyword_event_on_llm_rows(test_settings, test_db):
     c = _checker(test_settings, test_db)
     _store(test_db, "k", "Micron downgraded by BNP Paribas Exane", 5, scorer="llm",
-           event_type="downgrade", llm_event="none")                  # LLM says: no event
-    assert (await c.check("MU", "BUY", 100.0)).ok is True
+           event_type="downgrade", llm_event="none")                  # LLM "none" must not wipe keyword hit (M13)
+    assert (await c.check("MU", "BUY", 100.0)).ok is False
     _store(test_db, "k2", "Micron downgraded by Citi", 4, scorer="local", event_type="downgrade")
     assert (await c.check("MU", "BUY", 100.0)).ok is False             # keyword rows unchanged
 

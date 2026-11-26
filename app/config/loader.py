@@ -378,6 +378,7 @@ def load_settings() -> Settings:
         overnight_size_factor=min(1.0, max(0.0, _float("OVERNIGHT_SIZE_FACTOR", 0.5))),
         max_spread_pct_extended=max(0.0, _float("MAX_SPREAD_PCT_EXTENDED", 1.0)),
         entry_chase_seconds=max(0.0, _float("ENTRY_CHASE_SECONDS", 0.0)),
+        overnight_closed_dates=_str("OVERNIGHT_CLOSED_DATES", ""),
         market_notional_buffer_pct=min(10.0, max(0.0, _float("MARKET_NOTIONAL_BUFFER_PCT", 1.0))),
         # swing-strategy
         bracket_take_profit=_bool("BRACKET_TAKE_PROFIT", True),

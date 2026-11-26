@@ -512,7 +512,7 @@ async def test_fastloop_rechecks_kill_after_awaits(monkeypatch):
     fl.signals = SimpleNamespace(cached_bars=lambda *a: [{"close": 1.0}],
                                  ml=SimpleNamespace(predict=lambda f: None))
     monkeypatch.setattr(F, "with_live_price", lambda bars, price, day: bars)
-    monkeypatch.setattr(F, "indicators", SimpleNamespace(features=lambda b: {"close": 1.0}))
+    monkeypatch.setattr(F, "indicators", SimpleNamespace(features=lambda b, bench=None: {"close": 1.0}, ml_features=lambda b, bench=None: {"close": 1.0}))
     monkeypatch.setattr(F, "ta", SimpleNamespace(analyze=lambda f, s: {
         "close": 1.0, "atr": 0.1, "trend": "up", "strength": 1, "vol": 1, "ta_score": 0.9,
         "ta_components": {}}))

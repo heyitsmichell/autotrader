@@ -165,6 +165,6 @@ def test_registry_and_views(env):
     from app.shadows import registry
     d = registry.get("swing_dynamic")
     assert not d.monthly and d.symbols() == []
-    v = env.mgr.summary()["shadows"][-1]
+    v = next(x for x in env.mgr.summary()["shadows"] if x["id"] == "swing_dynamic")
     assert v["id"] == "swing_dynamic" and v["equity"] == 100000.0
     assert env.mgr.detail("swing_dynamic")["holdings"] == []

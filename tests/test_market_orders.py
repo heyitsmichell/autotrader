@@ -254,14 +254,17 @@ async def test_marketable_bracket_master_leg(test_engine, mock_broker):
 
 
 @pytest.mark.asyncio
-async def test_marketable_skipped_when_it_would_break_the_order_cap(test_engine, mock_broker):
+async def test_marketable_shrinks_qty_when_it_would_break_the_order_cap(test_engine, mock_broker):
+    # C2 (2026-11-26): instead of dropping the marketable price, the quantity shrinks to fit.
     _set(test_engine, entry_order_type="marketable", bracket_orders=False, max_order_usd=400.0)
     _entry_stubs(mock_broker)
     db = test_engine.db
-    pid = _proposal(db)                                  # 4 x 100.30 = 401.2 > 400
+    pid = _proposal(db)                                  # 4 x 100.30 = 401.2 > 400 -> 3 shares
     await test_engine._send(pid, db.get_proposal(pid), "auto", "w")
-    assert mock_broker.place_order.await_args.args[3] == 100.0
-    assert db.get_proposal(pid)["order_type"] == "limit"
+    args = mock_broker.place_order.await_args.args
+    assert args[3] > 100.0 and float(args[2]) == 3.0
+    assert float(db.get_proposal(pid)["quantity"]) == 3.0
+    assert db.get_proposal(pid)["order_type"] == "marketable"
 
 
 @pytest.mark.asyncio
@@ -428,14 +431,16 @@ async def test_chase_does_not_rebuy_an_order_someone_else_cancelled(test_engine,
 
 
 @pytest.mark.asyncio
-async def test_chase_resumes_after_restart_between_cancel_and_confirm(test_engine, mock_broker,
-                                                                      monkeypatch):
+async def test_chase_does_not_resume_after_unconfirmed_cancel(test_engine, mock_broker,
+                                                              monkeypatch):
+    # C1 (2026-11-26): an unconfirmed cancel clears the marker; a later CANCELLED status (which
+    # this chase never confirmed, e.g. an expiry or a manual cancel) must NOT trigger a re-buy.
     pid, book = _chase_setup(test_engine, mock_broker, monkeypatch, confirm=False)
     assert await chase.EntryChaser(test_engine).run_once() == []       # cancel sent, not confirmed
-    assert test_engine.db.get_kv(f"chase_cancel:{pid}")
-    book.orders["old-1"] = ("CANCELLED", 0)                            # confirmed later
-    assert await chase.EntryChaser(test_engine).run_once() == [pid]    # a "restarted" chaser
-    assert mock_broker.place_order.await_count == 1
+    assert not test_engine.db.get_kv(f"chase_cancel:{pid}")
+    book.orders["old-1"] = ("CANCELLED", 0)
+    assert await chase.EntryChaser(test_engine).run_once() == []
+    mock_broker.place_order.assert_not_called()
 
 
 @pytest.mark.asyncio

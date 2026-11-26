@@ -506,8 +506,8 @@ class Learner:
         # 4. Retrain ML model if due
         try:
             if self._retrain_due():
-                watchlist = self.research.effective_watchlist() if self.research else self.s.watchlist
-                train_result = await self.ml.train(self.broker, watchlist)
+                # M6: fixed configured universe only, never today's movers.
+                train_result = await self.ml.train(self.broker, list(self.s.watchlist))
                 results["ml_retrained"] = True
                 results["ml_result"] = {
                     "id": train_result.get("id"),
@@ -561,8 +561,7 @@ class Learner:
                 if self._review_due():
                     await self.run_review("auto")
                 if self._retrain_due():
-                    watchlist = self.research.effective_watchlist() if self.research else self.s.watchlist
-                    await self.ml.train(self.broker, watchlist)
+                    await self.ml.train(self.broker, list(self.s.watchlist))   # M6: fixed universe
             except Exception:  # noqa: BLE001 - keep the loop alive
                 log.exception("learning loop")
             await asyncio.sleep(3600)

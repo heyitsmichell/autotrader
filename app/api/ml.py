@@ -62,7 +62,7 @@ async def ml_train(request: Request):
 
     async def go():
         try:
-            await st.ml.train(st.broker, st.settings.watchlist)
+            await st.ml.train(st.broker, list(st.settings.watchlist))  # M6: fixed configured universe
             await st.signals.refresh(with_llm=False)
         except Exception:  # noqa: BLE001 - already logged
             pass

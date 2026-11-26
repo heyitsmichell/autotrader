@@ -61,7 +61,9 @@ def evaluate(P: Panel, W: pd.DataFrame, flag: np.ndarray):
 
 
 def build_rebal(P: Panel, rowfn, freq="monthly"):
-    """rowfn(t)->dict sym->weight (remainder cash) or None (no signal yet -> stay in cash). Rebalance at period end."""
+    """rowfn(t)->dict sym->weight (remainder cash) or None (no signal yet). Rebalance at period end.
+    M17: on None the PREVIOUS holdings are kept (cash only before the first signal); docstring fixed
+    rather than behaviour, so published research results are unchanged."""
     fl = rebal_flags(P.idx, freq)
     recs = {int(t): rowfn(int(t)) for t in np.where(fl)[0]}
     cols = sorted({k for d in recs.values() if d for k in d if k != "BIL"})

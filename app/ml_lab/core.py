@@ -38,6 +38,7 @@ class Panel:
         lst["Symbol"] = lst["Symbol"].astype(str).str.replace(".", "-", regex=False)
         lst = lst[lst["Symbol"].isin(raw)]
         self.stocks = sorted(lst["Symbol"])
+        self.survivorship_biased = True  # M17: universe = today's sp500 list, not point-in-time
         self.sector = dict(zip(lst["Symbol"], lst["GICS Sector"]))
 
 

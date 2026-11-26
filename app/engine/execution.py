@@ -23,10 +23,11 @@ from ..risk import reprice_violation
 from ..market import (market_is_open, market_is_open_extended, now_et, now_utc, order_session,
                       session_phase)
 from ..portfolio import ACTIVE, DONE_CANCELLED, parse_orders
+from ..portfolio_parsing import _age as _row_age_seconds
 from ..risk import OptionRiskManager, RiskManager
 from ..sizing import max_allowed_qty, ml_size_factor, overnight_scaled_qty, volatility_scaled_qty
 from .util import (MAX_PROPOSALS_PER_RUN, _coid, _is_option_symbol, _session_rejection,
-                   normalize_proposal)
+                   classify_order_error, normalize_proposal)
 
 log = logging.getLogger("app.engine")
 
@@ -93,12 +94,23 @@ class ExecutionMixin(_Host):
                 raise ValueError("auto execution on a live account is disabled")
             what = f"#{pid} {p['side']} {p['quantity']} {p['symbol']} @ {p['limit_price']}"
 
+            if opening and self.order_send_blocked():
+                reason = ("the broker rejected the last order for its trading session; new orders "
+                          "are paused until the session changes")
+                self.db.update_proposal(pid, status="rejected", reason=reason, decided_by=actor)
+                self.db.log("warn", f"Order {what} not sent: {reason}")
+                return self.db.get_proposal(pid)
+
             # Check if this is an option order
             is_option = _is_option_symbol(p["symbol"])
 
             if is_option:
                 # Options: re-run option risk checks at execution time
                 ok, reasons = self.option_risk.check_single_leg(p)
+                if ok and opening and hasattr(self.option_risk, "check_option_open_account"):
+                    # S14: opening option orders also obey the daily-loss and trade-count limits
+                    ok, reasons = await self.option_risk.check_option_open_account(
+                        p, self.broker, self.db)
                 if not ok:
                     reason = "; ".join(reasons)
                     self.db.update_proposal(pid, status="rejected", reason=reason, decided_by=actor)
@@ -214,7 +226,7 @@ class ExecutionMixin(_Host):
                     self.db.update_proposal(pid, status="failed", reason=f"preview failed: {e}",
                                             decided_by=actor)
                     self.db.log("error", f"Option order {what} preview failed: {e}")
-                    self._failed("order", f"preview failed: {e}")
+                    self._order_failed(e, what, "")   # preview: nothing was sent
                     return
                 # Exits are never blocked: a preview is a courtesy, so a failing one is logged
                 # and the closing order goes out anyway.
@@ -263,16 +275,17 @@ class ExecutionMixin(_Host):
                                f"client_order_id {coid} before retrying.")
                     self.db.log("error", f"Option order {what} status UNKNOWN: {e}. The app will look it "
                                          "up at the broker and settle it automatically.")
-                    self._failed("order", f"no reply for {what}")
+                    self._order_failed(e, what, coid)
                 else:
                     self.db.update_proposal(pid, status="failed", broker_response=str(e),
                                             reason="broker rejected the order")
                     self.db.log("error", f"Option order {what} rejected by broker: {e}")
-                    self._failed("order", f"broker rejected {what}: {e}")
+                    self._order_failed(e, what, coid)
                 return
 
             self.db.update_proposal(pid, status="placed", broker_response=response)
             self.order_failures = 0
+            self._counted_transport = set()
             self.db.log("info", f"Option order {what} placed ({actor}). {response.splitlines()[-1]}", alert=True)
             return
 
@@ -314,7 +327,7 @@ class ExecutionMixin(_Host):
                     self.db.log("info", f"{sym}: marketable entry limit {p['limit_price']:.4f} -> "
                                         f"{new_px:.4f}")
                 p["limit_price"] = new_px
-                self.db.update_proposal(pid, limit_price=new_px)
+                self.db.update_proposal(pid, limit_price=new_px, quantity=p["quantity"])
                 style = "marketable"
                 what = f"#{pid} {p['side']} {p['quantity']} {sym} @ {new_px}"
 
@@ -342,7 +355,7 @@ class ExecutionMixin(_Host):
             self.db.update_proposal(pid, status="failed", reason=f"preview failed: {e}",
                                     decided_by=actor)
             self.db.log("error", f"Order {what} preview failed: {e}")
-            self._failed("order", f"preview failed: {e}")
+            self._order_failed(e, what, "")   # preview: nothing was sent
             return
 
         # The entry coid is reused when the row already carries one (a re-send must not mint a
@@ -350,6 +363,8 @@ class ExecutionMixin(_Host):
         coids = {"entry": p.get("client_order_id") or _coid(), "tp": _coid(), "sl": _coid()}
         combo_id = _coid()
         # Bracket orders not supported for fractional
+        # C16 (latent): bracket legs are sized to the REQUESTED qty, not the filled qty; a partial fill
+        # leaves oversized legs. Unused live (BRACKET_TAKE_PROFIT=false => bracket is never True).
         # BRACKET_TAKE_PROFIT=false: no broker take-profit leg. A stop-only bracket is not a combo
         # the broker offers here, so the entry goes out alone and the protective GTC stop is
         # placed on fill (Portfolio._protect_filled_entry); winners are exited by the code rules.
@@ -363,6 +378,7 @@ class ExecutionMixin(_Host):
                                 "accepted in the regular session). Entry sent as a single order; "
                                 "the protective stop is placed on fill.")
         held_before, stops = 0.0, []
+        cancel_partial: list = []
         if sell:
             # Stops and targets this app placed must go first: they would otherwise be able
             # to sell the same shares again after this order fills.
@@ -370,7 +386,7 @@ class ExecutionMixin(_Host):
                 if self.portfolio is not None:
                     await self.portfolio.sync_statuses()
                 held_before = (await fresh_positions(self.broker)).get(sym, 0.0)
-                stops = await self._cancel_protective(sym, coids["entry"])
+                stops = await self._cancel_protective(sym, coids["entry"], cancel_partial)
             except BrokerError as e:
                 stops = None
                 self.db.log("error", f"Order {what}: {e}")
@@ -378,6 +394,10 @@ class ExecutionMixin(_Host):
                 self.db.update_proposal(pid, status="failed", decided_by=actor,
                                         reason=f"could not clear the protective orders for {sym}; "
                                                "sell not sent")
+                partial = list(cancel_partial)
+                if partial:   # C4: stops already cancelled must go back on
+                    await self._reprotect_partial(p, held_before, partial)
+                    self.db.settle_stops(coids["entry"], "sell not sent; stop protection restored")
                 return
 
             # A protective stop can fill while its cancellation is in flight. The earlier
@@ -477,7 +497,7 @@ class ExecutionMixin(_Host):
                            f"client_order_id {coids['entry']} before retrying.")
                 self.db.log("error", f"Order {what} status UNKNOWN: {e}. The app will look it "
                                      "up at the broker and settle it automatically.")
-                self._failed("order", f"no reply for {what}")
+                self._order_failed(e, what, coids["entry"])
                 if sell and stops:
                     self.db.log("error", f"The {sym} stop was cancelled for a sell whose status "
                                          "is unknown. It is restored automatically if the sell "
@@ -487,7 +507,7 @@ class ExecutionMixin(_Host):
                 self.db.update_proposal(pid, status="failed", broker_response=str(e),
                                         reason="broker rejected the order")
                 self.db.log("error", f"Order {what} rejected by broker: {e}")
-                self._failed("order", f"broker rejected {what}: {e}")
+                self._order_failed(e, what, coids["entry"])
                 if sell and stops:   # the sell did not happen: put the stop back on every share
                     await self._reprotect(p, held_before, stops)
                     self.db.settle_stops(coids["entry"], "sell rejected; stop restored")
@@ -495,6 +515,7 @@ class ExecutionMixin(_Host):
 
         self.db.update_proposal(pid, status="placed", broker_response=response)
         self.order_failures = 0
+        self._counted_transport = set()
         if bracket:
             self._settle_bracket_rows(bracket_rows, "waiting", "waiting for the entry to fill")
             self.db.log("info", f"Order {what} placed as a bracket ({actor}): stop "
@@ -508,6 +529,61 @@ class ExecutionMixin(_Host):
         if p["side"] == "BUY":
             sig = self.db.get_signal(p.get("signal_id")) if p.get("signal_id") else None
             self.db.add_trade_entry(pid, p, sig)
+
+    # -- order-failure accounting (S4/S16) ------------------------------------------
+    def order_send_blocked(self) -> bool:
+        """True while a session rejection blocks new (opening) orders in the current session."""
+        blocked = getattr(self, "_session_block", None)
+        if blocked is None:
+            return False
+        key = (now_et().date().isoformat(), session_phase())
+        if key != blocked:
+            self._session_block = None
+            return False
+        return True
+
+    def uncount_failure(self, coid: str) -> None:
+        """Reconcile found the order this transport failure was counted for: take it back."""
+        pending = getattr(self, "_counted_transport", None)
+        if pending and coid in pending:
+            pending.discard(coid)
+            self.order_failures = max(0, self.order_failures - 1)
+
+    def _order_failed(self, e: BrokerError, what: str, coid: str) -> None:
+        """Classify a failed order and count it only when it is a definite order rejection
+        (or a transport timeout, un-counted later by uncount_failure). The threshold is checked
+        here so a burst trips at once via the ``error_trip_cb`` hook the supervisor installs."""
+        kind = classify_order_error(e)
+        if kind == "session":
+            self._session_block = (now_et().date().isoformat(), session_phase())
+            self.db.log("warn", f"{what}: session rejection ({e}); new orders paused until the "
+                                "session changes (not counted as a failure)", alert=True)
+            return
+        if kind == "auth":
+            self.db.log("error", f"BROKER AUTH problem on {what}: {e}. Check credentials/token "
+                                 "(not counted as a failed order)", alert=True)
+            return
+        if kind == "rate_limit":
+            self.db.log("warn", f"{what}: rate limit exhausted ({e}); not counted as a failure")
+            return
+        if kind == "transport" and not coid:
+            # e.g. a preview timeout: nothing was sent, so there is no order to reconcile/uncount
+            self.db.log("warn", f"{what}: no reply before sending ({e}); not counted as a failure")
+            return
+        if kind == "transport":
+            if not hasattr(self, "_counted_transport"):
+                self._counted_transport = set()
+            self._counted_transport.add(coid)
+        self._failed("order", f"no reply for {what}" if kind == "transport"
+                     else f"broker rejected {what}: {e}")
+        n = self.s.kill_max_consecutive_errors
+        cb = getattr(self, "error_trip_cb", None)
+        # Instant trip only on DEFINITE rejections: "no reply" timeouts may still be confirmed as
+        # placed by reconcile (uncount_failure), so they are left to the supervisor's tick, which
+        # runs reconcile first. A broker that stays dead still trips on that tick.
+        definite = self.order_failures - len(getattr(self, "_counted_transport", ()) or ())
+        if n and cb and not self.kill_switch and kind != "transport" and definite >= n:
+            cb(f"{self.order_failures} failed orders in a row (last: {self.last_failure})")
 
     async def _marketable_entry_price(self, p: dict) -> float | None:
         """ENTRY_ORDER_TYPE=marketable: the BUY limit for ``p`` right now, or None to keep the
@@ -534,8 +610,17 @@ class ExecutionMixin(_Host):
         why = reprice_violation(self.s, qty=float(p["quantity"]), px=px, sl=p.get("sl"),
                                 tp=p.get("tp"), held=held, last=q.last or px)
         if why:
-            self.db.log("info", f"{sym}: marketable entry price {px} not used: {why}")
-            return None
+            # C2: sizing fills a cap exactly, so the higher marketable price nearly always breaks
+            # it. Shrink to the largest whole-share quantity allowed at the new price instead.
+            nq = int(max_allowed_qty(self.s, limit_price=px, last_price=q.last or px, held=held,
+                                     stop_loss=p.get("sl"), max_qty_override=float(p["quantity"])))
+            if nq < 1 or reprice_violation(self.s, qty=float(nq), px=px, sl=p.get("sl"),
+                                           tp=p.get("tp"), held=held, last=q.last or px):
+                self.db.log("info", f"{sym}: marketable entry price {px} not used: {why}")
+                return None
+            self.db.log("info", f"{sym}: marketable entry at {px}: quantity {p['quantity']:g} -> "
+                                f"{nq} to stay within the limits")
+            p["quantity"] = float(nq)       # caller persists it with the new limit price
         return px
 
     def _record_bracket(self, pid: int, p: dict, coids: dict, status: str,
@@ -555,7 +640,8 @@ class ExecutionMixin(_Host):
             except Exception:  # noqa: BLE001 - bookkeeping must not break order handling
                 log.exception("could not update protective row %s", rid)
 
-    async def _cancel_protective(self, symbol: str, sell_coid: str) -> list[float] | None:
+    async def _cancel_protective(self, symbol: str, sell_coid: str,
+                                 partial: list | None = None) -> list[float] | None:
         """Cancel this app's armed stop/target orders for a symbol before selling it.
 
         Returns the stop prices that were cancelled, or None if a cancel got no reply
@@ -564,9 +650,31 @@ class ExecutionMixin(_Host):
         sell it made room for, so it can be restored if that sell never fills.
         """
         stops: list[float] = []
+        # On failure (None) the (price, quantity) of stops already cancelled are left in the
+        # caller-owned `partial` list so it can re-protect exactly those shares (C4). The list is
+        # per call: the risk loop runs soft stops without _exec_lock, so shared state would race.
+        if partial is None:
+            partial = []
+        else:
+            partial.clear()
         for o in self.db.protective(symbol):
             if o["status"] == "waiting":
                 continue
+            if o["status"] == "unknown":
+                # C3: a stop whose send timed out may never have reached the broker.
+                try:
+                    found = await self._order_status(o["client_order_id"])
+                except Exception as e:  # noqa: BLE001 - cannot tell: fail closed
+                    self.db.log("error", f"Cannot look up the {symbol} protective order: {e}")
+                    return None
+                if found is None:
+                    if _row_age_seconds(o) <= max(
+                            300.0, float(getattr(self.s, "reconcile_give_up_minutes", 15)) * 60):
+                        self.db.log("warn", f"{symbol} protective order not listed yet "
+                                            "(too young to give up on); sell not sent")
+                        return None
+                    self.db.set_protective(o["id"], "closed", "never reached the broker")
+                    continue
             try:
                 reply = await self.broker.cancel_order(o["client_order_id"])
                 if not cancel_reply_confirmed(reply):
@@ -580,15 +688,43 @@ class ExecutionMixin(_Host):
                     kind = "stop" if o["kind"] == "sl" else "target"
                     self.db.log("error", f"Cancel of the {symbol} {kind} got no reply: {e}")
                     return None
-                # The broker refused the cancel: it may be filled, cancelled or still live. Leave
-                # the row tracked (reconcile settles it from the broker's status) rather than
-                # marking it cancelled unconfirmed.
-                continue
+                # C5: the broker refused the cancel. Only a status showing it already cancelled
+                # lets the sell go; live, filled or unknown means no sell.
+                try:
+                    st = await self._order_status(o["client_order_id"])
+                except Exception:  # noqa: BLE001
+                    st = "?"
+                if st is None:
+                    # In neither open orders nor history: it is not live (never reached the broker).
+                    self.db.set_protective(o["id"], "closed", "cancel refused; not at the broker")
+                    continue
+                if st not in DONE_CANCELLED:
+                    self.db.log("error", f"Cancel of the {symbol} protective order refused ({e}); "
+                                         "sell not sent")
+                    return None
             self.db.set_protective(o["id"], "cancelled", "cancelled before a sell",
                                    sell_coid=sell_coid if o["kind"] == "sl" else None)
             if o["kind"] == "sl":
                 stops.append(o["price"])
+                partial.append((o["price"], float(o.get("quantity") or 0)))
         return stops
+
+    async def _order_status(self, coid: str) -> str | None:
+        """Upper-case broker status of this client order id from open orders, then history;
+        None when neither lists it. Raises on a failed read."""
+        for text in (await self.broker.open_orders_text(), await self.broker.order_history_text()):
+            for o in parse_orders(text):
+                if o.get("client_order_id") == coid:
+                    return (o.get("status") or "").upper() or "?"
+        return None
+
+    async def _reprotect_partial(self, p: dict, held: float, partial: list) -> None:
+        """C4: put back only the shares of the stops actually cancelled (capped at holdings),
+        at the tightest of their prices."""
+        if not partial:
+            return
+        shares = min(sum(q for _, q in partial), held)
+        await self._reprotect(p, shares, [px for px, _ in partial])
 
     async def _reprotect(self, p: dict, shares: float, stops: list[float]) -> None:
         """Put a stop back on `shares` (what's left after a partial sell, or everything

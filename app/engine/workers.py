@@ -53,6 +53,8 @@ class Workers:
             asyncio.create_task(self._forever("maintenance", self.maintenance_pass,
                                               MAINTENANCE_SECONDS, 10.0),
                                 name="worker-maintenance"),
+            asyncio.create_task(self._forever("scanner_log", self.scanner_log_pass, 900.0, 60.0),
+                                name="worker-scanner-log"),
         ]
         self.eng.db.log("info", "Cold-path workers started (signals, research, maintenance)")
 
@@ -145,6 +147,11 @@ class Workers:
             return False
         eng.db.log("info", options_ml.report_line(model))
         return True
+
+    # -- read-only scanner history (no orders) ---------------------------------------
+    async def scanner_log_pass(self) -> dict:
+        from ..scanner_log import log_scanners
+        return await log_scanners(self.eng)
 
     # -- maintenance ---------------------------------------------------------------
     async def maintenance_pass(self) -> dict:

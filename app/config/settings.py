@@ -395,7 +395,8 @@ class Settings:
     entry_chase_seconds: float = 0.0           # ENTRY_CHASE_SECONDS: 0 = off; re-send an unfilled entry once as marketable (CORE only)
     overnight_size_factor: float = 0.5         # OVERNIGHT_SIZE_FACTOR: BUY quantity multiplier in the NIGHT session (1 = off)
     max_spread_pct_extended: float = 1.0       # MAX_SPREAD_PCT_EXTENDED: reject a BUY outside CORE when (ask-bid)/mid exceeds this % (0 = off)
-    market_notional_buffer_pct: float = 1.0    # MARKET_NOTIONAL_BUFFER_PCT: guard notional for a MARKET order = last x qty x (1 + this %)
+    overnight_closed_dates: str = ""           # OVERNIGHT_CLOSED_DATES: comma YYYY-MM-DD dates whose evening has no overnight session
+    market_notional_buffer_pct: float = 1.0   # MARKET_NOTIONAL_BUFFER_PCT: guard notional for a MARKET order = last x qty x (1 + this %)
 
     # swing-strategy
     bracket_take_profit: bool = True           # BRACKET_TAKE_PROFIT: false = no broker take-profit leg; entry goes out alone and the stop is placed on fill (exits are code-managed: scale-outs, trailing, give-back)
@@ -477,6 +478,11 @@ class Settings:
     def orders(self):
         from .groups import OrderSettings
         return OrderSettings.from_settings(self)
+
+    @property
+    def core(self):
+        from .groups import CoreSettings
+        return CoreSettings.from_settings(self)
 
     @property
     def llm(self):

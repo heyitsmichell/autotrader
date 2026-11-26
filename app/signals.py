@@ -246,8 +246,15 @@ class SignalService:
             self._lock.release()
 
     def _store(self, run_id: int | None, sym: str, bars: list[dict]) -> dict:
-        f = indicators.features(bars)
+        # M9: benchmark bars (when cached) feed rs_63d / rs_126d for the ML/options models
+        _bhit = self._bars_cache.get(getattr(self.s, "market_regime_symbol", "SPY"))
+        bench_for_rs = _bhit[1] if _bhit else None
+        f = indicators.features(bars, bench_for_rs)
         t = ta.analyze(f, self.s)
+        # M1: ML scores the last COMPLETED daily bar (training distribution); TA keeps the
+        # partial bar. The row stores the partial-bar TA features `f` (dashboard/consensus/exits);
+        # ledger rows therefore differ from ml_p inputs, which is moot while M7 drops post-holdout rows.
+        f_ml = indicators.ml_features(bars, bench_for_rs)
         sent = self.sentiment.summary(sym)
 
         # Compute relative strength vs benchmark if enabled
@@ -286,20 +293,23 @@ class SignalService:
         row = {
             "symbol": sym, "close": t["close"], "atr": t["atr"], "trend": t["trend"],
             "strength": t["strength"], "vol": t["vol"], "ta_score": t["ta_score"],
-            "ta_components": t["ta_components"], "features": f,
+            "ta_components": t["ta_components"],
+            "features": f,   # partial-bar TA features (consensus/exits/dashboard); ml_p uses f_ml
             "sent_score": sent["score"], "sent_webull": sent["webull"]["score"],
             "sent_llm": sent["llm"]["score"], "sent_n": sent["n"],
             "sent_pos": sent["webull"]["pos"], "sent_neg": sent["webull"]["neg"],
             "sent_neu": sent["webull"]["neu"],
             "fear_greed": (sent.get("fear_greed") or {}).get("index"),
-            "ml_p": self.ml.predict(f), "ml_model_id": self.ml.model_id,
-            # New fields for strategy improvements
+            "ml_p": self.ml.predict(f_ml) if f_ml else None, "ml_model_id": self.ml.model_id,            # New fields for strategy improvements
             "relative_strength": relative_strength,
             "market_trend": market_trend,
             "market_strength": market_strength,
             "market_adx": market_adx,
         }
-        gate = consensus.evaluate({"side": "BUY", "limit_price": t["close"]}, row, self.s)
+        # news-outage flag is not a DB column: pass it to the gate only
+        gate_row = {**row, "news_unavailable": bool(sent.get("news_unavailable")
+                                                     or sent.get("state") == "unavailable")}
+        gate = consensus.evaluate({"side": "BUY", "limit_price": t["close"]}, gate_row, self.s)
         row.update(consensus="long" if gate["ok"] else "blocked",
                    consensus_checks=gate["checks"], sl=gate["sl"], tp=gate["tp"])
         sid = self.db.add_signal(run_id, row)
@@ -316,8 +326,9 @@ class SignalService:
         rows = self.db.signals(symbol, 1)
         return decode(rows[0]) if rows else None
 
-    async def ensure(self, symbol: str, max_age_minutes: int = 20) -> dict | None:
-        """Latest signal for a symbol, refreshed first if it is missing or stale."""
+    async def ensure(self, symbol: str, max_age_minutes: int = 20, allow_stale: bool = False) -> dict | None:
+        """Latest signal for a symbol, refreshed first if it is missing or stale.
+        allow_stale=True (exits) returns the latest signal even when the refresh failed and it is stale."""
         sig = self.latest(symbol)
         fresh = sig and now_utc() - datetime.fromisoformat(sig["created_at"]) < timedelta(
             minutes=max_age_minutes)
@@ -327,7 +338,18 @@ class SignalService:
             await self.refresh(symbols=[symbol], with_llm=False)
         except Exception as e:  # noqa: BLE001
             log.warning("signal refresh for %s failed: %s", symbol, e)
-        return self.latest(symbol)
+        sig = self.latest(symbol)
+        # M3: never hand back a stale signal for BUY gating
+        if sig and not allow_stale:
+            try:
+                age = now_utc() - datetime.fromisoformat(sig["created_at"])
+            except (KeyError, TypeError, ValueError):
+                age = None
+            if age is None or age >= timedelta(minutes=max_age_minutes):
+                log.warning("signal for %s is stale (%s old, max %d min) and refresh failed; "
+                            "returning None", symbol, age, max_age_minutes)
+                return None
+        return sig
 
     def describe(self, symbol: str | None = None) -> str:
         """Plain-text view for the analyst (get_signals)."""

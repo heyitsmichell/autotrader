@@ -225,27 +225,30 @@ def send_desktop_notification(title: str, message: str, urgent: bool = False) ->
     try:
         if IS_WINDOWS:
             # Windows 10/11 toast via PowerShell
-            ps_script = f'''
+            # S3: text goes in via environment variables, never pasted into the script (no injection)
+            ps_script = '''
             [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
             $template = [Windows.UI.Notifications.ToastTemplateType]::ToastText02
             $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent($template)
             $text = $xml.GetElementsByTagName("text")
-            $text[0].AppendChild($xml.CreateTextNode("{title}")) | Out-Null
-            $text[1].AppendChild($xml.CreateTextNode("{message}")) | Out-Null
+            $text[0].AppendChild($xml.CreateTextNode($env:TRADER_TOAST_TITLE)) | Out-Null
+            $text[1].AppendChild($xml.CreateTextNode($env:TRADER_TOAST_MSG)) | Out-Null
             $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
             [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("AI Trader").Show($toast)
             '''
+            import os
+            env = {**os.environ, "TRADER_TOAST_TITLE": title, "TRADER_TOAST_MSG": message}
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps_script],
-                capture_output=True, timeout=5
+                capture_output=True, timeout=5, env=env
             )
             return True
 
         elif IS_MACOS:
             # macOS notification via osascript
             # Escape quotes and backslashes for AppleScript
-            safe_title = title.replace('"', '\\"').replace('\\', '\\\\')
-            safe_msg = message.replace('"', '\\"').replace('\\', '\\\\')
+            safe_title = title.replace('\\', '\\\\').replace('"', '\\"')
+            safe_msg = message.replace('\\', '\\\\').replace('"', '\\"')
             script = f'display notification "{safe_msg}" with title "{safe_title}"'
             subprocess.run(
                 ["osascript", "-e", script],

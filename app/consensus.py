@@ -21,6 +21,7 @@ take-profit is too small to cover the round-trip trading cost (COST_EDGE_MULT).
 from __future__ import annotations
 
 import json
+import logging
 
 from . import ta
 from .backtest.costs import CostModel, round_trip_cost_pct
@@ -29,6 +30,25 @@ from .config import Settings
 
 # strategy.md: a model above 70% may override the downtrend block (followup-correctness)
 ML_DOWNTREND_OVERRIDE_P = 0.70
+
+_ML_UNAVAILABLE_LOGGED: set[tuple] = set()
+
+
+def _log_ml_unavailable(symbol) -> None:
+    """Log once per symbol per day that the ML gate had no score (M11)."""
+    _log_once("ml", symbol, "ML unavailable for %s; entry gated on rules only")
+
+
+def _log_once(kind: str, symbol, msg: str) -> None:
+    from datetime import date
+    key = (kind, symbol, date.today())
+    if key in _ML_UNAVAILABLE_LOGGED:
+        return
+    if len(_ML_UNAVAILABLE_LOGGED) > 5000:
+        _ML_UNAVAILABLE_LOGGED.clear()
+    _ML_UNAVAILABLE_LOGGED.add(key)
+    logging.getLogger(__name__).warning(msg, symbol)
+
 
 def pullback_pct(sig: dict) -> float | None:
     """How far (in percent, positive = below) the close is under the 10-day high."""
@@ -107,7 +127,11 @@ def evaluate(p: dict, sig: dict | None, s: Settings) -> dict:
            else " (ML override)" if ml_override else " (blocked)"), trend)
 
     n, sent = sig.get("sent_n") or 0, sig.get("sent_score")
-    if sent is None or n < s.consensus_min_news:
+    if sig.get("news_unavailable") or sig.get("sent_state") == "unavailable":
+        # M12: news outage is not a neutral read; flag it but do not block entries
+        _log_once("news", sig.get("symbol"), "News unavailable for %s; sentiment check not a real read")
+        add("Sentiment", True, "News unavailable (outage); not a neutral read, entry not blocked", sent)
+    elif sent is None or n < s.consensus_min_news:
         add("Sentiment", True, f"Only {n} recent headline(s) (fewer than "
                                f"{s.consensus_min_news}), treated as neutral", sent)
     else:
@@ -118,7 +142,11 @@ def evaluate(p: dict, sig: dict | None, s: Settings) -> dict:
     if not s.ml_enabled:
         add("ML filter", True, "Turned off (ML_ENABLED=false)")
     elif ml_p is None:
-        add("ML filter", True, "No promoted model yet; rules only")
+        # M11: ML unavailable (no model or missing features). Not ML-first: the full rules
+        # threshold and downtrend block above already applied; passes only on the rules.
+        _log_ml_unavailable(sig.get("symbol"))
+        add("ML filter", True, "ML unavailable (no model or missing features); "
+                               "full rules threshold applied, rules only")
     else:
         add("ML filter", ml_p >= s.ml_min_p,
             f"Model gives {ml_p:.0%} odds of hitting take-profit before stop-loss "
