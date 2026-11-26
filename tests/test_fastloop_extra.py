@@ -1,15 +1,9 @@
-"""Auto-mode fast loop execution and the working-entry (unfilled BUY) guard."""
-
-from __future__ import annotations
-
 import asyncio
 from types import SimpleNamespace
-
 import pytest
-
 import app.fastloop as F
 from app.risk import working_buy_symbols, working_buys
-
+from app.fastloop import FastLoop
 
 def _buy(price, qty=1):
     return dict(symbol="AAPL", side="BUY", quantity=qty, limit_price=price,
@@ -23,8 +17,6 @@ async def _pending(engine, mock_broker):
     assert r.startswith("ACCEPTED"), r
     return run, price
 
-
-# -- engine helper: auto vs approve vs kill switch --------------------------------------------
 
 @pytest.mark.asyncio
 @pytest.mark.slow
@@ -53,8 +45,6 @@ async def test_auto_execute_run_blocked_by_kill_switch(test_engine, mock_broker,
     p = test_engine.db.proposals(limit=1)[0]
     assert p["status"] == "rejected" and "kill switch" in p["reason"]
 
-
-# -- fast loop calls the helper after _on_proposal ----------------------------------------------
 
 def _fast_loop(monkeypatch, order):
     async def on_proposal(run_id, p, sig_override=None):
@@ -109,8 +99,6 @@ async def test_fastloop_proposal_stays_pending_in_approve_mode(test_engine, mock
     assert test_engine.db.proposals(limit=1)[0]["status"] == "pending"
 
 
-# -- working (unfilled) BUY guard ---------------------------------------------------------------
-
 def _placed_unfilled(db, pid, symbol="AAPL"):
     db.add_trade_entry(pid, dict(symbol=symbol, side="BUY", quantity=4, limit_price=100.0))
 
@@ -158,3 +146,19 @@ async def test_risk_does_not_block_the_proposals_own_execution(test_engine, mock
     v = await test_engine.risk.check(p, mock_broker, test_engine.db, kill_switch=False,
                                      at_execution=True, watchlist=test_engine.s.watchlist)
     assert not any(c["name"] == "Working entry" for c in v.checks if not c["ok"])
+
+
+def _fl():
+    return SimpleNamespace(_reject_logged={}, _REJECT_LOG_EVERY_S=FastLoop._REJECT_LOG_EVERY_S)
+
+
+def test_gap_reject_logged_once_per_30_min():
+    fl = _fl()
+    chk = lambda r, t: FastLoop._should_log_result(fl, "TXN", r, now=t)
+    r1 = "REJECTED (eligibility): Gap filter: TXN gapped 5.20% (prev close $100.00, last $105.20, max 3%)"
+    r2 = "REJECTED (eligibility): Gap filter: TXN gapped 5.30% (prev close $100.00, last $105.30, max 3%)"
+    assert chk(r1, 0)
+    assert not chk(r2, 60)             # same reason, drifting price
+    assert chk("REJECTED (eligibility): First 15 minutes", 120)   # reason changed
+    assert chk(r1, 1900)               # >30 min later
+    assert FastLoop._should_log_result(fl, "TXN", "OK proposal", now=1901)   # non-rejects always log

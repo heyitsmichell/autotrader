@@ -2,6 +2,8 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from app import exits
 
 NOW = datetime(2026, 11, 23, 15, 0, tzinfo=timezone.utc)
@@ -23,30 +25,22 @@ def snap(trend="up", ta=0.3, minutes_ago=0, **kw):
 
 
 # -- hysteresis ---------------------------------------------------------------------------
-def test_small_ta_dip_in_range_does_not_exit():
-    sig = snap("range", 0.05)          # below the +0.15 entry bar but above the -0.10 exit bar
+@pytest.mark.parametrize("sig", [
+    snap("range", 0.05),                          # small dip: above the -0.10 exit bar
+    snap("up", -0.5),                             # weak TA but trend up holds
+    snap("range", 0.1, sent_score=-0.9, sent_n=1),  # bad sentiment, too few headlines
+])
+def test_weak_signal_holds(sig):
     assert exits.decide_exit(sig, [sig], cfg()) is None
 
 
-def test_ta_below_exit_floor_in_range_exits():
-    sig = snap("range", -0.15)
+@pytest.mark.parametrize("sig", [
+    snap("range", -0.15),                                 # below exit floor
+    snap("range", 0.1, sent_score=-0.4, sent_n=5),        # bad sentiment, enough headlines
+])
+def test_weak_signal_exits(sig):
     d = exits.decide_exit(sig, [sig], cfg())
     assert d and d.kind == "weak_signal"
-
-
-def test_weak_ta_but_trend_up_holds():
-    sig = snap("up", -0.5)
-    assert exits.decide_exit(sig, [sig], cfg()) is None
-
-
-def test_bad_sentiment_with_enough_headlines_exits():
-    sig = snap("range", 0.1, sent_score=-0.4, sent_n=5)
-    assert exits.decide_exit(sig, [sig], cfg()).kind == "weak_signal"
-
-
-def test_bad_sentiment_with_few_headlines_ignored():
-    sig = snap("range", 0.1, sent_score=-0.9, sent_n=1)
-    assert exits.decide_exit(sig, [sig], cfg()) is None
 
 
 # -- trend confirmation -------------------------------------------------------------------
@@ -63,17 +57,13 @@ def test_three_down_readings_spanning_enough_time_exits():
     assert d and d.kind == "trend_down"
 
 
-def test_three_down_readings_too_close_together_do_not_exit():
-    hist = [snap("down", 0.5, 0), snap("down", 0.5, 1), snap("down", 0.5, 2)]
-    assert not exits.trend_down_confirmed(hist, 3, 10)
-
-
-def test_not_enough_history_does_not_confirm():
-    assert not exits.trend_down_confirmed([snap("down")], 3, 10)
-
-
-def test_single_reading_mode_matches_old_behaviour():
-    assert exits.trend_down_confirmed([snap("down")], 1, 0)
+@pytest.mark.parametrize("hist,n,mins,want", [
+    ([snap("down", 0.5, 0), snap("down", 0.5, 1), snap("down", 0.5, 2)], 3, 10, False),  # too close
+    ([snap("down")], 3, 10, False),                                                      # not enough history
+    ([snap("down")], 1, 0, True),                                                        # single-reading mode
+])
+def test_trend_down_confirmed(hist, n, mins, want):
+    assert bool(exits.trend_down_confirmed(hist, n, mins)) is want
 
 
 # -- ML -----------------------------------------------------------------------------------
@@ -108,25 +98,14 @@ def test_held_days_parses_naive_and_aware_timestamps():
 
 
 # -- sell quantity ------------------------------------------------------------------------
-def test_whole_quantity_unchanged():
-    assert exits.sell_quantity(5.0, cfg(), "AAPL") == 5
-
-
-def test_fractional_remainder_not_left_behind_when_enabled():
-    s = cfg(fractional_enabled=True)
-    assert exits.sell_quantity(2.6, s, "AAPL") == 2.6
-
-
-def test_fractional_rounds_down_never_over_sells():
-    s = cfg(fractional_enabled=True, fractional_decimals=2)
-    assert exits.sell_quantity(2.6789, s, "AAPL") == 2.67
-
-
-def test_fractional_disabled_or_not_whitelisted_sells_whole_shares():
-    assert exits.sell_quantity(2.6, cfg(), "AAPL") == 2
-    assert exits.sell_quantity(2.6, cfg(fractional_enabled=True), "XLF") == 2
-
-
-def test_less_than_one_share_without_fractional_is_zero():
-    assert exits.sell_quantity(0.6, cfg(), "AAPL") == 0
-    assert exits.sell_quantity(0, cfg(), "AAPL") == 0
+@pytest.mark.parametrize("qty,kw,sym,want", [
+    (5.0, {}, "AAPL", 5),                                        # whole quantity unchanged
+    (2.6, {"fractional_enabled": True}, "AAPL", 2.6),            # no remainder left behind
+    (2.6789, {"fractional_enabled": True, "fractional_decimals": 2}, "AAPL", 2.67),  # rounds down
+    (2.6, {}, "AAPL", 2),                                        # fractional disabled
+    (2.6, {"fractional_enabled": True}, "XLF", 2),               # not whitelisted
+    (0.6, {}, "AAPL", 0),                                        # < 1 share without fractional
+    (0, {}, "AAPL", 0),
+])
+def test_sell_quantity(qty, kw, sym, want):
+    assert exits.sell_quantity(qty, cfg(**kw), sym) == want

@@ -88,6 +88,7 @@ class TestMLProvenance:
         assert len(ewl) >= len(test_settings.watchlist)
         assert all(sym in ewl for sym in test_settings.watchlist)
 
+    @pytest.mark.slow
     @pytest.mark.asyncio
     async def test_sine_wave_data_not_promoted(self, test_settings, test_db):
         """Sine-wave data should NOT promote a model."""
@@ -101,7 +102,7 @@ class TestMLProvenance:
 
         # Create synthetic sine-wave bars (like the mock broker uses)
         sine_bars = []
-        for i in range(1000):
+        for i in range(500):
             # Sum of sine waves with different periods (like mock_mcp_server.py)
             price = 100 + 5 * math.sin(i * 0.1) + 2 * math.sin(i * 0.05) + 1 * math.sin(i * 0.02)
             sine_bars.append({

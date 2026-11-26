@@ -101,6 +101,7 @@ async def test_alerts_do_not_leak_token(monkeypatch, caplog):
             raise httpx.ConnectError(f"cannot reach {url}")
 
     monkeypatch.setattr("app.alerts.httpx.AsyncClient", Boom)
+    monkeypatch.setattr("app.alerts.SEND_BACKOFF", (0.0, 0.0))   # no real retry sleeps
     with pytest.raises(RuntimeError) as ei:
         await a._telegram("t", "b", "info")
     assert TOKEN not in str(ei.value)

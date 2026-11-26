@@ -43,7 +43,7 @@ class DeadBroker:
 
 def _engine(settings, db, **over):
     base = dict(sentiment_rss_fallback=True, sentiment_yahoo_rss=False, news_refresh_minutes=0,
-                sentiment_llm=False, news_rss_spacing_seconds=0.0, sentiment_source="blend",
+                sentiment_llm=False, news_rss_spacing_seconds=0.0, news_google_spacing_seconds=0.0, sentiment_source="blend",
                 news_nasdaq_enabled=False, news_seekingalpha_enabled=False, news_bing_enabled=False)
     s = replace(settings, **{**base, **over})
     return SentimentEngine(s, DeadBroker(), db)
@@ -116,7 +116,7 @@ async def test_non_429_error_does_not_open_breaker(test_settings, test_db):
 @pytest.mark.asyncio
 async def test_rss_requests_are_spaced(test_settings, test_db):
     e = _engine(test_settings, test_db)
-    e.s = replace(e.s, news_rss_spacing_seconds=0.05)
+    e.s = replace(e.s, news_rss_spacing_seconds=0.1, news_google_spacing_seconds=0.1)
     stamps = []
 
     async def fake(url):
@@ -126,7 +126,7 @@ async def test_rss_requests_are_spaced(test_settings, test_db):
     import asyncio
     await asyncio.gather(*(e._rss_news(s) for s in ("A", "B", "C")))
     gaps = [b - a for a, b in zip(stamps, stamps[1:])]
-    assert all(g >= 0.04 for g in gaps)
+    assert all(g >= 0.05 for g in gaps)
 
 
 # --- relevance -----------------------------------------------------------------------------

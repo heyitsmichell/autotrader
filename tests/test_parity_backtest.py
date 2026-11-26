@@ -155,7 +155,10 @@ def test_run_backtest_manual_no_ml_forces_rules_only(test_settings, monkeypatch)
 
     monkeypatch.setattr(bts, "build_ml_predictor", fake_builder)
     broker = mod.MockBrokerForBacktest()
+    # tiny universe (2 symbols + benchmark): the assertions only concern the ml flag routing
     s = replace(test_settings, backtest_ml_enabled=True, backtest_min_bars=60,
+                universe_name="custom", universe_custom=["AAPL", "MSFT"], watchlist=["AAPL", "MSFT"],
+                backtest_benchmark_symbol="SPY",
                 backtest_data_dir=test_settings.backtest_data_dir)
     off, _ = asyncio.run(mod.run_backtest_manual(s, broker, ml=False))
     assert seen["ml"] is False and off.ml_status == "stub"

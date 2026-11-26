@@ -135,27 +135,25 @@ class TestEarningsBlackout:
         assert (await self._checker(test_settings, lambda s: [far])._check_earnings("AAPL")).ok
         assert (await self._checker(test_settings, lambda s: [])._check_earnings("AAPL")).ok
 
-    @pytest.mark.asyncio
-    async def test_missing_calendar_fails_closed_on_a_real_broker(self, test_settings):
-        r = await self._checker(test_settings, lambda s: None)._check_earnings("AAPL")
-        assert r.ok is False and "calendar unavailable" in r.reason
+    @staticmethod
+    def _boom(sym):
+        raise RuntimeError("down")
 
     @pytest.mark.asyncio
-    async def test_provider_exception_also_fails_closed(self, test_settings):
-        def boom(sym):
-            raise RuntimeError("down")
-        assert (await self._checker(test_settings, boom)._check_earnings("AAPL")).ok is False
-
-    @pytest.mark.asyncio
-    async def test_fail_closed_can_be_switched_off(self, test_settings):
-        c = self._checker(test_settings, lambda s: None)
-        c.s = replace(c.s, eligibility_earnings_fail_closed=False)
-        assert (await c._check_earnings("AAPL")).ok is True
-
-    @pytest.mark.asyncio
-    async def test_mock_mode_has_no_real_calendar_so_it_passes(self, test_settings):
-        c = self._checker(test_settings, lambda s: None, mode="mock")
-        assert (await c._check_earnings("AAPL")).ok is True
+    @pytest.mark.parametrize("provider,mode,fail_closed,ok,msg", [
+        (lambda s: None, "webull", True, False, "calendar unavailable"),   # missing calendar
+        ("boom", "webull", True, False, None),                             # provider exception
+        (lambda s: None, "webull", False, True, None),                     # fail-closed switched off
+        (lambda s: None, "mock", True, True, None),                        # mock: no real calendar
+    ])
+    async def test_earnings_calendar_failure_modes(self, test_settings, provider, mode,
+                                                   fail_closed, ok, msg):
+        c = self._checker(test_settings, self._boom if provider == "boom" else provider, mode=mode)
+        c.s = replace(c.s, eligibility_earnings_fail_closed=fail_closed)
+        r = await c._check_earnings("AAPL")
+        assert r.ok is ok
+        if msg:
+            assert msg in r.reason
 
     @pytest.mark.asyncio
     async def test_sells_are_never_blocked_by_the_calendar(self, test_settings):

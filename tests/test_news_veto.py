@@ -1,16 +1,10 @@
-"""Regression tests for the news-veto false positives and the earnings / news-refresh fixes."""
-from __future__ import annotations
-
 import asyncio
-
 import pytest
-
 from app import news_events as ne
 from app.llm import LLMError
 from app.yfinance_service import YahooFinanceService
 from tests.test_news_pipeline import (_FakeTicker, _checker, _engine, _fake_llm, _fake_yf, _ok, _seed,
                                       _store)
-
 
 def _ev(symbol, title):
     return ne.classify_event(title, symbol)
@@ -95,8 +89,6 @@ def test_effective_event_requires_llm_relevance():
     assert ne.effective_event({**row, "llm_relevance": 0.8}, "MU") == "bankruptcy"
 
 
-# --- earnings fail-open ------------------------------------------------------------------------
-
 @pytest.mark.asyncio
 async def test_empty_calendar_and_no_history_is_unknown_not_clear(monkeypatch):
     _fake_yf(monkeypatch, cal={}, info={}, get_earnings_dates=lambda self, limit=12: None)
@@ -107,8 +99,6 @@ async def test_empty_calendar_and_no_history_is_unknown_not_clear(monkeypatch):
     assert await YahooFinanceService(None).get_earnings_dates("SPYM") == []
     assert _FakeTicker                                                    # (import keeps fixture module loaded)
 
-
-# --- LLM output-format errors ------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_http400_json_validate_halves_batch_instead_of_pausing(test_settings, test_db, monkeypatch):
@@ -129,8 +119,6 @@ async def test_http400_other_still_pauses(test_settings, test_db, monkeypatch):
     res = await e.score_with_llm()
     assert res["scored"] == 0 and e._llm_until > 0
 
-
-# --- news refresh in the background -----------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_background_news_refresh_does_not_overlap_and_stamps_on_completion(test_settings, test_db, monkeypatch):

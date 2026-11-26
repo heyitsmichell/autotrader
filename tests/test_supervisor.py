@@ -1,16 +1,11 @@
-"""Opus review batch 1: supervisor / alerts fixes S1 S2 S3 S5 S6 S7 S12 S13 S15 S17."""
-
 import asyncio
 import dataclasses
 from types import SimpleNamespace
-
 import pytest
-
 from app import supervisor as supmod
 from app.alerts import Alerts
 from app.market import now_et
 from app.supervisor import Supervisor
-
 
 class FakeEngine:
     def __init__(self):

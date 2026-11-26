@@ -1,17 +1,12 @@
-"""Opus review 2026-11-26 batch 1: C1, C2, C6, C17 (chase / proposals) and S14 (option risk)."""
-
 import time
 from unittest.mock import AsyncMock, MagicMock
-
 import pytest
-
 from app import exits
 from app.broker import BrokerError
 from app.engine import chase
 from app.market import set_test_time, ET
 from app.risk import OptionRiskManager
 from test_market_orders import _chase_setup, _proposal, _set
-
 
 @pytest.fixture(autouse=True)
 def _clock():

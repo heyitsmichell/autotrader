@@ -1,8 +1,6 @@
-"""Opus review batch 3: M1, M3, M9, M11."""
 import asyncio
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-
 from app import consensus, indicators
 from app import signals as sigmod
 

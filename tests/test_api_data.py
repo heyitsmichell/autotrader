@@ -1,14 +1,8 @@
-"""Items 17-25: text-file writes, ml dataset lock, db identifier checks, options dte, auth token."""
-
-from __future__ import annotations
-
 import pytest
 from fastapi import HTTPException
-
 from app.api import learning
 from app.db import DB
 from app.ml_data import store
-
 
 def test_safe_write_atomic_backup_and_cap(tmp_path):
     p = tmp_path / "strategy.md"

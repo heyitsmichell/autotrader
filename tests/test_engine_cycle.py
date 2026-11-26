@@ -1,12 +1,9 @@
 import asyncio
 from types import SimpleNamespace
-
 import pytest
-
 from app.broker.errors import OrderGuardError
 from app.broker.guard import OrderGuard
 from app.engine.cycle import CycleMixin
-
 
 def _g():
     return OrderGuard(SimpleNamespace(max_order_qty=100, max_order_usd=0, options_max_contracts_per_order=0,

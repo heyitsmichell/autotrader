@@ -1,14 +1,10 @@
-"""Opus review batch 2: S8, S10, S11, S19, S20."""
 import time
 from types import SimpleNamespace
-
 import pytest
-
 from app.broker import BrokerError
 from app.engine import flatten as flatten_mod
 from app.engine import risk_loop as rl_mod
 from app.engine.risk_loop import RiskLoop
-
 
 def _orders(*rows):
     out = ""

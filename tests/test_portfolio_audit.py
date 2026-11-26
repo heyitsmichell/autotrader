@@ -1,12 +1,11 @@
-"""Audit fixes: MAE/MFE None, hold clamp, daily P&L day one, put-write marks, drawdown, titles."""
 from datetime import datetime, timezone
 from types import SimpleNamespace
-
 import pytest
-
 from app.portfolio import Portfolio
 
 T0 = datetime(2026, 11, 24, 14, 0, tzinfo=timezone.utc)
+
+
 T1 = datetime(2026, 11, 24, 16, 0, tzinfo=timezone.utc)
 
 

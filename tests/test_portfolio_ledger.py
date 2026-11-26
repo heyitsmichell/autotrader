@@ -1,11 +1,7 @@
-"""Ledger exit attribution (two trades, one symbol), exit backoff, soft-stop reuse."""
 import time
-
 import pytest
-
 from app.portfolio import Portfolio
 from app.broker import BrokerError
-
 
 def _order(coid, side, status, price, filled_at, sym="ADI"):
     return (f"Client Order ID: {coid}\n  Client Order ID: {coid}\n  Symbol: {sym}\n  Side: {side}\n"

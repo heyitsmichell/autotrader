@@ -366,79 +366,59 @@ async def test_chase_off_by_default_and_before_the_delay(test_engine, mock_broke
     mock_broker.cancel_order.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_chase_only_in_core(test_engine, mock_broker, monkeypatch):
-    pid, book = _chase_setup(test_engine, mock_broker, monkeypatch)
-    monkeypatch.setattr(chase, "order_session", lambda *a, **k: "ALL")
-    assert await chase.EntryChaser(test_engine).run_once() == []
-    mock_broker.cancel_order.assert_not_called()
+def _arr_not_core(eng, book, mp, pid):
+    mp.setattr(chase, "order_session", lambda *a, **k: "ALL")
 
 
-@pytest.mark.asyncio
-async def test_chase_never_on_partial_fill(test_engine, mock_broker, monkeypatch):
-    pid, book = _chase_setup(test_engine, mock_broker, monkeypatch)
+def _arr_partial(eng, book, mp, pid):
     book.orders["old-1"] = ("PARTIAL_FILLED", 1)
-    assert await chase.EntryChaser(test_engine).run_once() == []
+
+
+def _arr_any_fill(eng, book, mp, pid):
     book.orders["old-1"] = ("SUBMITTED", 1)                    # any fill at all
-    assert await chase.EntryChaser(test_engine).run_once() == []
-    mock_broker.cancel_order.assert_not_called()
-    mock_broker.place_order.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_chase_never_with_kill_switch(test_engine, mock_broker, monkeypatch):
-    pid, book = _chase_setup(test_engine, mock_broker, monkeypatch)
-    test_engine.kill_switch = True
-    assert await chase.EntryChaser(test_engine).run_once() == []
-    mock_broker.cancel_order.assert_not_called()
+def _arr_kill(eng, book, mp, pid):
+    eng.kill_switch = True
 
 
-@pytest.mark.asyncio
-async def test_chase_never_when_price_left_the_band(test_engine, mock_broker, monkeypatch):
-    pid, book = _chase_setup(test_engine, mock_broker, monkeypatch, last=103.0)   # +3% vs band 1%
-    assert await chase.EntryChaser(test_engine).run_once() == []
-    mock_broker.cancel_order.assert_not_called()
-    assert not test_engine.db.get_kv(f"chase:{pid}")
+def _arr_stop_above(eng, book, mp, pid):
+    eng.db.update_proposal(pid, sl=100.5)
 
 
-@pytest.mark.asyncio
-async def test_chase_never_when_stop_is_above_the_price(test_engine, mock_broker, monkeypatch):
-    pid, book = _chase_setup(test_engine, mock_broker, monkeypatch)
-    test_engine.db.update_proposal(pid, sl=100.5)
-    assert await chase.EntryChaser(test_engine).run_once() == []
-    mock_broker.cancel_order.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_chase_never_when_cancel_is_not_confirmed(test_engine, mock_broker, monkeypatch):
-    pid, book = _chase_setup(test_engine, mock_broker, monkeypatch, confirm=False)
-    assert await chase.EntryChaser(test_engine).run_once() == []
-    mock_broker.place_order.assert_not_called()
-    assert not test_engine.db.get_kv(f"chase:{pid}")
-    # the cancel call itself failing is also "not confirmed"
-    mock_broker.cancel_order = AsyncMock(side_effect=BrokerError("no reply", transport=True))
-    assert await chase.EntryChaser(test_engine).run_once() == []
-    mock_broker.place_order.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_chase_does_not_rebuy_an_order_someone_else_cancelled(test_engine, mock_broker,
-                                                                    monkeypatch):
-    pid, book = _chase_setup(test_engine, mock_broker, monkeypatch)
+def _arr_cancelled_by_other(eng, book, mp, pid):
     book.orders["old-1"] = ("CANCELLED", 0)                    # no chase_cancel marker
-    assert await chase.EntryChaser(test_engine).run_once() == []
-    mock_broker.place_order.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_chase_does_not_resume_after_unconfirmed_cancel(test_engine, mock_broker,
-                                                              monkeypatch):
-    # C1 (2026-11-26): an unconfirmed cancel clears the marker; a later CANCELLED status (which
-    # this chase never confirmed, e.g. an expiry or a manual cancel) must NOT trigger a re-buy.
-    pid, book = _chase_setup(test_engine, mock_broker, monkeypatch, confirm=False)
-    assert await chase.EntryChaser(test_engine).run_once() == []       # cancel sent, not confirmed
-    assert not test_engine.db.get_kv(f"chase_cancel:{pid}")
-    book.orders["old-1"] = ("CANCELLED", 0)
+@pytest.mark.parametrize("arrange,setup,cancelled", [
+    (_arr_not_core, {}, False),
+    (_arr_partial, {}, False),
+    (_arr_any_fill, {}, False),
+    (_arr_kill, {}, False),
+    (_arr_stop_above, {}, False),
+    (None, {"last": 103.0}, False),                  # price left the band (+3% vs band 1%)
+    (None, {"confirm": False}, True),                # cancel not confirmed
+    (_arr_cancelled_by_other, {}, True),             # someone else cancelled: no re-buy
+])
+async def test_chase_never(test_engine, mock_broker, monkeypatch, arrange, setup, cancelled):
+    pid, book = _chase_setup(test_engine, mock_broker, monkeypatch, **setup)
+    if arrange:
+        arrange(test_engine, book, monkeypatch, pid)
+    assert await chase.EntryChaser(test_engine).run_once() == []
+    mock_broker.place_order.assert_not_called()
+    if not cancelled:
+        mock_broker.cancel_order.assert_not_called()
+    if setup:
+        assert not test_engine.db.get_kv(f"chase:{pid}")
+
+
+@pytest.mark.asyncio
+async def test_chase_cancel_call_failing_is_not_confirmed(test_engine, mock_broker, monkeypatch):
+    # (C1) the cancel call itself failing is also "not confirmed"; the unconfirmed-then-CANCELLED
+    # resume case is covered by test_chase.py::test_c1_marker_cleared_when_cancel_unconfirmed
+    pid, book = _chase_setup(test_engine, mock_broker, monkeypatch)
+    mock_broker.cancel_order = AsyncMock(side_effect=BrokerError("no reply", transport=True))
     assert await chase.EntryChaser(test_engine).run_once() == []
     mock_broker.place_order.assert_not_called()
 

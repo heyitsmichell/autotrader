@@ -23,28 +23,16 @@ def app(tmp_path):
     a.state.db.close()
 
 
-async def test_post_without_headers_is_403(app):
+@pytest.mark.parametrize("headers", [
+    {},                                                    # no headers
+    {"X-Trader": "1"},                                     # no token
+    {"X-Trader": "1", "X-Trader-Token": "nope"},           # wrong token
+    {"X-Trader-Token": TOKEN},                             # token but no X-Trader
+])
+async def test_post_without_valid_headers_is_403(app, headers):
     async with make_client(app) as c:
-        r = await c.post("/api/alerts/test")
+        r = await c.post("/api/alerts/test", headers=headers)
     assert r.status_code == 403 and r.json() == TOKEN_DETAIL
-
-
-async def test_post_with_x_trader_but_no_token_is_403(app):
-    async with make_client(app) as c:
-        r = await c.post("/api/alerts/test", headers={"X-Trader": "1"})
-    assert r.status_code == 403 and r.json() == TOKEN_DETAIL
-
-
-async def test_post_with_wrong_token_is_403(app):
-    async with make_client(app) as c:
-        r = await c.post("/api/alerts/test", headers={"X-Trader": "1", "X-Trader-Token": "nope"})
-    assert r.status_code == 403 and r.json() == TOKEN_DETAIL
-
-
-async def test_post_with_token_but_no_x_trader_is_403(app):
-    async with make_client(app) as c:
-        r = await c.post("/api/alerts/test", headers={"X-Trader-Token": TOKEN})
-    assert r.status_code == 403
 
 
 async def test_post_with_valid_token_reaches_route(app):
@@ -59,9 +47,10 @@ async def test_put_and_delete_also_need_token(app):
         assert (await c.delete("/api/nothing")).status_code == 403
 
 
-async def test_get_is_allowed_without_token(app):
+@pytest.mark.parametrize("host", [None, "[::1]:8000"])
+async def test_get_allowed_without_token(app, host):
     async with make_client(app) as c:
-        r = await c.get("/api/status")
+        r = await c.get("/api/status", headers={"host": host} if host else {})
     assert r.status_code == 200
 
 
@@ -71,12 +60,6 @@ async def test_non_loopback_host_is_forbidden(app):
         r2 = await c.post("/api/alerts/test", headers={**HDR, "host": "evil.example:8000"})
     assert r.status_code == 403 and r.json() == {"detail": "forbidden host"}
     assert r2.status_code == 403
-
-
-async def test_ipv6_loopback_host_ok(app):
-    async with make_client(app) as c:
-        r = await c.get("/api/status", headers={"host": "[::1]:8000"})
-    assert r.status_code == 200
 
 
 async def test_auth_token_endpoint_requires_x_trader(app, monkeypatch):

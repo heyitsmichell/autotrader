@@ -1,9 +1,7 @@
-"""Opus review batch 3: app/ml.py items M2, M4, M5, M7, M14, M15, M16."""
 import pytest
+from app import ml  # noqa: E402
 
 torch = pytest.importorskip("torch")
-
-from app import ml  # noqa: E402
 
 
 def _row(d, sym="A", y=1.0, fwd=1.0, ta=80, p=None):

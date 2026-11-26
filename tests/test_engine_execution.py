@@ -1,17 +1,506 @@
-"""Stop-safety fixes (verifier A: B1, S1-S7 + soft-stop positions throttle) and the entry-chase
-cancel guard in track_trade_fills. Ported from the verifier's probe tests, inverted."""
-
+import asyncio
+from types import SimpleNamespace
+import pytest
+from app.broker import BrokerError
+from app.engine.execution import ExecutionMixin
+from app.engine.util import classify_order_error
+from app.broker.guard import OrderGuard
+from app.broker.parsers import parse_snapshot
+from app.broker import transport as tr
+from app.engine import flatten as fl
+from app.engine.reconcile import ReconcileMixin
+from app.engine.execution import ExecutionMixin  # noqa: F401  (import check)
+from dataclasses import replace
+from app.broker import Broker, BrokerError
+from app.config import load_settings
+from app.engine import flatten as flatten_mod
+from tests.test_broker_guard import FakeSession, _broker, _result
+from app.broker.orders import resolve_session
 import dataclasses
 import time
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
-
-import pytest
-
-from app.broker import BrokerError
 from app.engine import risk_loop
 from app.market import ET, now_utc, set_test_time
 from app.quotes import Quote
+
+def _orders(*rows):
+    out = ""
+    for coid, status in rows:
+        out += (f"Client Order ID: g{coid}\n  Client Order ID: {coid}\n  Symbol: AAPL\n"
+                f"  Side: SELL\n  Status: {status}\n  Total Quantity: 5\n")
+    return out
+
+
+class Eng(ExecutionMixin):
+    def __init__(self, n=3):
+        self.s = SimpleNamespace(kill_max_consecutive_errors=n)
+        self.order_failures = 0
+        self.run_failures = 0
+        self.kill_switch = False
+        self.last_failure = None
+        self.logs = []
+        self.tripped = []
+        self.error_trip_cb = self.tripped.append
+        self.db = SimpleNamespace(log=lambda *a, **k: self.logs.append(a))
+
+    def _failed(self, kind, message):
+        self.order_failures += 1
+        self.last_failure = message
+
+
+def test_s4_classification():
+    assert classify_order_error(BrokerError("x timed out", transport=True)) == "transport"
+    assert classify_order_error(BrokerError("place: Invalid trading_session for region")) == "session"
+    assert classify_order_error(BrokerError("place: 401 Unauthorized")) == "auth"
+    assert classify_order_error(BrokerError("place: 429 Too Many Requests")) == "rate_limit"
+    assert classify_order_error(BrokerError("place: insufficient buying power")) == "order_rejected"
+
+
+def test_s4_only_rejections_count_and_session_blocks():
+    e = Eng(n=99)
+    e._order_failed(BrokerError("Invalid trading_session"), "o1", "c1")
+    e._order_failed(BrokerError("401 Unauthorized"), "o2", "c2")
+    e._order_failed(BrokerError("429 Too Many Requests"), "o3", "c3")
+    assert e.order_failures == 0
+    assert e.order_send_blocked() is True
+    e._order_failed(BrokerError("insufficient buying power"), "o4", "c4")
+    assert e.order_failures == 1
+
+
+def test_s4_uncount_transport():
+    e = Eng(n=99)
+    e._order_failed(BrokerError("timed out", transport=True), "o", "cx")
+    assert e.order_failures == 1
+    e.uncount_failure("cx")
+    assert e.order_failures == 0
+    e.uncount_failure("cx")
+    assert e.order_failures == 0
+
+
+def test_s16_threshold_trips_immediately():
+    e = Eng(n=2)
+    e._order_failed(BrokerError("bad price"), "o", "a")
+    assert e.tripped == []
+    e._order_failed(BrokerError("bad size"), "o", "b")
+    assert len(e.tripped) == 1
+
+
+def _ago(sec):
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(seconds=sec)).isoformat()
+
+
+def _cancel_eng(rows, orders, cancel, history=""):
+    e = Eng()
+    marked = []
+
+    async def open_orders_text():
+        return orders
+
+    async def order_history_text():
+        return history
+
+    e.broker = SimpleNamespace(cancel_order=cancel, open_orders_text=open_orders_text,
+                               order_history_text=order_history_text)
+    e.db = SimpleNamespace(protective=lambda sym: rows, log=lambda *a, **k: None,
+                           set_protective=lambda *a, **k: marked.append((a, k)))
+    return e, marked
+
+
+@pytest.mark.asyncio
+async def test_c3_unknown_row_absent_is_closed_and_skipped():
+    rows = [{"id": 1, "status": "unknown", "client_order_id": "ghost", "kind": "sl", "price": 90.0,
+             "created_at": _ago(3600)}]
+
+    async def cancel(coid):
+        raise AssertionError("must not cancel an order the broker never had")
+
+    e, marked = _cancel_eng(rows, "", cancel)
+    assert await e._cancel_protective("AAPL", "s1") == []
+    assert marked[0][0][:2] == (1, "closed")
+
+
+@pytest.mark.asyncio
+async def test_c3_young_unknown_row_blocks_sell():
+    rows = [{"id": 1, "status": "unknown", "client_order_id": "ghost", "kind": "sl", "price": 90.0,
+             "created_at": _ago(30)}]
+
+    async def cancel(coid):
+        raise AssertionError("no cancel")
+
+    e, marked = _cancel_eng(rows, "", cancel)
+    assert await e._cancel_protective("AAPL", "s1") is None
+    assert marked == []
+
+
+@pytest.mark.asyncio
+async def test_c4_partial_failure_exposes_cancelled_prices():
+    rows = [{"id": 1, "status": "active", "client_order_id": "a", "kind": "sl", "price": 90.0,
+             "quantity": 3},
+            {"id": 2, "status": "active", "client_order_id": "b", "kind": "sl", "price": 95.0,
+             "quantity": 4}]
+
+    async def cancel(coid):
+        if coid == "b":
+            raise BrokerError("timed out", transport=True)
+        return "Cancelled"
+
+    e, _ = _cancel_eng(rows, _orders(("a", "SUBMITTED"), ("b", "SUBMITTED")), cancel)
+    part: list = []
+    assert await e._cancel_protective("AAPL", "s1", part) is None
+    assert part == [(90.0, 3.0)]         # per-call list (no shared engine state)
+    assert not hasattr(e, "_cancel_partial")
+
+    reprot = []
+
+    async def rp(p, shares, stops):
+        reprot.append((shares, list(stops)))
+    e._reprotect = rp
+    await e._reprotect_partial({"id": 1, "symbol": "AAPL"}, 100, part)
+    assert reprot == [(3.0, [90.0])]
+    reprot.clear()
+    await e._reprotect_partial({"id": 1, "symbol": "AAPL"}, 2, [(90.0, 3.0), (95.0, 4.0)])
+    assert reprot == [(2, [90.0, 95.0])]
+
+
+@pytest.mark.asyncio
+async def test_c5_refused_cancel_blocks_sell_unless_cancelled():
+    rows = [{"id": 1, "status": "active", "client_order_id": "a", "kind": "sl", "price": 90.0}]
+
+    async def cancel(coid):
+        raise BrokerError("Validation error: cannot cancel")
+
+    e, marked = _cancel_eng(rows, _orders(("a", "SUBMITTED")), cancel)
+    assert await e._cancel_protective("AAPL", "s1") is None
+    assert marked == []
+
+    e2, _ = _cancel_eng(rows, "", cancel, history=_orders(("a", "CANCELLED")))
+    assert await e2._cancel_protective("AAPL", "s1") == [90.0]
+
+
+@pytest.mark.asyncio
+async def test_c5_refused_cancel_absent_everywhere_is_closed():
+    rows = [{"id": 1, "status": "active", "client_order_id": "a", "kind": "sl", "price": 90.0}]
+
+    async def cancel(coid):
+        raise BrokerError("Order not found")
+
+    e, marked = _cancel_eng(rows, "", cancel)
+    assert await e._cancel_protective("AAPL", "s1") == []
+    assert marked[0][0][:2] == (1, "closed")
+
+
+def test_auth_codes_need_http_context():
+    assert classify_order_error(BrokerError("rejected qty 1401 @ 403.25")) == "order_rejected"
+    assert classify_order_error(BrokerError("HTTP 403 something")) == "auth"
+
+
+def test_preview_failure_routes_through_classifier(monkeypatch):
+    from app.engine import execution as ex
+    e = Eng(n=99)
+    monkeypatch.setattr(ex, "session_phase", lambda *a, **k: "premarket")
+    e._order_failed(BrokerError("Invalid trading_session"), "o", "")
+    assert e.order_failures == 0 and e.order_send_blocked() is True
+    monkeypatch.setattr(ex, "session_phase", lambda *a, **k: "afterhours")
+    assert e.order_send_blocked() is False
+    e._order_failed(BrokerError("preview timed out", transport=True), "o", "")
+    assert e.order_failures == 0
+
+
+def test_auth_classification_covers_login_token():
+    from app.broker import BrokerError
+    from app.engine.util import classify_order_error
+    assert classify_order_error(BrokerError("Webull login token missing or not approved: x")) == "auth"
+    assert classify_order_error(BrokerError("Device Not Registered")) == "auth"
+    assert classify_order_error(BrokerError("rejected qty 1401 @ 403.25")) == "order_rejected"
+
+
+def test_2fa_word_boundary():
+    from app.broker import BrokerError
+    from app.engine.util import classify_order_error
+    assert classify_order_error(BrokerError("waiting for 2FA approval")) == "auth"
+    assert classify_order_error(BrokerError("duplicate client_order_id a12fa9c0")) != "auth"
+
+
+def _settings(**kw):
+    base = dict(max_order_qty=100, max_order_usd=1000.0, options_max_contracts_per_order=10,
+                market_notional_buffer_pct=1.0, symbol_whitelist=[])
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def test_guard_missing_setting_raises():
+    with pytest.raises(AttributeError):
+        OrderGuard(SimpleNamespace(max_order_qty=100))
+
+
+def test_guard_negative_cap_rejected():
+    with pytest.raises(ValueError):
+        OrderGuard(_settings(max_order_usd=-1))
+
+
+def test_parse_snapshot_ignores_foreign_price_line():
+    text = "AAPL Price: 10 PreClose: 9\nFoo Price: 5\nVol: 100\n"
+    assert set(parse_snapshot(text)) == {"AAPL"}
+    assert set(parse_snapshot("Foo Price: 5\n", ["FOO"])) == {"FOO"}
+    assert parse_snapshot("Foo Price: 5\n") == {}
+
+
+def test_not_found_regex_and_cap():
+    assert tr._NOT_FOUND_RX.search("HTTP 404")
+    assert tr._NOT_FOUND_RX.search("Order Not Found")
+    assert not tr._NOT_FOUND_RX.search("price 1404.5 error")
+    assert tr.NEGATIVE_CACHE_MAX == 512
+
+
+class _Eng(ReconcileMixin):
+    def __init__(self, orders_text, lock=None):
+        self.broker = SimpleNamespace(open_orders_text=self._open)
+        self._t = orders_text
+        self._exec_lock = lock or asyncio.Lock()
+        self.db = SimpleNamespace(unresolved_proposals=lambda: [])
+
+    async def _open(self):
+        if isinstance(self._t, Exception):
+            raise self._t
+        return self._t
+
+
+async def test_open_order_exists_false_on_error():
+    assert await _Eng(BrokerError("x", transport=True))._open_order_exists("c1") is False
+
+
+async def test_reconcile_waits_for_lock_then_runs():
+    lock = asyncio.Lock()
+    eng = _Eng("", lock)
+    eng.db = SimpleNamespace(unresolved_proposals=lambda: [{"id": 1}])
+    seen = []
+
+    async def _open():
+        seen.append(1)
+        raise BrokerError("stop here")
+    eng.broker.open_orders_text = _open
+    await lock.acquire()
+    task = asyncio.create_task(eng.reconcile_orders())
+    await asyncio.sleep(0.05)
+    assert not seen
+    lock.release()
+    await task
+    assert seen == [1]
+
+
+def test_flatten_extended_constant():
+    assert fl.FLATTEN_EXTENDED_SLIPPAGE_PCT > 0
+
+
+async def test_flatten_symbol_extended_uses_session_price(monkeypatch):
+    monkeypatch.setattr(fl, "order_session", lambda: "ALL")
+    sold = {}
+
+    class B:
+        async def get_snapshot(self, s):
+            return {"regular_price": 100.0, "ext_price": 90.0}
+
+        async def last_price(self, s):
+            return 100.0
+
+    eng = SimpleNamespace(
+        broker=B(), db=SimpleNamespace(log=lambda *a, **k: None),
+        s=SimpleNamespace(fractional_enabled=False, flatten_slippage_pct=0.5,
+                          max_order_qty=100, max_order_usd=100000))
+
+    async def _sell(sym, n, limit, actor, reason):
+        sold["limit"] = limit
+        return "placed"
+    eng._flatten_sell = _sell
+    res = {"orders": [], "errors": []}
+    await fl.FlattenMixin._flatten_symbol(eng, "AAPL", 1, "a", "r", res)
+    assert sold["limit"] == round(90.0 * (1 - fl.FLATTEN_EXTENDED_SLIPPAGE_PCT / 100), 2)
+
+
+async def test_run_guard_blocks_second_call():
+    from app.api import controls
+    started = []
+
+    class Eng:
+        kill_switch = False
+        running = False
+
+        def run_cycle(self, why):
+            async def c():
+                await asyncio.sleep(0.05)
+            started.append(1)
+            return c()
+
+    state = SimpleNamespace(broker=SimpleNamespace(connected=True))
+    req = SimpleNamespace(app=SimpleNamespace(state=state))
+    import app.api.controls as c
+    c.engine = lambda r: Eng()
+    c.background = lambda r, coro: asyncio.create_task(coro)
+    await controls.run_now(req)
+    with pytest.raises(Exception):
+        await controls.run_now(req)
+    assert len(started) == 1
+    await asyncio.sleep(0.1)
+    await controls.run_now(req)
+    assert len(started) == 2
+    await asyncio.sleep(0.1)
+
+
+_real_sleep = asyncio.sleep
+
+
+def _orders_safety_fixes(*rows):
+    out = ""
+    for coid, sym, side, qty in rows:
+        out += (f"Client Order ID: g{coid}\n  Client Order ID: {coid}\n  Symbol: {sym}\n"
+                f"  Side: {side}\n  Status: SUBMITTED\n  Total Quantity: {qty}\n")
+    return out
+
+
+def _patch(eng, monkeypatch, orders_after):
+    sells = []
+    state = {"cancelled": False}
+
+    async def open_orders_text():
+        return orders_after if state["cancelled"] else _orders_safety_fixes(
+            ("s1", "AAPL", "SELL", 10), ("s2", "MSFT", "SELL", 4))
+
+    async def cancel_order(coid):
+        if coid == "s1":
+            state["cancelled"] = True       # first cancel "takes" the snapshot flip, s2 sticks
+        return "Cancelled" if coid != "s2" else "pending"
+
+    async def positions(_b):
+        return {"AAPL": 10, "MSFT": 10}
+
+    async def fake_sell(sym, qty, limit, actor, reason):
+        await asyncio.sleep(0.01)
+        sells.append((sym, qty))
+        return "placed"
+
+    async def last_price(sym):
+        return 100.0
+
+    async def ks(*a, **k):
+        await asyncio.sleep(0.01)
+
+    monkeypatch.setattr(eng.broker, "open_orders_text", open_orders_text)
+    monkeypatch.setattr(eng.broker, "cancel_order", cancel_order)
+    monkeypatch.setattr(eng.broker, "last_price", last_price)
+    monkeypatch.setattr(flatten_mod, "fresh_positions", positions)
+    monkeypatch.setattr(flatten_mod, "order_session", lambda *a, **k: "CORE")
+    monkeypatch.setattr(flatten_mod, "cancel_reply_confirmed", lambda r: r == "Cancelled")
+    monkeypatch.setattr(eng, "set_kill_switch", ks)
+    monkeypatch.setattr(eng, "_flatten_sell", fake_sell)
+
+    async def noopt(*a, **k):
+        return []
+    monkeypatch.setattr(eng.option_exits, "close_all", noopt, raising=False)
+    monkeypatch.setattr(flatten_mod, "asyncio", SimpleNamespace(sleep=lambda *_: _real_sleep(0)))
+    return sells
+
+
+@pytest.mark.asyncio
+async def test_concurrent_flatten_refused(test_engine, monkeypatch):
+    sells = _patch(test_engine, monkeypatch, _orders_safety_fixes(("s2", "MSFT", "SELL", 4)))
+    r = await asyncio.gather(test_engine.flatten("u", "t"), test_engine.flatten("u", "t"),
+                             return_exceptions=True)
+    assert sum(isinstance(x, ValueError) for x in r) == 1
+    assert sorted(s[0] for s in sells) == ["AAPL", "MSFT"]
+    assert not test_engine.flattening
+
+
+@pytest.mark.asyncio
+async def test_flatten_skips_shares_in_uncancelled_sell(test_engine, monkeypatch):
+    sells = _patch(test_engine, monkeypatch, _orders_safety_fixes(("s2", "MSFT", "SELL", 4)))
+    res = await test_engine.flatten("u", "t")
+    assert dict(sells) == {"AAPL": 10, "MSFT": 6}
+    assert any("MSFT" in e for e in res["errors"])
+
+
+# -- broker call timeout ---------------------------------------------------
+class SlowSession:
+    def __init__(self):
+        self.calls = 0
+
+    async def call_tool(self, name, arguments=None):
+        self.calls += 1
+        await asyncio.sleep(5)
+
+
+def _broker_safety(sess):
+    b = Broker(replace(load_settings(), broker_call_timeout_seconds=0.05))
+    b.session = sess
+    return b
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["get_stock_snapshot", "place_order"])
+async def test_call_timeout_is_transport_error_without_retry(tool):
+    sess = SlowSession()
+    with pytest.raises(BrokerError) as ei:
+        await _broker_safety(sess).call(tool, symbol="AAPL")
+    assert ei.value.transport and "timed out" in str(ei.value)
+    assert sess.calls == 1
+
+
+@pytest.fixture
+def premarket(monkeypatch):
+    monkeypatch.setattr("app.broker.orders.market.order_session", lambda at=None: "ALL")
+
+
+@pytest.mark.asyncio
+async def test_stop_in_premarket_uses_core_gtc(premarket):
+    sess = FakeSession([_result("client_order_id: x")])
+    await _broker(sess).place_stop("MSFT", 1, 450.0, "c1")
+    name, args = sess.calls[0]
+    assert name == "place_stock_order"
+    assert args["trading_session"] == "CORE" and args["time_in_force"] == "GTC"
+    assert args["order_type"] == "STOP_LOSS"
+
+
+def test_entries_still_validated(premarket):
+    with pytest.raises(BrokerError):
+        resolve_session("CORE")                       # entry: CORE not open now
+    assert resolve_session("CORE", queue_for_core=True) == "CORE"
+    assert resolve_session("AUTO") == "ALL"
+
+
+def test_closed_market_still_refused(monkeypatch):
+    monkeypatch.setattr("app.broker.orders.market.order_session", lambda at=None: None)
+    with pytest.raises(BrokerError):
+        resolve_session("CORE", queue_for_core=True)
+
+
+@pytest.mark.asyncio
+async def test_gtx_error_retries_with_core(premarket):
+    sess = FakeSession([_result("[OPENAPI_GTX_NOT_SUPPORT_MARKET] no", error=True),
+                        _result("client_order_id: x")])
+    b = _broker(sess)
+    await b.place_stop("MSFT", 1, 450.0, "c1", trading_session="ALL")
+    assert [c[1]["trading_session"] for c in sess.calls] == ["ALL", "CORE"]
+
+
+class _Eng_stop_session_fixes(ReconcileMixin):
+    def __init__(self):
+        self.logs = []
+        self.db = SimpleNamespace(log=lambda lvl, msg, alert=False: self.logs.append((lvl, alert)))
+
+
+def test_alert_dedupe():
+    e = _Eng_stop_session_fixes()
+    for _ in range(5):
+        e._stop_alert("TLT", "no_stop", "error", "m")
+    assert e.logs == [("error", True)]
+    e._stop_alert("TLT", "other", "error", "m")
+    assert len(e.logs) == 2
+    e._stop_alerts_clear({"TLT"}, "TLT")
+    e._stop_alert("TLT", "no_stop", "error", "m")
+    assert e.logs[-1] == ("error", True) and len(e.logs) == 3
+    e._stop_alerts_clear(set())                       # position closed
+    assert not e._stop_alerts
 
 
 def _set(engine, **kw):
@@ -33,7 +522,7 @@ def _mk(db, sym, stop, fill, atr=2.0, qty=1):
     return pid
 
 
-def _orders(*rows):
+def _orders_stop_safety_fixes(*rows):
     out = []
     for coid, sym, side, status in rows:
         out += [f"Client Order ID: {coid}", f"  Client Order ID: {coid}", f"  Symbol: {sym}",
@@ -232,7 +721,7 @@ async def test_old_unknown_row_working_at_broker_is_kept(test_engine, mock_broke
     rid = db.add_protective(None, "ADI", "sl", "live1", 1, 340.0, "unknown", "transport error")
     _age_row(db, rid, 7200)
     _stale_env(test_engine, mock_broker, live=345.0)
-    mock_broker.open_orders_text = AsyncMock(return_value=_orders(("live1", "ADI", "SELL", "WORKING")))
+    mock_broker.open_orders_text = AsyncMock(return_value=_orders_stop_safety_fixes(("live1", "ADI", "SELL", "WORKING")))
     assert await test_engine._verify_protective_stops() == 0
     mock_broker.place_stop.assert_not_called()
     assert db.protective("ADI")[0]["status"] == "unknown"
@@ -310,7 +799,7 @@ async def test_soft_stop_skips_when_a_foreign_sell_is_working(test_engine, mock_
     p1 = _mk(db, "AAPL", 95.0, 100.0, qty=2)
     db.add_protective(p1, "AAPL", "sl", "r1", 2, 95.0, "active", "x")
     _soft_env(test_engine, mock_broker, monkeypatch, {"AAPL": 2.0})
-    mock_broker.open_orders_text = AsyncMock(return_value=_orders(
+    mock_broker.open_orders_text = AsyncMock(return_value=_orders_stop_safety_fixes(
         ("r1", "AAPL", "SELL", "WORKING"), ("manual", "AAPL", "SELL", "WORKING")))
     clk = _Clock(test_engine.risk_loop)
     await clk.tick()
@@ -318,7 +807,7 @@ async def test_soft_stop_skips_when_a_foreign_sell_is_working(test_engine, mock_
     mock_broker.place_order.assert_not_called()
     mock_broker.cancel_order.assert_not_called()
     # only our own CORE stop is working: it is cancelled and the soft stop fires
-    mock_broker.open_orders_text = AsyncMock(return_value=_orders(("r1", "AAPL", "SELL", "WORKING")))
+    mock_broker.open_orders_text = AsyncMock(return_value=_orders_stop_safety_fixes(("r1", "AAPL", "SELL", "WORKING")))
     assert len(await clk.tick(10)) == 1
 
 
@@ -379,13 +868,13 @@ def _fired_soft(engine, broker, monkeypatch, session="CORE"):
 async def test_unfilled_soft_sell_is_cancelled_at_core_then_stop_restored(
         test_engine, mock_broker, monkeypatch):
     pid, tid = _fired_soft(test_engine, mock_broker, monkeypatch)
-    mock_broker.open_orders_text = AsyncMock(return_value=_orders(("soft1", "AAPL", "SELL", "WORKING")))
+    mock_broker.open_orders_text = AsyncMock(return_value=_orders_stop_safety_fixes(("soft1", "AAPL", "SELL", "WORKING")))
     clk = _Clock(test_engine.risk_loop)
     await clk.tick()
     mock_broker.cancel_order.assert_awaited_once_with("soft1")
     mock_broker.place_stop.assert_not_called()                 # not before the cancel is confirmed
     mock_broker.open_orders_text = AsyncMock(return_value="")
-    mock_broker.order_history_text = AsyncMock(return_value=_orders(("soft1", "AAPL", "SELL", "CANCELLED")))
+    mock_broker.order_history_text = AsyncMock(return_value=_orders_stop_safety_fixes(("soft1", "AAPL", "SELL", "CANCELLED")))
     await clk.tick(6)
     a = mock_broker.place_stop.await_args
     assert a.args[:3] == ("AAPL", 1.0, 95.0) and a.kwargs["allow_when_killed"] is True
@@ -398,7 +887,7 @@ async def test_unfilled_soft_sell_exits_when_price_is_at_or_below_the_stop(
         test_engine, mock_broker, monkeypatch):
     _fired_soft(test_engine, mock_broker, monkeypatch)
     mock_broker.last_price = AsyncMock(return_value=93.0)
-    mock_broker.order_history_text = AsyncMock(return_value=_orders(("soft1", "AAPL", "SELL", "EXPIRED")))
+    mock_broker.order_history_text = AsyncMock(return_value=_orders_stop_safety_fixes(("soft1", "AAPL", "SELL", "EXPIRED")))
     test_engine.kill_switch = True
     await _Clock(test_engine.risk_loop).tick()
     mock_broker.place_stop.assert_not_called()
@@ -409,7 +898,7 @@ async def test_unfilled_soft_sell_exits_when_price_is_at_or_below_the_stop(
 
 async def test_filled_soft_sell_needs_nothing(test_engine, mock_broker, monkeypatch):
     _fired_soft(test_engine, mock_broker, monkeypatch, session="ALL")
-    mock_broker.order_history_text = AsyncMock(return_value=_orders(("soft1", "AAPL", "SELL", "FILLED")))
+    mock_broker.order_history_text = AsyncMock(return_value=_orders_stop_safety_fixes(("soft1", "AAPL", "SELL", "FILLED")))
     await _Clock(test_engine.risk_loop).tick()
     mock_broker.place_stop.assert_not_called()
     mock_broker.place_order.assert_not_called()
@@ -418,7 +907,7 @@ async def test_filled_soft_sell_needs_nothing(test_engine, mock_broker, monkeypa
 async def test_soft_sell_ending_unfilled_in_extended_hours_restores_the_stop(
         test_engine, mock_broker, monkeypatch):
     _fired_soft(test_engine, mock_broker, monkeypatch, session="ALL")
-    mock_broker.order_history_text = AsyncMock(return_value=_orders(("soft1", "AAPL", "SELL", "CANCELLED")))
+    mock_broker.order_history_text = AsyncMock(return_value=_orders_stop_safety_fixes(("soft1", "AAPL", "SELL", "CANCELLED")))
     await _Clock(test_engine.risk_loop).tick()
     assert mock_broker.place_stop.await_args.args[:3] == ("AAPL", 1.0, 95.0)
 
@@ -466,7 +955,7 @@ async def _unfilled_entry(engine, broker):
     db.add_trade_entry(pid, dict(symbol="AAPL", side="BUY", quantity=1, limit_price=100.0,
                                  sl=95.0, tp=110.0))
     broker.open_orders_text = AsyncMock(return_value="")
-    broker.order_history_text = AsyncMock(return_value=_orders(("ent1", "AAPL", "BUY", "CANCELLED")))
+    broker.order_history_text = AsyncMock(return_value=_orders_stop_safety_fixes(("ent1", "AAPL", "BUY", "CANCELLED")))
     broker.positions = AsyncMock(return_value={})
     return pid
 

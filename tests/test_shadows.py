@@ -114,6 +114,7 @@ def env(tmp_path, monkeypatch):
     db.close()
 
 
+@pytest.mark.slow    # ~10 s: 12+7 symbols x 300 bars through every shadow strategy, three ticks
 async def test_rebalance_and_valuation_never_touch_order_methods(env):
     m, db = env.mgr, env.db
     await m.tick()

@@ -1,5 +1,6 @@
 """Pytest configuration and fixtures for AI Trader tests."""
 
+import asyncio
 import contextlib
 import os
 import sys
@@ -159,9 +160,36 @@ def test_settings(tmp_data_dir):
 
 
 @pytest.fixture
-async def mock_broker(test_settings):
-    """Create a mock broker instance."""
+async def mock_broker(test_settings, request, monkeypatch):
+    """Create a mock broker instance.
+
+    The mock MCP server runs in-process over memory streams (no ~2 s subprocess spawn per test).
+    tests/test_mcp.py keeps the real stdio subprocess path.
+    """
     from app.broker import Broker
+    if request.node.path.name != "test_mcp.py":
+        import app.broker.transport as tr
+        from app.mock_mcp_server import mcp as mock_server
+        from fastmcp import Client
+
+        async def _run_inmem(self, ready, stop):
+            try:
+                async with Client(mock_server) as fclient:
+                    session = fclient.session
+                    self.tools = (await session.list_tools()).tools
+                    self.session = session
+                    if not ready.done():
+                        ready.set_result(None)
+                    await stop.wait()
+            except BaseException as e:  # noqa: BLE001
+                if not ready.done():
+                    ready.set_exception(RuntimeError(str(e)))
+                if isinstance(e, asyncio.CancelledError):
+                    raise
+            finally:
+                self.session = None
+
+        monkeypatch.setattr(tr.McpTransport, "_run", _run_inmem)
     broker = Broker(test_settings)
     await broker.start()
     yield broker

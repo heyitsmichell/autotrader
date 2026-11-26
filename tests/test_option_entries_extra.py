@@ -1,15 +1,12 @@
-"""Opus review batch 2: C8, C9, C11, C12, C14, C15, S18."""
 import asyncio
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
-
 from tests.test_option_entries import eng, with_settings, sig, occ, TODAY  # noqa: F401
 from tests.test_fastloop import _loop, _bar
 from app import fastloop, sizing, exits
 from app.config import load_settings
 from app.engine import option_entries
 from app.engine.option_entries import entry_limit_price
-
 
 async def test_c8_contracts_clamped_to_per_order_cap(eng):
     with_settings(eng, options_max_contracts_per_order=2)
