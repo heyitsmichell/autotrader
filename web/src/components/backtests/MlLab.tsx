@@ -7,12 +7,13 @@ import Empty from "@/components/ui/Empty";
 import Mark from "@/components/ui/Mark";
 import Section from "@/components/ui/Section";
 import { EvidenceLinks } from "./EvidenceCards";
+import { dateTime } from "@/lib/format";
 import css from "./Bt.module.css";
 
 const TONE: Record<string, "gain" | "warn" | "neutral"> = { champion: "gain", challenger: "neutral", failed: "warn" };
 const local = (v?: string) => {
-  const t = v ? new Date(v) : null;
-  return t && !Number.isNaN(t.getTime()) ? t.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+  const s = dateTime(v);
+  return s === "—" ? s : `${s} ET`;
 };
 const show = (v: unknown) => (v == null ? "—" : typeof v === "number" ? String(Math.round(v * 1e4) / 1e4) : String(v));
 

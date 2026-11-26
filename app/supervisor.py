@@ -187,6 +187,12 @@ class Supervisor:
     async def check_kill_triggers(self) -> str | None:
         """Trip the kill switch if a trigger fires. Returns the reason, or None."""
         e, s = self.engine, self.s
+        # drawdown is a health figure: keep it current even while the kill switch is already on
+        try:
+            self._track_drawdown((await self.portfolio.snapshot(max_age=120))["balance"])
+        except Exception as exc:  # noqa: BLE001 - health display only
+            log.debug("drawdown tracking failed: %s", exc)
+            pass
         if e.kill_switch:
             return None
         reason = None
@@ -205,15 +211,23 @@ class Supervisor:
             await self.trip(reason)
         return reason
 
+    def _track_drawdown(self, bal: dict) -> float | None:
+        """Update equity_peak and drawdown_pct from net liquidation; returns the peak."""
+        net = bal.get("net_liq")
+        if net is None or net <= 0:
+            return None
+        peak = self.db.get_kv("equity_peak")
+        if peak is None or net > peak:
+            peak = net
+            self.db.set_kv("equity_peak", peak)
+        self.drawdown_pct = round((1 - net / peak) * 100, 2) if peak else None
+        return peak
+
     def _money_trigger(self, bal: dict) -> str | None:
         s = self.s
         net, day = bal.get("net_liq"), bal.get("day_pnl")
-        if net is not None and net > 0:
-            peak = self.db.get_kv("equity_peak")
-            if peak is None or net > peak:
-                peak = net
-                self.db.set_kv("equity_peak", peak)
-            self.drawdown_pct = round((1 - net / peak) * 100, 2) if peak else None
+        peak = self._track_drawdown(bal)
+        if peak is not None:
             if s.kill_max_drawdown_pct > 0 and net <= peak * (1 - s.kill_max_drawdown_pct / 100):
                 return (f"drawdown: net liquidation ${net:,.2f} is {self.drawdown_pct:.1f}% below "
                         f"its peak ${peak:,.2f} (limit {s.kill_max_drawdown_pct:g}%)")
@@ -478,7 +492,8 @@ class Supervisor:
                 }
                 if spy_info["trades_count"] >= self.s.spy_benchmark_min_trades:
                     spy_info["passing"] = (spy_info["avg_alpha_pct"] or 0) >= self.s.spy_benchmark_min_outperformance_pct
-            except Exception:
+            except Exception as exc:
+                log.warning("SPY benchmark computation failed: %s", exc)
                 spy_info = {"enabled": True, "error": "Unable to compute"}
         return {
             "last_tick": self.last_tick, "error": self.last_error,

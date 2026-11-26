@@ -49,9 +49,12 @@ if (-not $CodeOnly -and -not $Research) {
     if (Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue) {
         throw "Something is still listening on port 8000. Run Stop_Trader.bat first."
     }
-    & ssh @SshOpts $Server "test -f ~/trader/data/trader.db"
-    if ($LASTEXITCODE -eq 0) {
-        throw "The server already has a database. Use -CodeOnly so its live data is not overwritten."
+    # Fail closed: if ssh itself fails we cannot know the server is empty.
+    $probe = & ssh @SshOpts $Server "for p in data/trader.db .env conf; do if [ -e ~/trader/`$p ]; then echo EXISTS:`$p; fi; done; echo PROBE_DONE"
+    if ($LASTEXITCODE -ne 0) { throw "Could not check the server (ssh exit $LASTEXITCODE); refusing a full push." }
+    if (-not ($probe -contains "PROBE_DONE")) { throw "Server check gave no result; refusing a full push." }
+    if ($probe -match "^EXISTS:") {
+        throw "The server already has data ($(($probe | Where-Object { $_ -like 'EXISTS:*' }) -join ', ')). Use -CodeOnly so its live data is not overwritten."
     }
 }
 
@@ -106,6 +109,8 @@ try {
         " && if [ -f ~/trader/.env ]; then sed -i 's/\r$//' ~/trader/.env && chmod 600 ~/trader/.env; fi")
 
     if ($CodeOnly) {
+        # Back up the live DB first; abort (no restart) if the backup fails.
+        Invoke-Remote ("cd ~/trader && if [ -f data/trader.db ] && [ -x .venv/bin/python ]; then .venv/bin/python scripts/backup_db.py data/trader.db --keep 10 || exit 1; fi")
         Invoke-Remote ("cd ~/trader && if [ ! -x .venv/bin/python ]; then echo 'Not set up yet: run  bash deploy/oracle/server_setup.sh  on the server.'; exit 0; fi" +
             " && .venv/bin/python -m pip install -q -r requirements.txt" +
             " && if systemctl --user is-active --quiet ai-trader; then systemctl --user restart ai-trader && echo 'Bot restarted with the new code.';" +

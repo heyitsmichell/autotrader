@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .options import option_price
 from .quotes import price_of
+
+log = logging.getLogger(__name__)
 
 
 def _state_file() -> Path:
@@ -49,9 +53,18 @@ def _iso(ts: float) -> str:
 # -- state ---------------------------------------------------------------------
 def load() -> dict:
     sf = _state_file()
+    state = None
     if sf.exists():
-        state = json.loads(sf.read_text(encoding="utf-8"))
-    else:
+        try:
+            state = json.loads(sf.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            bak = sf.with_name(sf.name + ".bak")
+            try:
+                state = json.loads(bak.read_text(encoding="utf-8"))
+                log.warning("mock state %s corrupt; restored from %s", sf, bak)
+            except (OSError, json.JSONDecodeError):
+                log.warning("mock state %s corrupt and no usable .bak; starting fresh", sf)
+    if state is None:
         state = {"cash": START_CASH, "positions": {}, "orders": [], "day": "",
                  "day_start_equity": START_CASH, "option_positions": {}}
     today = datetime.now(timezone.utc).date().isoformat()
@@ -67,7 +80,15 @@ def load() -> dict:
 def save(state: dict) -> None:
     sf = _state_file()
     sf.parent.mkdir(parents=True, exist_ok=True)
-    sf.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    tmp = sf.with_name(sf.name + ".tmp")
+    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    if sf.exists():
+        try:
+            json.loads(sf.read_text(encoding="utf-8"))      # never overwrite .bak with a corrupt file
+            shutil.copyfile(sf, sf.with_name(sf.name + ".bak"))
+        except (OSError, ValueError):
+            pass
+    os.replace(tmp, sf)
 
 
 def equity(state: dict) -> float:

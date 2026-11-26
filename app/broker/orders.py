@@ -48,19 +48,6 @@ def resolve_session(requested: str, *, entrust_type: str = "QTY", at=None,
     return req
 
 
-def entry_all_day(settings, symbol: str, side: str, order_type: str, entrust_type: str,
-                  session: str) -> bool:
-    """True when a BUY limit entry resolved to ALL/NIGHT should be sent as ALL_DAY (Webull's
-    8pm-8pm ET session) so it does not expire at each session boundary. Never for MARKET orders,
-    fractional/AMOUNT orders, SELLs or stops, CORE, or symbols outside OVERNIGHT_SYMBOLS."""
-    return bool(settings is not None
-                and getattr(settings, "entry_session_all_day", False)
-                and getattr(settings, "overnight_trading", False)
-                and str(side).upper() == "BUY" and str(order_type).upper() == "LIMIT"
-                and entrust_type == "QTY" and session in ("ALL", "NIGHT")
-                and str(symbol).upper() in {x.upper() for x in settings.overnight_symbols})
-
-
 def _check_order_type(order_type: str, session: str) -> str:
     """LIMIT or MARKET. MARKET only in the CORE session (never sent otherwise)."""
     ot = str(order_type).upper()
@@ -72,15 +59,19 @@ def _check_order_type(order_type: str, session: str) -> str:
     return ot
 
 
-class OrdersMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import OrdersHost as _Host
+else:
+    _Host = object
+
+class OrdersMixin(_Host):
     async def preview_order(self, symbol: str, side: str, quantity: int, limit_price: float,
                             entrust_type: str = "QTY", total_cash_amount: float | None = None,
                             trading_session: str = "AUTO", order_type: str = "LIMIT") -> str:
         mapped_session = resolve_session(trading_session, entrust_type=entrust_type)
         order_type = _check_order_type(order_type, mapped_session)
-        if entry_all_day(getattr(self, "settings", None), symbol, side, order_type, entrust_type,
-                         mapped_session):
-            mapped_session = "ALL_DAY"
         args = {
             "account_id": await self.account_id(), "symbol": symbol,
             "side": side, "order_type": order_type, "time_in_force": "DAY",
@@ -133,9 +124,6 @@ class OrdersMixin:
                     allow_when_killed=allow_when_killed)
         mapped_session = resolve_session(trading_session, entrust_type=entrust_type)
         order_type = _check_order_type(order_type, mapped_session)
-        if entry_all_day(getattr(self, "settings", None), symbol, side, order_type, entrust_type,
-                         mapped_session):
-            mapped_session = "ALL_DAY"      # entry limit rests across ALL/NIGHT boundaries
 
         args = {
             "account_id": await self.account_id(), "symbol": symbol,
@@ -162,6 +150,14 @@ class OrdersMixin:
         The session is validated against the clock. Webull accepts the same session on
         each combo leg, so extended-hours and overnight entries can keep their exits.
         """
+        prices_ok = all(isinstance(p, (int, float)) and p > 0
+                        for p in (limit_price, stop_loss) + ((take_profit,) if take_profit is not None else ()))
+        if not prices_ok:
+            raise BrokerError(f"bracket for {symbol}: all prices must be > 0 "
+                              f"(entry={limit_price}, tp={take_profit}, sl={stop_loss}); nothing sent")
+        if not (stop_loss < limit_price and (take_profit is None or limit_price < take_profit)):
+            raise BrokerError(f"bracket for {symbol}: BUY needs stop_loss < entry < take_profit "
+                              f"(entry={limit_price}, tp={take_profit}, sl={stop_loss}); nothing sent")
         self._guard({"kind": "stock", "symbol": symbol, "side": "BUY", "quantity": quantity,
                      "price": limit_price, "opening": True}, allow_when_killed=allow_when_killed)
         session = resolve_session(trading_session)

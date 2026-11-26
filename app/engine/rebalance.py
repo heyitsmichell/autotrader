@@ -28,7 +28,14 @@ from .util import (MAX_PROPOSALS_PER_RUN, _coid, _is_option_symbol, _session_rej
 log = logging.getLogger("app.engine")
 
 
-class RebalanceMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import RebalanceHost as _Host
+else:
+    _Host = object
+
+class RebalanceMixin(_Host):
     async def check_core_rebalance(self) -> dict | None:
         """Check if core rebalancing is needed and execute if so.
 

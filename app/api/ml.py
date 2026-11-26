@@ -27,13 +27,26 @@ async def ml_scorecard(request: Request, model_id: int):
     if not isinstance(metrics, dict):
         metrics = {}
     return {
-        "precision": metrics.get("precision"),
+        # Walk-forward training stores mean_hit_rate / mean_auc; fall back to them so a trained
+        # model never shows a blank scorecard.
+        "precision": metrics.get("precision", metrics.get("mean_hit_rate")),
         "recall": metrics.get("recall"),
         "f1": metrics.get("f1"),
         "calibration_error": metrics.get("calibration_error"),
-        "auc": metrics.get("auc"),
+        "auc": metrics.get("auc", metrics.get("mean_auc")),
+        "test_trades": metrics.get("total_test_trades"),
         "saturation_pct": metrics.get("saturation_pct"),
         "feature_importance": metrics.get("feature_importance", []),
+        # Walk-forward results, passed through as stored (None when the model has none).
+        "hit_rate": metrics.get("mean_hit_rate"),
+        "auc_mean_folds": metrics.get("mean_auc"),
+        "mean_avg_return": metrics.get("mean_avg_return"),
+        "total_test_trades": metrics.get("total_test_trades"),
+        "total_independent_test_trades": metrics.get("total_independent_test_trades"),
+        "passed": metrics.get("passed"),
+        "rejection_reason": metrics.get("rejection_reason"),
+        "checks": metrics.get("checks") or {},
+        "thresholds": metrics.get("thresholds") or {},
     }
 
 

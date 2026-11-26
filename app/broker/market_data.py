@@ -34,7 +34,14 @@ async def fetch_bars_many(broker, symbols, count: int, *, errors: dict | None = 
     return out
 
 
-class MarketDataMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import MarketDataHost as _Host
+else:
+    _Host = object
+
+class MarketDataMixin(_Host):
     def _init_market_data(self) -> None:
         # Snapshot cache: symbol -> (timestamp, snapshot_data)
         self._snapshot_cache: dict[str, tuple[float, dict]] = {}

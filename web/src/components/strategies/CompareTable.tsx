@@ -47,7 +47,9 @@ const ROWS: Row[] = [
   { label: "Return since start", cell: s => signedCell(pct(s.total_return_pct), s.total_return_pct) },
   { label: "Day P&L", cell: s => signedCell(`${money(s.day_pnl, { sign: true })} (${pct(s.day_pnl_pct)})`, s.day_pnl) },
   { label: "Drawdown from peak", cell: s => <>{pct(s.drawdown_pct)}<Meter s={s}/></> },
-  { label: "Invested", cell: s => `${money(s.invested)} (${pct(s.invested_pct, { sign: false, digits: 0 })})` },
+  { label: "Invested / collateral", cell: s => `${money(s.invested)} (${pct(s.invested_pct, { sign: false, digits: 0 })})${s.id === "putwrite" ? " collateral" : ""}` },
+  { label: "Cash", cell: s => s.cash == null
+    ? <span title="swing is the account remainder">n/a</span> : money(s.cash) },
   { label: "Positions", cell: s => String(s.positions_n ?? "—") },
   { label: "Live Sharpe", cell: liveSharpe },
   { label: "Backtest (expected)", group: true },

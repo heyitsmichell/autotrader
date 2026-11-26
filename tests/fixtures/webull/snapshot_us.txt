@@ -1,0 +1,4 @@
+=== Stock Snapshot ===
+      AAPL  Price:     172.40  PreClose:     171.00  Change:     1.40  Change%:    0.82%
+            Open:      171.5  High:      173.2  Low:      170.9  Close:      172.4  Vol:     51234567
+            Bid:     172.39 x    300  Ask:     172.41 x    200

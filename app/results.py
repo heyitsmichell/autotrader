@@ -1,16 +1,11 @@
 """Read-only query/aggregation helpers for the Results tab (docs/RESULTS.md)."""
 from __future__ import annotations
 
-<<<<<<< HEAD
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from statistics import median
 
 from .engine.util import parse_occ
-=======
-from datetime import datetime, timedelta, timezone
-
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
 from .shadows import registry as shadow_registry
 
 SLEEVES = ("swing", "momentum", "putwrite", "vaa")
@@ -64,7 +59,6 @@ def swing_rows(db, days: int) -> list[dict]:
     return out
 
 
-<<<<<<< HEAD
 def _sleeve_fills(db) -> list[dict]:
     """Every sleeve order with a fill, full history, oldest first (FIFO needs all of it)."""
     return [r for r in db._rows("SELECT * FROM sleeve_orders WHERE ns=? ORDER BY id", db._sleeve_ns)
@@ -77,18 +71,12 @@ def _shadow_fills(db) -> list[dict]:
 
 def sleeve_rows(db, sleeve: str | None, days: int, include_failed: bool, sell_pnl: dict | None = None) -> list[dict]:
     """Sleeve fills; a closing fill carries its FIFO-realized P&L (see sleeve_trips)."""
-=======
-def sleeve_rows(db, sleeve: str | None, days: int, include_failed: bool) -> list[dict]:
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
     where, args = ["ns=?", "ts>=?"], [db._sleeve_ns, _since(days)]
     if sleeve:
         where.append("sleeve=?")
         args.append(sleeve)
-<<<<<<< HEAD
     if sell_pnl is None:
         sell_pnl = sleeve_trips(db)[1]
-=======
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
     out = []
     for r in db._rows(f"SELECT * FROM sleeve_orders WHERE {' AND '.join(where)} ORDER BY id", *args):
         filled = float(r.get("filled_qty") or 0)
@@ -98,44 +86,27 @@ def sleeve_rows(db, sleeve: str | None, days: int, include_failed: bool) -> list
         qty = filled if ok else r["qty"]
         price = r.get("avg_fill_price") if ok else r.get("limit_price")
         out.append(_row(r["ts"], r["sleeve"], True, r["symbol"], r["kind"], r["side"], qty, price,
-<<<<<<< HEAD
                         r["status"], sell_pnl.get(r["id"]) if ok else None, r.get("reason"), "sleeve"))
     return out
 
 
 def shadow_rows(db, shadow: str | None, days: int, sell_pnl: dict | None = None) -> list[dict]:
-=======
-                        r["status"], None, r.get("reason"), "sleeve"))
-    return out
-
-
-def shadow_rows(db, shadow: str | None, days: int) -> list[dict]:
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
     where, args = ["ns=?", "ts>=?"], [db._shadow_ns, _since(days)]
     if shadow:
         where.append("shadow=?")
         args.append(shadow)
-<<<<<<< HEAD
     if sell_pnl is None:
         sell_pnl = shadow_trips(db)[1]
     return [_row(r["ts"], r["shadow"], False, r["symbol"], "stock", r["side"], r["qty"], r["price"],
                  "filled", sell_pnl.get(r["id"]), r.get("reason"), "shadow")
-=======
-    return [_row(r["ts"], r["shadow"], False, r["symbol"], "stock", r["side"], r["qty"], r["price"],
-                 "filled", None, r.get("reason"), "shadow")
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
             for r in db._rows(f"SELECT * FROM shadow_trades WHERE {' AND '.join(where)} ORDER BY id", *args)]
 
 
 def trades(db, strategy: str, days: int, include_failed: bool, limit: int) -> dict:
     # every row once, then filter: the counts always cover ALL strategies, so the filter
     # buttons keep their numbers whichever one is selected
-<<<<<<< HEAD
     every = (swing_rows(db, days) + sleeve_rows(db, None, days, include_failed, sleeve_trips(db)[1])
              + shadow_rows(db, None, days, shadow_trips(db)[1]))
-=======
-    every = swing_rows(db, days) + sleeve_rows(db, None, days, include_failed) + shadow_rows(db, None, days)
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
     shadow_ids = set(shadow_registry.IDS)
     counts: dict[str, int] = {"all": len(every), "shadows": 0}
     for r in every:
@@ -152,9 +123,12 @@ def trades(db, strategy: str, days: int, include_failed: bool, limit: int) -> di
     return {"trades": rows[:limit], "counts": counts}
 
 
-def daily_pnl(series: list[dict], keys) -> list[dict]:
-    """series: [{"day", key: equity}] ascending. Diff vs the previous recorded day of that key (first = 0)."""
-    out, prev = [], {}
+def daily_pnl(series: list[dict], keys, starts: dict | None = None) -> list[dict]:
+    """series: [{"day", key: equity}] ascending. Diff vs the previous recorded day of that key.
+
+    The first recorded day diffs against ``starts[key]`` (start capital) when known, else 0.
+    """
+    out, prev = [], dict(starts or {})
     for row in series:
         d = {"day": row["day"]}
         for k in keys:
@@ -193,17 +167,67 @@ def periods(days_rows: list[dict], keys) -> dict:
     return res
 
 
-def _block(series, keys) -> dict:
-    d = daily_pnl(series, keys)
+def _block(series, keys, starts: dict | None = None) -> dict:
+    d = daily_pnl(series, keys, starts)
     return {"days": d, "cumulative": cumulative(d, keys), "periods": periods(d, keys)}
 
 
+def _starts(series: list[dict], states: dict, keys) -> dict:
+    """Start capital per key, only where the series really begins at the key's start date
+    (a window that cuts off earlier history must not be diffed against the start capital)."""
+    first = series[0]["day"] if series else None
+    out = {}
+    for k in keys:
+        st = states.get(k) or {}
+        cap, sd = st.get("start_capital"), (st.get("start_date") or "")[:10]
+        if cap and sd and first and sd >= first:
+            out[k] = float(cap)
+    return out
+
+
+def account_start(db) -> float | None:
+    """Account starting net liq: the same first benchmark_daily net_liq performance.py reports
+    as first_net_liq."""
+    for r in db.benchmark_daily():
+        if r.get("net_liq") is not None:
+            return float(r["net_liq"])
+    return None
+
+
+def swing_start(db, states: dict | None = None) -> float | None:
+    """Swing has no start capital of its own: account start net liq minus the other sleeves' start."""
+    states = states if states is not None else db.sleeve_states()
+    acct = account_start(db)
+    if acct is None:
+        return None
+    others = [float((states.get(k) or {}).get("start_capital") or 0) for k in SLEEVES if k != "swing"]
+    return acct - sum(others)
+
+
+def _with_account_starts(series: list[dict], states: dict, starts: dict, db) -> dict:
+    """Add swing and total starts, only when the series begins at the sleeves' start date."""
+    others = [k for k in SLEEVES if k != "swing"]
+    if not series or not all(k in starts for k in others):
+        return starts
+    acct = account_start(db)
+    if acct is None:
+        return starts
+    out = dict(starts)
+    out.setdefault("swing", acct - sum(starts[k] for k in others))
+    out["total"] = acct
+    return out
+
+
 def pnl(db, days: int) -> dict:
-    main = _block(db.sleeve_equity_series(days), SERIES)
-    sh = _block(db.shadow_equity_series(days), list(shadow_registry.IDS))
+    ms, ss = db.sleeve_equity_series(days), db.shadow_equity_series(days)
+    states = db.sleeve_states()
+    mstarts = _with_account_starts(ms, states, _starts(ms, states, SLEEVES), db)
+    shadow_ids = list(shadow_registry.IDS)
+    shstates = {i: db.shadow_state(i) for i in shadow_ids}
+    main = _block(ms, SERIES, mstarts)
+    sh = _block(ss, shadow_ids, _starts(ss, shstates, shadow_ids))
     sh["names"] = {d.id: d.name for d in shadow_registry.SHADOWS} if hasattr(shadow_registry, "SHADOWS") else {}
     return {**main, "shadows": sh}
-<<<<<<< HEAD
 
 
 # ---------------------------------------------------------------- closed round trips + stats
@@ -391,5 +415,3 @@ def round_trips(db, days: int) -> dict:
         groups.setdefault(t["strategy"], []).append(t)
         groups["live" if t["live"] else "shadows"].append(t)
     return {"trips": trips, "stats": {k: trip_stats(v) for k, v in groups.items()}}
-=======
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5

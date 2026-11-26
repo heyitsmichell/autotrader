@@ -12,6 +12,23 @@ import css from "./results.module.css";
 export default function OptionsModel() {
   const [d, setD] = useState<OptionsModelResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [training, setTraining] = useState(false);
+  const [trainMsg, setTrainMsg] = useState<string | null>(null);
+
+  async function trainNow() {
+    if (!window.confirm("Retrain the options model now? It takes a few seconds and does not place any orders.")) return;
+    setTraining(true); setTrainMsg(null);
+    try {
+      const r = await api<OptionsModelResponse>("/api/options/train", "POST");
+      setD(r); setTrainMsg("Retrained.");
+    } catch (e: unknown) {
+      setTrainMsg(e instanceof Error ? e.message : "Training failed");
+    } finally { setTraining(false); }
+  }
+  const trainBtn = <span>
+    <button className="button" disabled={training} onClick={trainNow}>{training ? "Training…" : "Train now"}</button>
+    {trainMsg && <span className={css["muted"]}> {trainMsg}</span>}
+  </span>;
 
   useEffect(() => {
     let active = true;
@@ -24,13 +41,13 @@ export default function OptionsModel() {
   if (error) return <p className="error">{error}</p>;
   if (!d) return <p className="loading">Loading options model…</p>;
   if (!d.available) {
-    return <Section title="Options model" meta="Learning mode">
-      <Empty>No options model yet. Run scripts/train_options_model.py or turn on OPTIONS_ML_ENABLED and it trains itself.</Empty>
+    return <Section title="Options model" meta="Learning mode" right={trainBtn}>
+      <Empty>No options model yet. Press Train now, or it trains itself when OPTIONS_ML_ENABLED is on.</Empty>
     </Section>;
   }
   const rows = (d.n_backtest ?? 0) + (d.n_live ?? 0);
   const auc = d.val_auc;
-  return <Section title="Options model" meta={d.version ?? undefined}>
+  return <Section title="Options model" meta={d.version ?? undefined} right={trainBtn}>
     <FigureRow>
       <Figure label="Trained" value={dateTime(d.trained_at)} />
       <Figure label="Rows" value={rows.toLocaleString("en-US")} title={`${d.n_backtest ?? 0} modelled + ${d.n_live ?? 0} live`} />

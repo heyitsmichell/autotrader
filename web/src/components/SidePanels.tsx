@@ -73,7 +73,9 @@ export function HealthPanel({ status, pendingCount }: {
     { label: "Broker", value: status?.connected ? "Connected" : "Disconnected", state: st(status?.connected) },
     { label: "Price feed", value: `${status?.realtime?.mode || "—"}${status?.realtime?.mode === "poll" ? ` · ${status?.realtime?.poll_seconds}s` : ""}`, state: st(status?.connected) },
     { label: "Signal data", value: signalAge == null ? "Waiting" : `${signalAge}m old`, state: st(signalAge != null && signalAge < 30, "warn") },
-    { label: "Risk engine", value: "Active · hard limits", state: "ok" },
+    { label: "Risk engine",
+      value: status?.kill_switch ? "Paused (kill switch)" : status && status.scheduler_on === false ? "Paused (scheduler off)" : status ? "Active · hard limits" : "—",
+      state: !status ? undefined : status.kill_switch || status.scheduler_on === false ? "warn" : "ok" },
     { label: "Trading mode", value: status?.trading_mode === "auto" ? "Auto-trade" : "Approval required", state: undefined },
     { label: "Supervisor", value: supAge == null ? "Starting" : `Checked ${supAge}s ago${sup?.auto_start ? " · auto-start" : ""}`, state: st(supAge != null && supAge < 180 && !sup?.error, "warn") },
     { label: "Alerts", value: channels.length ? channels.join(", ") : "None configured", state: st(channels.length > 0 && !status?.alerts?.last_error, "warn") },
@@ -85,7 +87,7 @@ export function HealthPanel({ status, pendingCount }: {
         ? "No login token needed"
         : token.status !== "NORMAL"
           ? `${token.status}. Run ./auth.sh (or auth.ps1 on Windows) and approve in the Webull app`
-          : `${Number(token.days_left).toFixed(1)} days left${token.estimated ? " (est.)" : ""}`,
+          : `${token.days_left == null ? "—" : Number(token.days_left).toFixed(1)} days left${token.estimated ? " (est.)" : ""}`,
       state: st(!!token && (token.status === "not_required" || (token.status === "NORMAL" && Number(token.days_left) > 3))),
     });
   }
@@ -178,11 +180,12 @@ function SpyBenchmarkDisplay({ benchmark }: { benchmark: SpyBenchmarkStatus }) {
   if (trades < minTrades) {
     return <HealthRow label="SPY benchmark" value={`${trades}/${minTrades} trades · need more data`} state="warn"/>;
   }
-  const outperformance = benchmark.outperformance_pct ?? 0;
+  const outperformance = benchmark.avg_alpha_pct ?? null;
   const target = benchmark.min_outperformance_pct || 0.5;
+  const hit = benchmark.alpha_hit_rate;
   return <HealthRow
     label="SPY benchmark"
-    value={`${outperformance >= 0 ? "+" : ""}${outperformance.toFixed(2)}% vs SPY over ${benchmark.window_days || 5}d (need +${target}%) · ${trades} trades · action: ${benchmark.action || "warn"}`}
+    value={`${outperformance == null ? "—" : `${outperformance >= 0 ? "+" : ""}${outperformance.toFixed(2)}%`} avg alpha vs SPY${hit != null ? ` · hit rate ${(hit * 100).toFixed(0)}%` : ""} over ${benchmark.window_days || 5}d (need +${target}%) · ${trades} trades · action: ${benchmark.action || "warn"}`}
     state={benchmark.passing ? "ok" : "fail"}
   />;
 }

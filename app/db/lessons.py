@@ -69,7 +69,7 @@ class LessonsRepo(BaseRepo):
         if not old:
             raise ValueError(f"Lesson {old_lesson_id} not found")
         # Retire the old version
-        self.set_lesson_status(old_lesson_id, "retired", retired_by=created_by, retired_reason=f"Superseded by new version")
+        self.set_lesson_status(old_lesson_id, "retired", approved_by=created_by, retired_reason="Superseded by new version")
         # Create new version
         fields = {
             "version": old["version"] + 1,
@@ -94,18 +94,26 @@ class LessonsRepo(BaseRepo):
         return self.add_lesson(**fields)
 
     def rollback_lesson(self, lesson_id: int, rolled_back_by: str) -> int | None:
-        """Rollback to previous version."""
-        lesson = self.get_lesson(lesson_id)
-        if not lesson or not lesson.get("previous_version_id"):
-            return None
-        # Retire current
-        self.set_lesson_status(lesson_id, "retired", retired_by=rolled_back_by, retired_reason="Rolled back")
-        # Reactivate previous
-        prev = self.get_lesson(lesson["previous_version_id"])
-        if prev:
+        """Rollback to previous version, atomically. Returns the reactivated lesson id, or None
+        if the lesson does not exist / has no previous version. Raises ValueError if the lesson
+        is not active or the previous version was never approved/active."""
+        with self.transaction():
+            lesson = self.get_lesson(lesson_id)
+            if not lesson or not lesson.get("previous_version_id"):
+                return None
+            if lesson["status"] != "active":
+                raise ValueError(f"Lesson {lesson_id} is {lesson['status']}, not active")
+            prev = self.get_lesson(lesson["previous_version_id"])
+            if not prev:
+                return None
+            # A superseded version is 'retired'; it must have gone through approval/activation.
+            if not (prev.get("activated_at") or prev.get("approved_at")
+                    or prev["status"] in ("active", "approved")):
+                raise ValueError(f"Previous version {prev['id']} was never approved or active")
+            self.set_lesson_status(lesson_id, "retired", approved_by=rolled_back_by,
+                                   retired_reason="Rolled back")
             self.set_lesson_status(prev["id"], "active")
             return prev["id"]
-        return None
 
     # -- apply tracking (M9): every lesson ends up applied or skipped, with the reason ------
     def record_lesson_skip(self, lesson_id: int, reason: str) -> None:

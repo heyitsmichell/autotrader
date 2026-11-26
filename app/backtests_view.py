@@ -49,15 +49,35 @@ def _csv(path: Path) -> list[dict]:
         return []
 
 
+_GENERIC_TITLES = {"full", "results", "result", "summary", "report", "readme", "overview", "leaderboard"}
+
+
 def _title(path: Path) -> str:
     try:
         with path.open(encoding="utf-8", errors="replace") as f:
             for line in f:
                 if line.startswith("#"):
-                    return line.lstrip("#").strip()
+                    t = line.lstrip("#").strip()
+                    if len(t) >= 6 and t.lower() not in _GENERIC_TITLES:
+                        return t
+                    break
     except OSError:
         pass
-    return path.stem
+    parent = path.parent.name
+    return f"{parent} / {path.stem}" if parent else path.stem
+
+
+def _row_window(row: dict, n) -> str | None:
+    """Window text from what the CSV row actually holds (start / end / n_days)."""
+    start, end = row.get("start"), row.get("end")
+    days = f" ({int(n)} days)" if n else ""
+    if start and end:
+        return f"{start}..{end}{days}"
+    if start:
+        return f"from {start}{days}"
+    if end:
+        return f"..{end}{days}"
+    return f"{int(n)} days (dates not recorded)" if n else None
 
 
 def _evidence(paths: list[str]) -> list[dict]:
@@ -117,7 +137,7 @@ def _backtest(pid: str) -> tuple[dict | None, str | None]:
         n = _f(row.get("n_days"))
         return {"cagr": _f(row.get("cagr")), "vol": _f(row.get("vol")), "sharpe": _f(row.get("sharpe")),
                 "max_dd": _f(row.get("maxdd")),
-                "window": f"{row.get('start') or 'full history'}..2025-11 ({int(n)} days)" if n else row.get("start"),
+                "window": _row_window(row, n),
                 "source": f"{rel}:{name}", "biased": pid in _BIASED}, None
     if pid == "swing_dynamic":
         try:
@@ -294,6 +314,10 @@ def ml_view(db=None) -> dict:
     champ = next((m for m in models if m["status"] == "champion"), None)
     if champ:
         summary = f"{len(models)} entry models on record; the champion is model {champ['id']}."
+        a = champ.get("auc")
+        if a is not None:
+            summary += (f" Mean AUC ~{a:.2f}: no better than chance." if a < 0.55
+                        else f" Mean AUC {a:.2f}.")
     elif models:
         summary = f"{len(models)} entry models on record, none is champion."
     else:

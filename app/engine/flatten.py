@@ -29,7 +29,14 @@ from .util import (MAX_PROPOSALS_PER_RUN, _coid, _is_option_symbol, _session_rej
 log = logging.getLogger("app.engine")
 
 
-class FlattenMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import FlattenHost as _Host
+else:
+    _Host = object
+
+class FlattenMixin(_Host):
     async def cancel_open_orders(self, include_protective: bool, why: str) -> int:
         """Cancel working orders at the broker. With include_protective=False only
         entries (BUYs) are cancelled, and every stop and target stays in place.
@@ -73,6 +80,15 @@ class FlattenMixin:
         between the cancels and the sells."""
         if self.flattening:
             raise ValueError("A flatten is already running")
+        self.flattening = True      # set before any await so a concurrent call is refused
+        try:
+            return await self._flatten_locked(actor, reason)
+        finally:
+            self.flattening = False
+            if self.on_order:
+                self.on_order()
+
+    async def _flatten_locked(self, actor: str, reason: str) -> dict:
         await self.set_kill_switch(True, f"flatten: {reason}")
         if order_session() is None:
             self.db.log("error", "Flatten requested while every trading session is closed: the "
@@ -81,7 +97,6 @@ class FlattenMixin:
             raise ValueError("No trading session is open. The kill switch is on, but positions "
                              "can only be sold during a trading session; stops at Webull stay "
                              "in place.")
-        self.flattening = True
         result: dict = {"cancelled": 0, "orders": [], "errors": []}
         try:
             # flatten_mode exempts these orders from the broker guard's kill-switch check (the
@@ -91,12 +106,32 @@ class FlattenMixin:
                     result["cancelled"] = await self.cancel_open_orders(True, f"flatten: {reason}")
                     await asyncio.sleep(1)          # let the cancels settle at the broker
                     held = await fresh_positions(self.broker)
+                    # a cancel that did not take leaves a live SELL: don't sell those shares twice
+                    working: dict[str, float] = {}
+                    for o in parse_orders(await self.broker.open_orders_text()):
+                        st = (o.get("status") or "").upper()
+                        if (o.get("side") or "").upper() == "SELL" and (
+                                st in ACTIVE or st.startswith(("PENDING", "PARTIAL"))):
+                            q = o.get("quantity") or o.get("qty") or 0
+                            try:
+                                working[o.get("symbol")] = working.get(o.get("symbol"), 0) + float(q)
+                            except (TypeError, ValueError):
+                                pass
                 except BrokerError as e:
                     msg = f"Flatten stopped: could not read orders or positions: {e}"
                     self.db.log("error", msg)
                     result["errors"].append(msg)
                     return result
                 for sym, qty in sorted(held.items()):
+                    w = working.get(sym, 0)
+                    if w > 0:
+                        msg = (f"{sym}: {w:g} share(s) still in working SELL order(s) after "
+                               "cancel; not selling those again")
+                        self.db.log("warn", msg, alert=True)
+                        result["errors"].append(msg)
+                        qty = qty - w
+                        if qty <= 1e-9:
+                            continue
                     await self._flatten_symbol(sym, qty, actor, reason, result)
                 await self._flatten_options(actor, reason, result)
             placed = sum(1 for o in result["orders"] if o["status"] == "placed")
@@ -106,9 +141,7 @@ class FlattenMixin:
                            if result["errors"] else ""), alert=True)
             return result
         finally:
-            self.flattening = False
-            if self.on_order:
-                self.on_order()
+            pass
 
     async def _flatten_symbol(self, sym: str, qty: float, actor: str, reason: str,
                               result: dict) -> None:

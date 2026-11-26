@@ -10,6 +10,9 @@ from __future__ import annotations
 from ..schema import (ADDED_COLUMNS, SCHEMA, add_column, ensure_namespace_columns,
                       sync_schema_columns, table_columns)
 
+# executescript() issues its own COMMIT, so this one cannot run inside a transaction.
+NO_TRANSACTION = True
+
 
 def upgrade(conn) -> None:
     conn.executescript(SCHEMA)

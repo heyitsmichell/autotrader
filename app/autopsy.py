@@ -219,6 +219,10 @@ def analyze_regime_mismatch(trade: dict) -> list[Cause]:
     return []
 
 
+def _pct(v) -> str:
+    return "n/a" if v is None else f"{v:.2f}%"
+
+
 def analyze_mae_mfe(trade: dict) -> list[Cause]:
     """Analyze MAE/MFE for trade management quality."""
     causes = []
@@ -268,8 +272,8 @@ def analyze_counterfactuals(trade: dict, broker, entry_time: datetime, exit_time
         # Get intraday bars for the trade period
         # This is a placeholder - would need async call to broker
         # For now, use the MAE/MFE data already computed
-        mae = trade.get("mae") or 0
-        mfe = trade.get("mfe") or 0
+        mae = trade.get("mae")
+        mfe = trade.get("mfe")
         pnl_pct = trade.get("realized_pnl_pct") or 0
         stop_price = trade.get("stop_price")
         target_price = trade.get("target_price")
@@ -381,7 +385,7 @@ Trade Autopsy: {trade.get('symbol')} {trade.get('side')} ({outcome}, {pnl:+.2f}%
 Entry: {trade.get('entry_fill_price', 'N/A')} at {trade.get('entry_fill_time', 'N/A')}
 Exit:  {trade.get('exit_fill_price', 'N/A')} at {trade.get('exit_fill_time', 'N/A')} ({trade.get('exit_reason', 'N/A')})
 Hold:  {trade.get('hold_seconds', 0)/3600:.1f} hours
-MAE:   {trade.get('mae', 0):.2f}%  MFE: {trade.get('mfe', 0):.2f}%
+MAE:   {_pct(trade.get('mae'))}  MFE: {_pct(trade.get('mfe'))}
 
 Evidence-Based Causes (ranked by strength):
 {chr(10).join(cause_summaries)}

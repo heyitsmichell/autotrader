@@ -1,17 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ApproveDrawer from "./ApproveDrawer";
 import AutopsyView from "./AutopsyView";
 import BannerRail from "./BannerRail";
 import CommandBar from "./CommandBar";
 import Today from "./Today";
 import Strategies from "./strategies/Strategies";
-<<<<<<< HEAD
 import BacktestsHub from "./backtests/BacktestsHub";
-=======
-import Backtests from "./backtests/Backtests";
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
 import ConfirmModal, { ConfirmProvider, type ConfirmRequest } from "./ConfirmModal";
 import DecisionModal from "./DecisionModal";
 import ErrorBoundary from "./ErrorBoundary";
@@ -30,11 +26,8 @@ import ResearchPicker from "./research/ResearchPicker";
 import TopBar, { type Tab } from "./TopBar";
 import StrategyPnl from "./results/StrategyPnl";
 import AllTrades from "./results/AllTrades";
-<<<<<<< HEAD
 import TradeStats from "./results/TradeStats";
 import OptionsModel from "./results/OptionsModel";
-=======
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
 import TradeLedgerView from "./TradeLedgerView";
 import { useDashboardData } from "@/lib/useDashboardData";
 import type { Proposal, ProposalDetail } from "@/lib/types";
@@ -74,8 +67,12 @@ export default function Dashboard() {
   const openOrders = portfolio?.open_orders || [];
   const live = !!status?.is_live;
 
+  const noticeTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (noticeTimer.current) window.clearTimeout(noticeTimer.current); }, []);
+
   const perform = useCallback(async (label: string, fn: () => Promise<unknown>) => {
     setBusy(label);
+    if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
     setNotice("");
     try {
       await fn();
@@ -85,7 +82,8 @@ export default function Dashboard() {
       setNotice(e instanceof Error ? e.message : "Action failed");
     } finally {
       setBusy("");
-      window.setTimeout(() => setNotice(""), 6000);
+      if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+      noticeTimer.current = window.setTimeout(() => setNotice(""), 6000);
     }
   }, [refresh]);
 
@@ -261,15 +259,10 @@ export default function Dashboard() {
 
           {activeTab === "learning" && <>
             <Panel name="P&L by strategy"><section className={`panel ${css["learning-panel"]}`}><StrategyPnl api={api}/></section></Panel>
-<<<<<<< HEAD
             <Panel name="Trade stats"><section className={`panel ${css["learning-panel"]}`}><TradeStats api={api}/></section></Panel>
             <Panel name="All trades"><section className={`panel ${css["learning-panel"]}`}><AllTrades api={api}/></section></Panel>
             <Panel name="Swing round trips"><section className={`panel ${css["learning-panel"]}`}><TradeLedgerView/></section></Panel>
             <Panel name="Options model"><section className={`panel ${css["learning-panel"]}`}><OptionsModel/></section></Panel>
-=======
-            <Panel name="All trades"><section className={`panel ${css["learning-panel"]}`}><AllTrades api={api}/></section></Panel>
-            <Panel name="Swing trade ledger (detail)"><section className={`panel ${css["learning-panel"]}`}><TradeLedgerView/></section></Panel>
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
             <Panel name="Autopsies"><section className={`panel ${css["learning-panel"]}`}><AutopsyView/></section></Panel>
             <Panel name="ML scorecard">
               <section className={`panel ${css["learning-panel"]}`}>
@@ -279,11 +272,7 @@ export default function Dashboard() {
             <Panel name="Lessons"><section className={`panel ${css["learning-panel"]}`}><LearningView onAction={perform}/></section></Panel>
           </>}
 
-<<<<<<< HEAD
           {activeTab === "backtests" && <Panel name="Backtests"><BacktestsHub api={api}/></Panel>}
-=======
-          {activeTab === "backtests" && <Panel name="Backtests"><Backtests api={api}/></Panel>}
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
 
           {activeTab === "settings" && <>
             <div className={css["settings-grid"]}>

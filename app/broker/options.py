@@ -22,7 +22,14 @@ def order_symbol(symbol: str) -> str:
     return m.group(1) if m else symbol
 
 
-class OptionsMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import OptionsHost as _Host
+else:
+    _Host = object
+
+class OptionsMixin(_Host):
     async def option_contracts(self, underlying_symbols: list[str], *,
                                status: str = "LISTING") -> str:
         """Option chain metadata. This is not a quote or collateral preview."""

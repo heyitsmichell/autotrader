@@ -311,7 +311,34 @@ def _json(v):
     return v or {}
 
 
-def record_closed_outcomes(db, held_symbols: set[str], today: date) -> int:
+def expiry_intrinsic(symbol: str, exp: str, close_lookup=None) -> float | None:
+    """Intrinsic value per share at expiry from the underlying's close on the expiry date.
+    None when the close is unavailable (caller skips and retries later)."""
+    from .engine.util import parse_occ
+    occ = parse_occ(symbol)
+    if not occ:
+        return None
+    try:
+        if close_lookup is None:
+            def close_lookup(u, d):
+                from .sleeves import data
+                df = data.daily_closes([u], "3mo")
+                if df.empty or u not in df.columns:
+                    return None
+                s = df[u].dropna()
+                s = s[[str(i.date()) == d for i in s.index]]
+                return float(s.iloc[-1]) if len(s) else None
+        c = close_lookup(occ["underlying"], str(exp)[:10])
+    except Exception:  # noqa: BLE001 - no price source: retry later
+        return None
+    if c is None or not math.isfinite(c) or c <= 0:
+        return None
+    k = occ["strike"]
+    return max(0.0, (c - k) if occ["option_type"] == "CALL" else (k - c))
+
+
+def record_closed_outcomes(db, held_symbols: set[str], today: date, *,
+                           positions_ok: bool = True, close_lookup=None) -> int:
     """Write one option_outcomes row for every auto option BUY whose position is gone.
 
     Exit premium: the ledger's exit fill when it has one, else the limit of the latest placed
@@ -321,6 +348,8 @@ def record_closed_outcomes(db, held_symbols: set[str], today: date) -> int:
     buys = [r for r in rows if r.get("side") == "BUY" and _json(r.get("instrument_json")).get("selection")
             and str(r.get("position_intent") or "").upper() == "BUY_TO_OPEN"
             and r.get("status") in ("placed", "unknown", "filled")]
+    if not positions_ok:
+        return 0                     # positions fetch failed: "not held" would be a false signal
     n = 0
     for b in sorted(buys, key=lambda r: r["id"]):
         sym = b["symbol"]
@@ -342,7 +371,8 @@ def record_closed_outcomes(db, held_symbols: set[str], today: date) -> int:
             continue
         if sells:
             last = max(sells, key=lambda r: r["id"])
-            exit_px = (trade or {}).get("exit_fill_price") or last.get("limit_price")
+            exit_px = (trade or {}).get("exit_fill_price") or last.get("avg_fill_price") \
+                or last.get("fill_price") or last.get("limit_price")
             reason = str(last.get("reason") or "").replace("option exit: ", "") or "exit"
             closed_at = (trade or {}).get("exit_fill_time") or last.get("placed_at") or last["created_at"]
         else:
@@ -350,7 +380,10 @@ def record_closed_outcomes(db, held_symbols: set[str], today: date) -> int:
             filled = bool((trade or {}).get("entry_fill_price"))
             if not (filled and exp and str(exp) < today.isoformat()):
                 continue
-            exit_px, reason, closed_at = 0.0, "expired", f"{exp}T20:00:00+00:00"
+            exit_px = expiry_intrinsic(sym, str(exp), close_lookup)
+            if exit_px is None:
+                continue             # no underlying close yet: retry on a later pass
+            reason, closed_at = "expired", f"{exp}T20:00:00+00:00"
         if exit_px is None:
             continue
         sel = _json(b.get("instrument_json")).get("selection") or {}

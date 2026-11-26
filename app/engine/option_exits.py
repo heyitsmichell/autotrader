@@ -67,26 +67,68 @@ def _num(raw) -> float | None:
         return None
 
 
+def _occ_from_leg(line: str) -> str | None:
+    """OCC symbol from a Webull US leg line: ``Leg: TLT  Side: LONG  Qty: 3  Type: OPTION
+    Option: CALL  Strike: 82  Exp: 2026-12-31``. None when any part is missing."""
+    und = re.search(r"\bLeg:\s*([A-Za-z.]+)", line)
+    kind = re.search(r"\bOption:\s*(CALL|PUT|C|P)\b", line, re.I)
+    strike = re.search(r"\bStrike:\s*([\d.,]+)", line)
+    exp = re.search(r"\bExp:\s*(\d{4})-?(\d{2})-?(\d{2})", line)
+    if not (und and kind and strike and exp):
+        return None
+    k = _num(strike.group(1))
+    if k is None:
+        return None
+    return (f"{und.group(1).upper().replace('.', '')}{exp.group(1)[2:]}{exp.group(2)}{exp.group(3)}"
+            f"{kind.group(1).upper()[0]}{round(k * 1000):08d}")
+
+
 def parse_held_options(text: str) -> list[HeldOption]:
-    """Held option rows from the broker's positions text (one row per line, as the mock and the
-    Webull MCP server print it). Lines whose Symbol is not an OCC symbol are ignored."""
+    """Held option rows from the broker's positions text. Two layouts:
+    - one row per line with an OCC ``Symbol:`` (the mock);
+    - Webull US: a position line ``Symbol: <underlying> ... Type: OPTION ... Cost: .. Last: ..``
+      followed by indented ``Leg:`` lines carrying side/option/strike/expiry. Only single-leg
+      positions are read; a leg is never paired with any other position's line.
+    Stock rows are never returned."""
     out: dict[str, HeldOption] = {}
-    for line in (text or "").splitlines():
-        sym = re.search(r"\bSymbol:\s*(\S+)", line)
-        if not sym or not _OCC_FULL.match(sym.group(1).upper()):
-            continue
-        qty = re.search(r"(?<!Available )\bQty:\s*(-?[\d.,]+)", line)
-        if not qty:
-            continue
+
+    def add(name, qty_v, line):
         cost = re.search(r"\b(?:Cost|Avg Cost|Average Cost)\s*[:=]\s*(-?[\d.,]+)", line, re.I)
         mark = re.search(r"\b(?:Mark|Last)\s*[:=]\s*(-?[\d.,]+)", line, re.I)
-        name = sym.group(1).upper()
         row = out.setdefault(name, HeldOption(name, 0.0))
-        row.qty += _num(qty.group(1)) or 0.0
+        row.qty += qty_v
         if cost and _num(cost.group(1)):
             row.cost = _num(cost.group(1))
         if mark and _num(mark.group(1)):
             row.mark = _num(mark.group(1))
+
+    lines = (text or "").splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        sym = re.search(r"\bSymbol:\s*(\S+)", line)
+        qty = re.search(r"(?<!Available )\bQty:\s*(-?[\d.,]+)", line)
+        if sym and qty and _OCC_FULL.match(sym.group(1).upper()):
+            add(sym.group(1).upper(), _num(qty.group(1)) or 0.0, line)
+        elif sym and re.search(r"\bType:\s*OPTION\b", line, re.I):
+            legs = []
+            j = i + 1
+            while j < len(lines) and re.match(r"\s*Leg:", lines[j]):
+                legs.append(lines[j])
+                j += 1
+            if len(legs) == 1:
+                occ = _occ_from_leg(legs[0])
+                q = _num(qty.group(1)) if qty else None
+                if q is None:
+                    lq = re.search(r"\bQty:\s*(-?[\d.,]+)", legs[0])
+                    q = _num(lq.group(1)) if lq else None
+                if occ and q:
+                    if q > 0 and re.search(r"\bSide:\s*(SHORT|SELL)", legs[0], re.I):
+                        q = -q
+                    add(occ, q, line)
+            i = j
+            continue
+        i += 1
     return list(out.values())
 
 
@@ -168,20 +210,24 @@ class OptionExitManager:
     # -- reading what is held --------------------------------------------------
     async def held_options(self) -> list[HeldOption]:
         text = await self.broker.positions_text()
+        # an empty/"No data" reply must not be read as "every option closed" by outcome recording
+        self._positions_ok = bool(text and text.strip() and not text.lstrip().startswith("No data"))
         rows = parse_held_options(text)
-        if not rows:       # other formats (multi-line blocks): the broker's own parser
+        if not rows and "Leg:" not in (text or ""):   # other block formats: the broker's own parser
             try:
                 for r in await self.broker.option_positions():
                     if r.get("symbol") and r.get("qty"):
                         rows.append(HeldOption(r["symbol"], float(r["qty"]),
                                                r.get("cost_basis"), r.get("mark_price")))
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                log.warning("held-option row parse failed: %s", exc)
                 pass
         # options a multi-strategy sleeve holds (e.g. the put-write sleeve's short puts) are
         # managed by that sleeve, never by this manager
         try:
             hidden = self.eng.db.sleeve_option_symbols()
-        except Exception:  # noqa: BLE001 - stub DBs
+        except Exception as exc:  # noqa: BLE001 - stub DBs
+            log.debug("sleeve_option_symbols unavailable: %s", exc)
             hidden = set()
         return [r for r in rows if r.symbol.upper() not in hidden] if hidden else rows
 
@@ -193,7 +239,8 @@ class OptionExitManager:
                         "BUY_TO_OPEN" and r.get("status") in ("placed", "unknown")):
                     sl = r.get("sl")
                     return (float(sl) if sl else None), (r.get("placed_at") or r.get("created_at"))
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.warning("option entry-order lookup failed: %s", exc)
             pass
         return None, None
 
@@ -228,7 +275,8 @@ class OptionExitManager:
                         and (r.get("limit_price") or 0) > 0):
                     entry = float(r["limit_price"])
                     break
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.warning("option entry price lookup failed: %s", exc)
             entry = None
         if entry is None and pos.cost and pos.cost > 0:
             entry = float(pos.cost)
@@ -280,7 +328,8 @@ class OptionExitManager:
         self.held = {r.symbol: r for r in rows}
         try:        # leave a training record for every auto option trade that has closed
             from .. import options_ml
-            options_ml.record_closed_outcomes(self.db, set(self.held), now_et().date())
+            options_ml.record_closed_outcomes(self.db, set(self.held), now_et().date(),
+                                              positions_ok=getattr(self, "_positions_ok", True))
         except Exception as e:  # noqa: BLE001 - recording must never disturb exits
             log.debug("option outcome recording skipped: %r", e)
         if not rows:

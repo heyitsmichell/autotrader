@@ -30,7 +30,7 @@ from typing import Optional
 from fastmcp import FastMCP
 
 from .fills import (_children, _detail, _fill, _new_order, _validate_option, _validate_stock,
-                    check_account, fmt_orders, try_fill)
+                    check_account, fmt_orders, realism, try_fill)
 from .options import norm_cdf, option_price, option_symbol
 from .quotes import BASE_PRICES, DAY, price_of
 from .state import (ACCOUNT_ID, DISCLAIMER, FRACTIONAL_ELIGIBLE, OPEN_STATUSES, READ_ONLY, START_CASH,
@@ -95,7 +95,7 @@ async def get_account_positions(account_id: str) -> str:
         last = price_of(sym)
         lines.append(
             f"  Symbol: {sym}  Position ID: MOCK-{sym}  Qty: {p['qty']:g}  Type: EQUITY  "
-            f"Cost: {p['cost']:.2f}  Last: {last:.2f}  "
+            f"Cost: {p['cost']:.2f}  Last: {last:.2f}  Market Value: {last * p['qty']:.2f}  "
             f"Unrealized P&L: {(last - p['cost']) * p['qty']:.2f}  Currency: USD"
         )
     # Option positions
@@ -442,8 +442,7 @@ async def preview_option_order(account_id: str = "", symbol: str = "", side: str
                       "order_type: MARKET, LIMIT, STOP_LOSS, STOP_LOSS_LIMIT.\n"
                       "time_in_force: DAY, GTC. trading_session: CORE only.\n"
                       "position_intent: BUY_TO_OPEN, BUY_TO_CLOSE, SELL_TO_OPEN, SELL_TO_CLOSE.\n"
-                      "Returns: {client_order_id, order_id}",
-          annotations=READ_ONLY)
+                      "Returns: {client_order_id, order_id}")
 async def place_option_single_order(account_id: str = "", symbol: str = "", side: str = "", quantity: int = 0,
                                     option_type: str = "", strike_price: float = 0.0, expiration_date: str = "",
                                     order_type: str = "LIMIT", time_in_force: str = "DAY", trading_session: Optional[str] = None,
@@ -504,8 +503,7 @@ async def place_option_single_order(account_id: str = "", symbol: str = "", side
 
 @mcp.tool(description="[US Only] Place a multi-leg option strategy order "
                       "(VERTICAL, STRADDLE, STRANGLE, BUTTERFLY, CONDOR, etc).\n"
-                      "Returns: {client_order_id, combo_order_id, order_id}",
-          annotations=READ_ONLY)
+                      "Returns: {client_order_id, combo_order_id, order_id}")
 async def place_option_strategy_order(account_id: str, legs: list[dict],
                                       client_combo_order_id: Optional[str] = None) -> str:
     if err := check_account(account_id):
@@ -544,8 +542,7 @@ async def place_option_strategy_order(account_id: str, legs: list[dict],
                          f"\norder_id: {placed[0]['order_id']}")
 
 
-@mcp.tool(description="Modify an existing option order.",
-          annotations=READ_ONLY)
+@mcp.tool(description="Modify an existing option order.")
 async def replace_option_order(account_id: str, client_order_id: str,
                                limit_price: Optional[float] = None,
                                stop_price: Optional[float] = None,
@@ -627,8 +624,7 @@ async def preview_stock_order(account_id: str, symbol: str, side: str, order_typ
 @mcp.tool(description="Place a stock order. Returns: {client_order_id, order_id}\n"
                       "Supports fractional shares via entrust_type=AMOUNT with total_cash_amount (USD).\n"
                       "For fractional: order_type must be MARKET or LIMIT, trading_session=CORE only.\n"
-                      "quantity is shares (float allowed) when entrust_type=QTY.",
-          annotations=READ_ONLY)
+                      "quantity is shares (float allowed) when entrust_type=QTY.")
 async def place_stock_order(symbol: str, side: str, order_type: str, time_in_force: str,
                             quantity: float, market: str = "US",
                             account_id: Optional[str] = None,
@@ -642,6 +638,10 @@ async def place_stock_order(symbol: str, side: str, order_type: str, time_in_for
                or _validate_stock(symbol, side, order_type, quantity, limit_price, stop_price,
                                   entrust_type, total_cash_amount)):
         return err
+    # Mirror Webull region 'us': only ALL, CORE and NIGHT are valid sessions (ALL_DAY is rejected).
+    if trading_session not in ("ALL", "CORE", "NIGHT"):
+        return (f"Error: Validation error: Invalid trading_session for region 'us'. "
+                f"Valid values: ALL, CORE, NIGHT")
     # Mirror Webull: a session must be open now (NIGHT is overnight 20:00-04:00 ET only)
     from app.market import order_session
     _open = order_session()
@@ -650,7 +650,7 @@ async def place_stock_order(symbol: str, side: str, order_type: str, time_in_for
                 "Overnight Trading is only available during the Overnight Session, "
                 "which operates from 8:00pm to 4:00am ET.")
     # Mirror Webull: market-type orders are not accepted with extended hours (ALL/NIGHT).
-    if order_type.upper() == "MARKET" and trading_session in ("ALL", "NIGHT", "ALL_DAY"):
+    if order_type.upper() == "MARKET" and trading_session in ("ALL", "NIGHT"):
         return ("Error: HTTP 417: [OPENAPI_GTX_NOT_SUPPORT_MARKET] Market orders are not "
                 "supported with extended hours.")
     # Real UAT accepts a GTC CORE STOP_LOSS out of hours (observed premarket); other CORE orders not.
@@ -669,6 +669,11 @@ async def place_stock_order(symbol: str, side: str, order_type: str, time_in_for
         # Round to 4 decimal places
         quantity = round(quantity, 4)
 
+    if realism() and side.upper() == "BUY":
+        _px = limit_price or stop_price or price_of(symbol)
+        if quantity * _px > state["cash"] + 1e-9:
+            return ("Error: HTTP 417: [OPENAPI_INSUFFICIENT_BUYING_POWER] "
+                    "Insufficient buying power for this order.")
     order = _new_order(state, symbol, side, order_type, quantity, limit_price, stop_price,
                        time_in_force, coid,
                        entrust_type=entrust_type,
@@ -683,8 +688,7 @@ async def place_stock_order(symbol: str, side: str, order_type: str, time_in_for
 @mcp.tool(description="[US Only] Place a combo stock order. combo_type per leg: NORMAL, MASTER "
                       "(triggers TP/SL), STOP_PROFIT, STOP_LOSS, OTO, OCO, OTOCO.\n"
                       "Returns: {client_order_id, combo_order_id, order_id}\n"
-                      "NOTE: Fractional quantities not supported in combo orders.",
-          annotations=READ_ONLY)
+                      "NOTE: Fractional quantities not supported in combo orders.")
 async def place_stock_combo_order(account_id: str, orders: list[dict],
                                   client_combo_order_id: Optional[str] = None) -> str:
     if err := check_account(account_id):

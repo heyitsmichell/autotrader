@@ -30,6 +30,13 @@ const CAP = 25;
 const processTone = (c: string): "gain" | "loss" | "neutral" => c === "good" ? "gain" : c === "bad" ? "loss" : "neutral";
 const pnlCls = (v: number) => (v === 0 ? "" : v > 0 ? rcss["gain"] : rcss["loss"]);
 
+/** Hours under 2 days, days after; never negative. */
+function holdText(hours: number | null | undefined): string {
+  if (hours == null || !Number.isFinite(hours)) return "—";
+  const h = Math.max(0, hours);
+  return h < 48 ? `${h.toFixed(1)} h` : `${(h / 24).toFixed(1)} d`;
+}
+
 export default function AutopsyView() {
   const [autopsies, setAutopsies] = useState<Autopsy[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,9 +95,9 @@ export default function AutopsyView() {
                     <td>{a.symbol}</td>
                     <td>{a.side}</td>
                     <td className={`num mono ${pnlCls(a.pnl_pct)}`}>{pct(a.pnl_pct)}</td>
-                    <td className="num mono">{pct(a.mae_pct, { sign: false })}</td>
-                    <td className="num mono">{pct(a.mfe_pct, { sign: false })}</td>
-                    <td className="num mono">{num(a.hold_hours, 1)} h</td>
+                    <td className="num mono">{a.mae_pct == null ? "—" : pct(a.mae_pct, { sign: false })}</td>
+                    <td className="num mono">{a.mfe_pct == null ? "—" : pct(a.mfe_pct, { sign: false })}</td>
+                    <td className="num mono">{holdText(a.hold_hours)}</td>
                     <td><Mark tone={processTone(a.process_class)}>{a.process_class}</Mark></td>
                     <td><Mark>{a.outcome_class}</Mark></td>
                     <td>{a.causes.length > 0 ? <>{a.causes[0].cause} <span className={`mono ${rcss["dim"]}`}>({(a.causes[0].strength * 100).toFixed(0)}%)</span></> : "—"}</td>
@@ -133,11 +140,11 @@ function AutopsyDetail({ autopsy, onClose }: { autopsy: Autopsy; onClose: () => 
                 {autopsy.pnl_pct > 0 ? "+" : ""}{autopsy.pnl_pct.toFixed(2)}%
               </dd>
               <dt>MAE</dt>
-              <dd className="negative">{autopsy.mae_pct.toFixed(2)}%</dd>
+              <dd className="negative">{autopsy.mae_pct == null ? "—" : `${autopsy.mae_pct.toFixed(2)}%`}</dd>
               <dt>MFE</dt>
-              <dd className="positive">{autopsy.mfe_pct.toFixed(2)}%</dd>
+              <dd className="positive">{autopsy.mfe_pct == null ? "—" : `${autopsy.mfe_pct.toFixed(2)}%`}</dd>
               <dt>Hold Time</dt>
-              <dd>{autopsy.hold_hours.toFixed(1)} hours</dd>
+              <dd>{holdText(autopsy.hold_hours)}</dd>
               <dt>Process Class</dt>
               <dd>
                 <span className={`process-badge process-${autopsy.process_class}`}>

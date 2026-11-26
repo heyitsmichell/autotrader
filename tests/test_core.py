@@ -522,16 +522,12 @@ def test_satellite_headroom_is_cap_minus_holdings():
     assert satellite_headroom_usd(0, 0, 20) == 0
 
 
-def test_core_enabled_defaults_off():
+def test_core_enabled_defaults_off(monkeypatch):
     from app.config import load_settings
-    import os
-    os.environ.pop("CORE_ENABLED", None)
+    monkeypatch.delenv("CORE_ENABLED", raising=False)
     assert load_settings().core_enabled is False
-    os.environ["CORE_ENABLED"] = "true"
-    try:
-        assert load_settings().core_enabled is True
-    finally:
-        os.environ.pop("CORE_ENABLED", None)
+    monkeypatch.setenv("CORE_ENABLED", "true")
+    assert load_settings().core_enabled is True
 
 
 def test_paused_guard_gives_zero_headroom():

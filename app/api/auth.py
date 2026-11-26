@@ -20,6 +20,7 @@ log = logging.getLogger("trader")
 
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 TOKEN_ERROR = {"detail": "missing or invalid X-Trader-Token"}
+_FRAME_HEADERS = {"X-Frame-Options": "DENY", "Content-Security-Policy": "frame-ancestors 'none'"}
 
 
 def new_token() -> str:
@@ -63,23 +64,41 @@ def install_auth(app: FastAPI, trusted_hosts: list[str] | None = None) -> None:
     async def local_only(request: Request, call_next):
         host = request_hostname(request)
         if host not in allowed:
-            return JSONResponse({"detail": "forbidden host"}, status_code=403)
+            return JSONResponse({"detail": "forbidden host"}, status_code=403, headers=_FRAME_HEADERS)
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             if request.url.path.startswith("/api/"):
                 if request.headers.get("x-trader") != "1" or not token_ok(request):
-                    return JSONResponse(TOKEN_ERROR, status_code=403)
+                    return JSONResponse(TOKEN_ERROR, status_code=403, headers=_FRAME_HEADERS)
             elif request.headers.get("x-trader") != "1":
-                return JSONResponse({"detail": "missing X-Trader header"}, status_code=403)
-        return await call_next(request)
+                return JSONResponse({"detail": "missing X-Trader header"}, status_code=403,
+                                    headers=_FRAME_HEADERS)
+        resp = await call_next(request)
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        return resp
 
 
 router = APIRouter()
+
+_LOOPBACK_CLIENTS = {"127.0.0.1", "::1"}
+_LOCAL_HOST_NAMES = {"localhost", "127.0.0.1", "::1"}
+
+
+def dev_token_endpoint_allowed(request: Request) -> bool:
+    """Dev only: env TRADER_DEV_TOKEN_ENDPOINT=1, or a loopback client addressing localhost
+    directly. Behind ``tailscale serve`` the client is loopback but Host is the tailnet name."""
+    if os.environ.get("TRADER_DEV_TOKEN_ENDPOINT") == "1":
+        return True
+    client = request.client.host if request.client else ""
+    return client in _LOOPBACK_CLIENTS and request_hostname(request) in _LOCAL_HOST_NAMES
 
 
 @router.get("/api/auth/token")
 async def auth_token(request: Request):
     """Dev-mode fallback (the served HTML already carries the token). The custom header forces
     a CORS preflight, which fails cross-origin because no CORS is configured."""
+    if not dev_token_endpoint_allowed(request):
+        raise HTTPException(404, "Not Found")
     if request.headers.get("x-trader") != "1":
         raise HTTPException(403, "missing X-Trader header")
     return {"token": request.app.state.api_token}

@@ -30,11 +30,7 @@ from ..sentiment import SentimentEngine
 from ..signals import SignalService
 from ..supervisor import Supervisor
 from ..yfinance_service import YahooFinanceService
-<<<<<<< HEAD
 from . import auth, backtests_view, chart, controls, experiments, learning, ml, options, portfolio, proposals, research, research_views, results, shadows, sleeves, status, stream
-=======
-from . import auth, chart, controls, experiments, learning, ml, options, portfolio, proposals, research, research_views, results, shadows, sleeves, status, stream
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
 from .auth import install_auth, new_token, write_token_file
 
 setup_logging(files=False)          # console logging + redaction as early as import time
@@ -62,6 +58,9 @@ async def _safe(db, what: str, aw) -> None:
 async def lifespan(app: FastAPI):
     _file_logging()
     settings = load_settings()
+    if settings.host not in ("127.0.0.1", "localhost", "::1"):
+        log.warning("HOST=%s is not loopback: this app has no login and can place trades "
+                    "(run() refuses to start with it).", settings.host)
     write_token_file(settings.api_token_file, app.state.api_token)
     db = DB(DATA_DIR / "trader.db", settings.broker_mode, settings.webull_environment, settings.webull_account_id)
     orphaned = db.close_orphan_runs()
@@ -214,11 +213,7 @@ def create_app(lifespan=lifespan, web_dir: Path | None = None, token: str | None
     for r in (auth.router, status.router, portfolio.router, proposals.router, options.router,
               learning.router, ml.router, research.router, controls.router, chart.router,
               stream.router, experiments.router, sleeves.router, shadows.router, results.router,
-<<<<<<< HEAD
               research_views.router, backtests_view.router):
-=======
-              research_views.router):
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
         app.include_router(r)
 
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE"], include_in_schema=False)

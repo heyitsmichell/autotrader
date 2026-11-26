@@ -56,7 +56,14 @@ def minutes_outside_edges(now: datetime) -> tuple[float, float]:
     return since_open, to_close
 
 
-class OptionEntriesMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import OptionEntriesHost as _Host
+else:
+    _Host = object
+
+class OptionEntriesMixin(_Host):
     # -- logging helper: one plain line per (underlying, reason) per run ----------------
     def _entry_skip(self, run_id: int, key: tuple, line: str) -> None:
         seen = self.__dict__.setdefault("_opt_entry_skips", {})
@@ -268,7 +275,8 @@ class OptionEntriesMixin:
             if iv is not None and len(series) >= int(s.options_iv_rank_min_history):
                 r = iv_rank(series, iv)
                 rank = round(r[0], 3) if r else None
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.debug("IV rank computation failed: %s", exc)
             rank = None
         close = sig.get("close")
         stop = sig.get("sl")

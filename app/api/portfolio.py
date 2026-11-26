@@ -85,7 +85,7 @@ async def portfolio(request: Request):
 
 
 @router.get("/api/signals")
-async def signals(request: Request):
+def signals(request: Request):
     return [decode(r) for r in request.app.state.db.latest_signals()]
 
 
@@ -95,15 +95,15 @@ async def fastloop_status(request: Request):
 
 
 @router.get("/api/signals/{symbol}")
-async def signal_history(request: Request, symbol: str, limit: int = 50):
-    return [decode(r) for r in request.app.state.db.signals(symbol.upper(), min(limit, 500))]
+def signal_history(request: Request, symbol: str, limit: int = 50):
+    return [decode(r) for r in request.app.state.db.signals(symbol.upper(), max(1, min(int(limit), 500)))]
 
 
 @router.get("/api/news")
-async def news(request: Request, symbol: str | None = None, limit: int = 30):
+def news(request: Request, symbol: str | None = None, limit: int = 30):
     since = (now_utc() - timedelta(hours=request.app.state.settings.news_lookback_hours)
              ).isoformat(timespec="seconds")
-    return request.app.state.db.news(symbol.upper() if symbol else None, since, min(limit, 200))
+    return request.app.state.db.news(symbol.upper() if symbol else None, since, max(1, min(int(limit), 200)))
 
 
 @router.get("/api/sentiment")
@@ -115,13 +115,13 @@ async def sentiment(request: Request):
 
 
 @router.get("/api/runs")
-async def runs(request: Request, limit: int = 10):
-    return request.app.state.db.runs(min(limit, 100))
+def runs(request: Request, limit: int = 10):
+    return request.app.state.db.runs(max(1, min(int(limit), 100)))
 
 
 @router.get("/api/events")
-async def events(request: Request, limit: int = 100):
-    return request.app.state.db.events(min(limit, 500))
+def events(request: Request, limit: int = 100):
+    return request.app.state.db.events(max(1, min(int(limit), 500)))
 
 
 @router.get("/api/execution-quality")
@@ -138,7 +138,7 @@ async def execution_quality(request: Request):
 
 
 @router.get("/api/performance")
-async def performance(request: Request):
+def performance(request: Request):
     """Account vs the benchmark (SPY) on live daily closes, with significance."""
     s = request.app.state.settings
     return build_performance(
@@ -151,12 +151,12 @@ async def performance(request: Request):
 
 # -- autopsy & trade ledger ------------------------------------------------------------
 @router.get("/api/autopsies")
-async def autopsies(request: Request, limit: int = 50, symbol: str | None = None):
-    return request.app.state.db.autopsies(min(limit, 200), symbol.upper() if symbol else None)
+def autopsies(request: Request, limit: int = 50, symbol: str | None = None):
+    return request.app.state.db.autopsies(max(1, min(int(limit), 200)), symbol.upper() if symbol else None)
 
 
 @router.get("/api/autopsies/{trade_id}")
-async def autopsy_detail(request: Request, trade_id: int):
+def autopsy_detail(request: Request, trade_id: int):
     autopsy = request.app.state.db.get_autopsy(trade_id)
     if autopsy is None:
         raise HTTPException(404, f"Autopsy for trade #{trade_id} not found")
@@ -169,18 +169,18 @@ def trade_row(row: dict) -> dict:
 
 
 @router.get("/api/trades", response_model=list[TradeRow])
-async def trades(request: Request, limit: int = 50, status: str | None = None,
+def trades(request: Request, limit: int = 50, status: str | None = None,
                  symbol: str | None = None):
     """status=open|closed|all (default all). Every filter returns the same TradeRow shape (L11)."""
     db = request.app.state.db
     want = status if status in ("open", "closed", "cancelled") else None
-    cap = 1000 if want == "open" else min(max(limit, 1), 200)   # open trades were never capped
+    cap = 1000 if want == "open" else max(1, min(int(limit), 200))   # open trades were never capped
     rows = db.trades(cap, symbol.upper() if symbol else None, want)
     return [trade_row(r) for r in rows]
 
 
 @router.get("/api/trades/{proposal_id}")
-async def trade_detail(request: Request, proposal_id: int):
+def trade_detail(request: Request, proposal_id: int):
     trade = request.app.state.db.get_trade(proposal_id)
     if trade is None:
         raise HTTPException(404, f"Trade for proposal #{proposal_id} not found")

@@ -79,7 +79,8 @@ async def test_ipv6_loopback_host_ok(app):
     assert r.status_code == 200
 
 
-async def test_auth_token_endpoint_requires_x_trader(app):
+async def test_auth_token_endpoint_requires_x_trader(app, monkeypatch):
+    monkeypatch.setenv("TRADER_DEV_TOKEN_ENDPOINT", "1")
     async with make_client(app) as c:
         assert (await c.get("/api/auth/token")).status_code == 403
         r = await c.get("/api/auth/token", headers={"X-Trader": "1"})

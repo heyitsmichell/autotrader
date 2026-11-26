@@ -1,0 +1,49 @@
+=== Open Orders ===
+
+[Order Entry 1]
+Client Order ID:  G1
+Combo Type:       NORMAL
+
+  [Order Details]
+    Client Order ID:    C1
+    Order ID:           O1
+    Symbol:             AAPL
+    Side:               BUY
+    Status:             SUBMITTED
+    Order Type:         LIMIT
+    Instrument Type:    EQUITY
+    Total Quantity:     10
+    Filled Quantity:    0
+    Limit Price:        170.00
+    Stop Price:         N/A
+    Filled Price:       N/A
+    Time In Force:      DAY
+    Trading Session:    N/A
+    Place Time:         N/A
+    Place Timestamp:    N/A
+    Filled Time:        N/A
+    Filled Timestamp:   N/A
+
+[Order Entry 2]
+Client Order ID:  G2
+Combo Type:       MASTER
+
+  [Order Details]
+    Client Order ID:    C2
+    Order ID:           O2
+    Symbol:             SPY
+    Side:               SELL
+    Status:             SUBMITTED
+    Order Type:         STOP_LOSS
+    Instrument Type:    EQUITY
+    Total Quantity:     2
+    Filled Quantity:    0
+    Limit Price:        N/A
+    Stop Price:         495.00
+    Filled Price:       N/A
+    Time In Force:      GTC
+    Trading Session:    N/A
+    Place Time:         N/A
+    Place Timestamp:    N/A
+    Filled Time:        N/A
+    Filled Timestamp:   N/A

@@ -383,7 +383,8 @@ class RiskManager:
                 if t.get("symbol") == symbol and t.get("side") == "BUY" and px and q:
                     qty += q
                     cost += q * px
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.warning("avg-cost computation failed: %s", exc)
             return None
         return cost / qty if qty > 0 else None
 
@@ -401,7 +402,8 @@ class RiskManager:
             text = None
             try:
                 text = await broker.positions_text()
-            except Exception:  # noqa: BLE001 - ledger fallback below
+            except Exception as exc:  # noqa: BLE001 - ledger fallback below
+                log.debug("positions_text failed (ledger fallback): %s", exc)
                 text = None
             avg = self._avg_cost(symbol, text, db)
             if avg is None:

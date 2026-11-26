@@ -12,12 +12,21 @@ import Empty from "./ui/Empty";
 import { dateTime, num } from "@/lib/format";
 
 interface MLScoreCard {
-  precision: number | null;
-  recall: number | null;
-  f1: number | null;
-  calibration_error: number | null;
-  auc: number | null;
-  saturation_pct: number | null;
+  precision?: number | null;
+  recall?: number | null;
+  f1?: number | null;
+  calibration_error?: number | null;
+  auc?: number | null;
+  saturation_pct?: number | null;
+  hit_rate?: number | null;
+  auc_mean_folds?: number | null;
+  mean_avg_return?: number | null;
+  total_test_trades?: number | null;
+  total_independent_test_trades?: number | null;
+  passed?: boolean | null;
+  rejection_reason?: string | null;
+  checks?: Record<string, boolean> | null;
+  thresholds?: Record<string, unknown> | null;
   feature_importance: Array<{ feature: string; importance: number }>;
 }
 
@@ -108,14 +117,23 @@ export default function MLScorecard({ ml, onRefresh, onAction, busy = false }: {
   }
 
   const sc = scorecard;
-  const gate: { metric: string; value: string; threshold: string; ok: boolean | null }[] = [
-    { metric: "Precision", value: sc?.precision != null ? (sc.precision * 100).toFixed(1) + "%" : "—", threshold: "> 50%", ok: sc?.precision != null ? sc.precision > 0.5 : null },
-    { metric: "Recall", value: sc?.recall != null ? (sc.recall * 100).toFixed(1) + "%" : "—", threshold: "> 40%", ok: sc?.recall != null ? sc.recall > 0.4 : null },
-    { metric: "F1 score", value: sc?.f1 != null ? sc.f1.toFixed(3) : "—", threshold: "> 0.45", ok: sc?.f1 != null ? sc.f1 > 0.45 : null },
-    { metric: "Calibration error", value: sc?.calibration_error != null ? sc.calibration_error.toFixed(4) : "—", threshold: "< 0.10", ok: sc?.calibration_error != null ? sc.calibration_error < 0.10 : null },
-    { metric: "AUC (pooled)", value: sc?.auc != null ? sc.auc.toFixed(3) : "—", threshold: "< 0.70 (saturation guard)", ok: sc?.auc != null ? sc.auc < 0.70 : null },
-    { metric: "Saturation", value: sc?.saturation_pct != null ? (sc.saturation_pct * 100).toFixed(1) + "%" : "—", threshold: "< 80%", ok: sc?.saturation_pct != null ? sc.saturation_pct < 0.80 : null },
+  const hasChecks = !!sc?.checks && Object.keys(sc.checks).length > 0;
+  const hit = sc?.hit_rate ?? sc?.precision ?? null;
+  const auc = sc?.auc_mean_folds ?? sc?.auc ?? null;
+  const fb = !hasChecks; // hardcoded thresholds only as fallback
+  const gateAll: { metric: string; value: string | null; threshold: string; ok: boolean | null }[] = [
+    { metric: "Hit rate (walk-forward)", value: hit != null ? (hit * 100).toFixed(1) + "%" : null, threshold: "> 50%", ok: hit != null ? hit > 0.5 : null },
+    { metric: "Recall", value: sc?.recall != null ? (sc.recall * 100).toFixed(1) + "%" : null, threshold: "> 40%", ok: sc?.recall != null ? sc.recall > 0.4 : null },
+    { metric: "F1 score", value: sc?.f1 != null ? sc.f1.toFixed(3) : null, threshold: "> 0.45", ok: sc?.f1 != null ? sc.f1 > 0.45 : null },
+    { metric: "Calibration error", value: sc?.calibration_error != null ? sc.calibration_error.toFixed(4) : null, threshold: "< 0.10", ok: sc?.calibration_error != null ? sc.calibration_error < 0.10 : null },
+    { metric: "AUC (mean of folds)", value: auc != null ? auc.toFixed(3) : null, threshold: "< 0.70 (saturation guard)", ok: auc != null ? auc < 0.70 : null },
+    { metric: "Saturation", value: sc?.saturation_pct != null ? (sc.saturation_pct * 100).toFixed(1) + "%" : null, threshold: "< 80%", ok: sc?.saturation_pct != null ? sc.saturation_pct < 0.80 : null },
+    { metric: "Avg return per trade", value: sc?.mean_avg_return != null ? sc.mean_avg_return.toFixed(2) + "%" : null, threshold: "", ok: null },
+    { metric: "Test trades", value: sc?.total_test_trades != null ? `${sc.total_test_trades}${sc.total_independent_test_trades != null ? ` (${sc.total_independent_test_trades} independent)` : ""}` : null, threshold: "", ok: null },
   ];
+  const gate = gateAll.filter(g => g.value != null).map(g => ({ ...g, value: g.value as string,
+    threshold: fb ? g.threshold : "", ok: fb ? g.ok : null }));
+  const thresholds = sc?.thresholds ? Object.entries(sc.thresholds) : [];
 
   return (
     <div className="ml-scorecard-view">
@@ -138,6 +156,18 @@ export default function MLScorecard({ ml, onRefresh, onAction, busy = false }: {
             </tbody>
           </table>
         </div>
+
+        {(() => {
+          const missing = [
+            sc?.recall == null && "recall", sc?.f1 == null && "F1",
+            sc?.calibration_error == null && "calibration error",
+            sc?.saturation_pct == null && "saturation",
+            !(sc?.feature_importance && sc.feature_importance.length > 0) && "feature importance",
+          ].filter(Boolean) as string[];
+          return sc && missing.length > 0 ? (
+            <p className={rcss["dim"]}>Not computed for this model: {missing.join(", ")} (retrain to compute).</p>
+          ) : null;
+        })()}
 
         {sc?.feature_importance && sc.feature_importance.length > 0 && (<>
           <h3 className={rcss["sub"]}>Feature importance</h3>

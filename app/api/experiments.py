@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import csv
+import asyncio
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,18 +45,24 @@ def _csv(path: Path) -> list[dict]:
         return []
 
 
+_GENERIC_TITLES = {"full", "results", "result", "summary", "report", "readme", "overview", "leaderboard"}
+
+
 def _title(path: Path) -> str:
     try:
         with path.open(encoding="utf-8", errors="replace") as f:
             for line in f:
                 if line.startswith("#"):
-                    return line.lstrip("#").strip()
+                    t = line.lstrip("#").strip()
+                    if len(t) >= 6 and t.lower() not in _GENERIC_TITLES:
+                        return t
+                    break
     except OSError:
         pass
-    return path.stem
+    parent = path.parent.name
+    return f"{parent} / {path.stem}" if parent else path.stem
 
 
-<<<<<<< HEAD
 def _bt_root() -> Path:
     return (Path(env.DATA_DIR) / "backtests").resolve()
 
@@ -63,9 +71,6 @@ def _safe(root: Path, rel: str) -> Path:
     rel = rel or ""
     if rel.replace("\\", "/").startswith("backtests/"):
         root, rel = _bt_root(), rel.replace("\\", "/")[len("backtests/"):]
-=======
-def _safe(root: Path, rel: str) -> Path:
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
     if not rel or rel.startswith(("/", "\\")) or ":" in rel or not rel.lower().endswith(".md"):
         raise HTTPException(400, "path must be a relative .md path under data/experiments")
     if ".." in Path(rel.replace("\\", "/")).parts:
@@ -78,8 +83,25 @@ def _safe(root: Path, rel: str) -> Path:
     return real
 
 
+_CACHE: dict = {"t": 0.0, "sig": None, "val": None}
+_CACHE_TTL = 30.0
+
+
 @router.get("/api/experiments")
 async def experiments():
+    return await asyncio.to_thread(_experiments_cached)
+
+
+def _experiments_cached():
+    now = time.monotonic()
+    if _CACHE["val"] is not None and _CACHE["sig"] == str(_root()) and now - _CACHE["t"] < _CACHE_TTL:
+        return _CACHE["val"]
+    val = _experiments_build()
+    _CACHE.update(t=now, sig=str(_root()), val=val)
+    return val
+
+
+def _experiments_build():
     root = _root()
     reg = _csv(root / "trials_registry.csv")
     by_lab: dict[str, int] = {}
@@ -107,7 +129,6 @@ async def experiments():
             reports.append({"path": p.relative_to(root).as_posix(), "title": _title(real),
                             "modified": datetime.fromtimestamp(stt.st_mtime, timezone.utc)
                             .isoformat(timespec="seconds"), "bytes": stt.st_size})
-<<<<<<< HEAD
     bt = _bt_root()
     if bt.is_dir():
         for p in sorted(bt.rglob("*.md")):
@@ -120,8 +141,6 @@ async def experiments():
             reports.append({"path": "backtests/" + p.relative_to(bt).as_posix(), "title": _title(real),
                             "modified": datetime.fromtimestamp(stt.st_mtime, timezone.utc)
                             .isoformat(timespec="seconds"), "bytes": stt.st_size})
-=======
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
     return {"registry": {"n_trials": len(reg), "by_lab": by_lab},
             "leaderboard": [_row(r) for r in scored[:25]],
             # best survivorship-free rows: the top 25 overall can be all biased universes
@@ -133,7 +152,7 @@ async def experiments():
 
 
 @router.get("/api/experiments/report")
-async def experiment_report(path: str):
+def experiment_report(path: str):
     p = _safe(_root(), path)
     if not p.is_file():
         raise HTTPException(404, "report not found")

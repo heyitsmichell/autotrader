@@ -3,6 +3,7 @@
 Each module ``NNNN_name.py`` defines ``upgrade(conn)`` and must be idempotent (safe on a
 database that already has the change). They run in numeric order inside the DB
 constructor, before the first write. ``user_version`` is bumped after each one succeeds.
+A migration that cannot run inside a transaction sets ``NO_TRANSACTION = True``.
 A database whose version is higher than the newest migration (a newer app wrote it) is
 left alone.
 """
@@ -47,7 +48,13 @@ def run_migrations(conn) -> int:
         for number, _name, module in discover():
             if number <= version:
                 continue
-            module.upgrade(conn)
-            conn.execute(f"PRAGMA user_version={number}")
+            if getattr(module, "NO_TRANSACTION", False):
+                # e.g. executescript() (implicit COMMIT), VACUUM, journal_mode: not wrappable.
+                module.upgrade(conn)
+                conn.execute(f"PRAGMA user_version={number}")
+            else:
+                with conn.transaction():
+                    module.upgrade(conn)
+                    conn.execute(f"PRAGMA user_version={number}")
             version = number
         return version

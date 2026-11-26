@@ -189,7 +189,8 @@ class RiskLoop:
         eng = self.eng
         try:
             orders = parse_orders(await eng.broker.open_orders_text())
-        except Exception:  # noqa: BLE001 - cannot tell: protection matters more than the check
+        except Exception as exc:  # noqa: BLE001 - cannot tell: protection matters more than the check
+            log.warning("open-orders read failed (treating as unknown): %s", exc)
             return False
         ours = {r["client_order_id"] for r in eng.db.protective(sym)
                 if not (r.get("note") or "").startswith(("extended-hours soft stop", "exit:"))}
@@ -408,7 +409,8 @@ class RiskLoop:
         stop = float(t["stop_price"])
         try:
             price = await eng.broker.last_price(sym)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.warning("last_price lookup failed in soft-stop check: %s", exc)
             price = None
         if session == "CORE" and price and price <= stop:
             await pf.exit_position(sym, held, float(price),
@@ -430,7 +432,14 @@ class RiskLoop:
                            f"{held:g} at {stop:.2f}", alert=True)
 
 
-class RiskLoopMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import RiskLoopHost as _Host
+else:
+    _Host = object
+
+class RiskLoopMixin(_Host):
     def _init_runtime(self) -> None:
         """Runtime helpers that need the engine's fields: called at the end of CoreMixin init."""
         self._atm_iv_day: dict[str, str] = {}

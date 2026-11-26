@@ -50,7 +50,14 @@ def iv_rank(series: list[float], iv: float) -> tuple[float, float] | None:
     return rank, pct
 
 
-class OptionsFlowMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import OptionsFlowHost as _Host
+else:
+    _Host = object
+
+class OptionsFlowMixin(_Host):
     # -- ATM IV history (H3) ---------------------------------------------------------
     async def record_atm_iv(self, underlying: str) -> float | None:
         """Record today's ATM IV for ``underlying`` (once per day) and return it.
@@ -115,7 +122,8 @@ class OptionsFlowMixin:
         s = self.s
         try:
             series = self.db.atm_iv_series(underlying, 252) if underlying else []
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.debug("atm_iv_series lookup failed: %s", exc)
             series = []
         n, need = len(series), int(s.options_iv_rank_min_history)
         ranked = iv_rank(series, iv_pct) if n >= need else None

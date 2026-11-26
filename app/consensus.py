@@ -84,7 +84,16 @@ def evaluate(p: dict, sig: dict | None, s: Settings) -> dict:
         + ("; ML-first, so this is only a floor)" if ml_first else ")"), t, ta_min)
     trend = sig.get("trend") or "range"
     strength = sig.get("strength") or "n/a"
-    rsi = sig.get("rsi14")
+    feats = sig.get("features") or {}
+    if isinstance(feats, str):       # DB rows store features as a JSON string
+        try:
+            import json
+            feats = json.loads(feats) or {}
+        except ValueError:
+            feats = {}
+    rsi = feats.get("rsi14") if isinstance(feats, dict) else None
+    if rsi is None:
+        rsi = sig.get("rsi14")
     # Allow buys in weak downtrend with oversold RSI (< 30) - mean reversion opportunity
     weak_downtrend_oversold = (
         trend == "down" and strength == "weak" and rsi is not None and rsi < 30

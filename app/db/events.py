@@ -45,7 +45,7 @@ class EventsRepo(BaseRepo):
         days = self.DEFAULT_RETENTION_DAYS if retention_days is None else int(retention_days)
         cutoff = (now_utc() - timedelta(days=max(0, days))).isoformat(timespec="seconds")
         out: dict[str, int] = {}
-        with self.conn.lock:
+        with self.transaction():
             for table, col in self.PRUNE_TABLES.items():
                 cur = self.conn.execute(f"DELETE FROM {table} WHERE {col} < ?", (cutoff,))
                 out[table] = cur.rowcount or 0

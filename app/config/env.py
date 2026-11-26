@@ -3,11 +3,14 @@ scripts/gen_env_example.py."""
 
 from __future__ import annotations
 
+import logging
+import math
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 
+_log = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent.parent   # app/config/env.py -> repo root
 if os.environ.get("TRADER_SKIP_DOTENV", "").strip().lower() not in ("1", "true", "yes"):
     load_dotenv(ROOT / ".env", override=False)   # tests set TRADER_SKIP_DOTENV=1
@@ -48,23 +51,47 @@ def _bool(name: str, default: bool) -> bool:
     value = os.environ.get(name, "").strip().lower()
     if not value:
         return default
-    return value in {"1", "true", "yes", "on"}
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    _log.warning("Invalid boolean for %s=%r; using default %r", name, value, default)
+    return default
 
 
 def _float(name: str, default: float) -> float:
     _reg(name, default)
-    try:
-        return float(os.environ.get(name, "").strip() or default)
-    except ValueError:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
         return default
+    try:
+        out = float(raw)
+    except ValueError:
+        _log.warning("Invalid float for %s=%r; using default %r", name, raw, default)
+        return default
+    if not math.isfinite(out):
+        _log.warning("Non-finite float for %s=%r; using default %r", name, raw, default)
+        return default
+    return out
 
 
 def _int(name: str, default: int) -> int:
     _reg(name, default)
-    try:
-        return int(os.environ.get(name, "").strip() or default)
-    except ValueError:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
         return default
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        out = float(raw)
+        if math.isfinite(out) and out == int(out):
+            return int(out)
+    except (ValueError, OverflowError):
+        pass
+    _log.warning("Invalid integer for %s=%r; using default %r", name, raw, default)
+    return default
 
 
 def _symbols(name: str, default: str) -> list[str]:

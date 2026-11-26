@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 
 def pick_contract(chain, spot, today, target_delta=0.30, dte=30, dte_min=21, dte_max=45):
@@ -36,9 +36,17 @@ def should_close(put, spot, today: date, now_et: datetime) -> bool:
     exp = put["expiration"]
     if spot >= put["strike"]:
         return False
-    return exp < today or (exp == today and now_et.time() >= time(15, 30))
+    close = _close_of(exp)
+    start = (datetime.combine(exp, close) - timedelta(minutes=30)).time()
+    return exp < today or (exp == today and now_et.time() >= start)
+
+
+def _close_of(day: date) -> time:
+    """That day's session close (13:00 on early closes); 16:00 if unknown."""
+    from ... import market
+    return market.session_close(day) or time(16, 0)
 
 
 def is_expired(put, today: date, now_et: datetime) -> bool:
     exp = put["expiration"]
-    return exp < today or (exp == today and now_et.time() >= time(16, 0))
+    return exp < today or (exp == today and now_et.time() >= _close_of(exp))

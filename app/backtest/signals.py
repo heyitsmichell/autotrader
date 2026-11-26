@@ -18,6 +18,26 @@ from ..config import Settings
 from ..indicators import feature_series
 
 
+def relative_strength_pct(sym_now: float, sym_then: float,
+                          bench_now: float, bench_then: float) -> float:
+    """Shared RS definition (live + backtest): symbol momentum minus benchmark momentum, in percent.
+
+    ``then`` is the close ``lookback`` bars before ``now`` (i.e. bars[i - lookback]).
+    """
+    return ((sym_now / sym_then - 1) - (bench_now / bench_then - 1)) * 100
+
+
+def bench_close_asof(bench_bars: list[dict], day, day_fn) -> float | None:
+    """Close of the latest benchmark bar dated <= ``day`` (point-in-time, like _align_benchmark)."""
+    out = None
+    for b in bench_bars:
+        if day_fn(b["time"]) <= day:
+            out = b["close"]
+        else:
+            break
+    return out
+
+
 # What a daily-bar backtest cannot reproduce. Printed in every backtest report (QA M8).
 LIMITATIONS = (
     "Sentiment is always neutral: historical headlines are not available, so the live "
@@ -141,9 +161,9 @@ def signal_at(bars: list[dict], features: list[dict], index: int, settings: Sett
         lookback = getattr(settings, "relative_strength_lookback", 20)
         if index >= lookback and len(benchmark_bars) > index and len(benchmark_features) > index:
             # Momentum = (close / close_lookback_ago) - 1
-            sym_momentum = (bars[index]["close"] / bars[index - lookback]["close"]) - 1
-            bench_momentum = (benchmark_bars[index]["close"] / benchmark_bars[index - lookback]["close"]) - 1
-            relative_strength = (sym_momentum - bench_momentum) * 100  # in percent
+            relative_strength = relative_strength_pct(
+                bars[index]["close"], bars[index - lookback]["close"],
+                benchmark_bars[index]["close"], benchmark_bars[index - lookback]["close"])
 
         # Market regime from benchmark
         bench_f = benchmark_features[index]

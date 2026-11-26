@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { money, pct } from "@/lib/format";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { money, num, pct } from "@/lib/format";
 import type { Api } from "@/lib/api";
 import type { Status } from "@/lib/types";
 import css from "./OptionChain.module.css";
@@ -52,28 +52,38 @@ export default function OptionChain({ status, api, onSymbolSelect }: {
     if (status?.watchlist && status.watchlist.length > 0) {
       return status.watchlist;
     }
-    return ["AAPL", "MSFT", "NVDA", "SPY", "QQQ", "AMZN", "GOOGL", "META", "TSLA"];
+    return [] as string[];
   }, [status]);
 
   const watchlist = useMemo(() => status?.watchlist || [], [status?.watchlist]);
   const selectableUnderlyings = useMemo(() => {
-    const combined = Array.from(new Set([...allowedUnderlyings, ...watchlist, "AAPL", "SPY", "QQQ", "NVDA", "MSFT"]));
+    const combined = Array.from(new Set([...allowedUnderlyings, ...watchlist]));
     return combined.sort();
   }, [allowedUnderlyings, watchlist]);
 
+  const reqId = useRef(0);
+  const ctrl = useRef<AbortController | null>(null);
+  useEffect(() => () => { reqId.current = -1; ctrl.current?.abort(); }, []);
+
   const fetchChain = useCallback(async () => {
     if (!underlying) return;
+    const id = ++reqId.current;
+    ctrl.current?.abort();
+    const ac = new AbortController();
+    ctrl.current = ac;
     setLoading(true);
     setError("");
     try {
       const res = await api<OptionChainResponse>(
-        `/api/options/chain?underlying=${underlying}&min_dte=${minDte}&max_dte=${maxDte}`
+        `/api/options/chain?underlying=${encodeURIComponent(underlying)}&min_dte=${minDte}&max_dte=${maxDte}`
       );
+      if (id !== reqId.current || ac.signal.aborted) return;
       setData(res);
     } catch (e) {
+      if (id !== reqId.current || ac.signal.aborted) return;
       setError(e instanceof Error ? e.message : "Failed to fetch option chain");
     } finally {
-      setLoading(false);
+      if (id === reqId.current) setLoading(false);
     }
   }, [api, underlying, minDte, maxDte]);
 
@@ -137,6 +147,7 @@ export default function OptionChain({ status, api, onSymbolSelect }: {
       <span className="muted">DTE {minDte}–{maxDte} · {data ? `${data.contracts.length} contracts` : "—"}</span>
     </div>
 
+    {selectableUnderlyings.length === 0 && <div className="empty-state"><p>No underlyings available from the server yet.</p></div>}
     <div className="controls-row">
       <select
         value={underlying}
@@ -229,13 +240,13 @@ export default function OptionChain({ status, api, onSymbolSelect }: {
                 <td>{money(c.bid)}</td>
                 <td>{money(c.ask)}</td>
                 <td>{money(c.last)}</td>
-                <td>{c.volume.toLocaleString()}</td>
-                <td>{c.open_interest.toLocaleString()}</td>
+                <td>{num(c.volume, 0)}</td>
+                <td>{num(c.open_interest, 0)}</td>
                 <td>{pct(c.iv)}</td>
-                <td>{c.delta.toFixed(3)}</td>
-                <td>{c.gamma.toFixed(4)}</td>
-                <td>{c.theta.toFixed(2)}</td>
-                <td>{c.vega.toFixed(2)}</td>
+                <td>{num(c.delta, 3)}</td>
+                <td>{num(c.gamma, 4)}</td>
+                <td>{num(c.theta, 2)}</td>
+                <td>{num(c.vega, 2)}</td>
               </tr>
             ))}
           </tbody>

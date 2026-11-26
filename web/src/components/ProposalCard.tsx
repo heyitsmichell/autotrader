@@ -5,8 +5,8 @@
  * `<Countdown>` leaf ticks every second, so the list itself re-renders only on data changes.
  */
 
-import { memo, useEffect, useMemo, useState } from "react";
-import { countdown, money, num, occLabel, pct, proposalExpiry } from "@/lib/format";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { countdown, money, num, occLabel, occShort, pct, proposalExpiry } from "@/lib/format";
 import { instrumentOf } from "./options/selection";
 import type { Api } from "@/lib/api";
 import type { Proposal, Status } from "@/lib/types";
@@ -58,16 +58,20 @@ export function Countdown({ expiresAt, onExpire }: { expiresAt: number; onExpire
     return () => window.clearInterval(timer);
   }, []);
   const expired = now >= expiresAt;
-  useEffect(() => { if (expired) onExpire?.(); }, [expired, onExpire]);
+  const fired = useRef(false);
+  useEffect(() => {
+    if (expired && !fired.current) { fired.current = true; onExpire?.(); }
+    if (!expired) fired.current = false;
+  }, [expired, onExpire]);
   if (expired) return <span className={`${css["expiry-chip"]} expired`}>Expired</span>;
   return <span className={`${css["expiry-chip"]}`} suppressHydrationWarning>Expires in {countdown(expiresAt, now)}</span>;
 }
 
 function sizeText(p: Proposal): string {
-  if (isOptionProposal(p)) return `buy ${p.quantity}`;
   if (!isOptionProposal(p)) return `${p.quantity} share${p.quantity === 1 ? "" : "s"}`;
-  const strike = p.strike_price != null ? money(p.strike_price) : "";
-  return `${p.quantity} contract${p.quantity === 1 ? "" : "s"} ×${multiplierOf(p)} · ${strike} ${p.option_type || ""} exp ${p.expiration_date || "—"}`;
+  const label = occShort(p.symbol)
+    ?? `${p.symbol} ${p.strike_price ?? ""}${String(p.option_type || "").charAt(0).toUpperCase()} ${p.expiration_date || ""}`.trim();
+  return `buy ${p.quantity} × ${label} (×${multiplierOf(p)})`;
 }
 
 function OptionDetail({ p, settings }: { p: Proposal; settings?: Status["settings"] }) {

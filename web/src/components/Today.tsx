@@ -1,17 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { isOccSymbol, money, pct } from "@/lib/format";
+import { etDayKey, isOccSymbol, money, pct } from "@/lib/format";
+import { usePoll } from "@/lib/usePoll";
 import type { Api } from "@/lib/api";
-import type { EventRow, Performance, Portfolio, Proposal, Signal, Status, TradeLedgerEntry } from "@/lib/types";
+import type { SleevesPayload, EventRow, Performance, Portfolio, Proposal, Signal, Status, TradeLedgerEntry } from "@/lib/types";
 import Empty from "@/components/ui/Empty";
 import { Figure, FigureRow } from "@/components/ui/Figure";
 import Section from "@/components/ui/Section";
 import EquityChart from "./EquityChart";
-<<<<<<< HEAD
 import StrategiesVsSpy from "./today/StrategiesVsSpy";
-=======
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
 import Activity from "./today/Activity";
 import { summarizeGate, weekdaysSince } from "./today/gate";
 import OptionPositions from "./options/OptionPositions";
@@ -71,6 +69,11 @@ export default function Today({ status, portfolio, performance, events, pendingC
   api?: Api;
 }) {
   const [trades, setTrades] = useState<TradeLedgerEntry[]>([]);
+  const sleevesData = usePoll<SleevesPayload>(api, api ? "/api/sleeves" : null, 60_000).data;
+  const swingSleeve = useMemo(() => {
+    const s = sleevesData?.sleeves?.find(x => x.id === "swing");
+    return s ? { equity: num(s.equity), invested_pct: num(s.invested_pct) } : null;
+  }, [sleevesData]);
   const allPositions = useMemo(() => portfolio?.positions || [], [portfolio]);
   const positions = useMemo(() => allPositions.filter(p => !isOccSymbol(p.symbol)), [allPositions]);
   const optionPositions = useMemo(() => [
@@ -83,11 +86,11 @@ export default function Today({ status, portfolio, performance, events, pendingC
   ], [allPositions, portfolio?.option_positions]);
   const optionsLine = useMemo(() => {
     if (!status?.settings?.options_enabled) return "";
-    const day = new Date().toDateString();
+    const day = etDayKey();
     let proposed = 0;
     const skips = new Map<string, number>();
     for (const e of events) {
-      if (new Date(e.ts).toDateString() !== day) continue;
+      if (etDayKey(e.ts) !== day) continue;
       if (/^Auto option entry for/i.test(e.message)) proposed++;
       else if (/skipped:/i.test(e.message) && /option|call|put/i.test(e.message)) {
         const reason = e.message.split(/skipped:\s*/i)[1]?.trim().replace(/[.\s]+$/, "") || "unknown";
@@ -142,8 +145,14 @@ export default function Today({ status, portfolio, performance, events, pendingC
   const noStopCount = hasStopData ? rows.filter(unstopped).length : 0;
   const atRisk = hasStopData && positions.length
     ? rows.reduce((a, r) => a + (r.stop != null && !unstopped(r) && r.last != null ? Math.max(0, r.last - r.stop) * r.qty : 0), 0) : null;
-  const invested = net && positions.length ? positions.reduce((a, p) => a + (num(p.market_value) ?? 0), 0) / net : null;
-  const excess = performance?.enough_data ? num(performance.excess_return_pct) : null;
+  const swingEq = swingSleeve?.equity ?? null;
+  const investDen = swingEq && swingEq > 0 ? swingEq : net;
+  const investedFromSleeve = swingEq != null && swingEq > 0;
+  const invested = investDen && positions.length ? positions.reduce((a, p) => a + (num(p.market_value) ?? 0), 0) / investDen : null;
+  const excess = num(performance?.excess_return_pct);
+  const minDays = performance?.min_days ?? performance?.significance?.min_days ?? null;
+  const excessSuffix = excess != null && !performance?.enough_data
+    ? ` (${performance?.days ?? 0}${minDays != null ? `/${minDays}` : ""} days, not significant yet)` : "";
   const bench = performance?.benchmark_symbol || "SPY";
 
   const gate = useMemo(() => summarizeGate(signals || []), [signals]);
@@ -174,24 +183,25 @@ export default function Today({ status, portfolio, performance, events, pendingC
       <FigureRow>
         <Figure label="Net value" value={money(net)}/>
         <Figure label="Day P&L" value={money(dayPnl, { sign: true })} tone={tone(dayPnl)}/>
-        <Figure label="Open P&L" value={money(openPnl, { sign: true })} tone={tone(openPnl)}/>
+        <Figure label="Swing open P&L" value={money(openPnl, { sign: true })} tone={tone(openPnl)}/>
         <Figure label="At risk to stops"
           value={atRisk == null ? "—" : noStopCount === rows.length ? `${noStopCount} without stop`
             : noStopCount ? `${money(atRisk)} · ${noStopCount} without stop`
             : `${money(atRisk)} ${net ? pct((atRisk / net) * 100, { sign: false }) : ""}`}
           tone={noStopCount || atRisk ? "loss" : undefined}
           title={atRisk == null ? "No positions or no stop data." : noStopCount ? "Positions without a stop have unbounded risk and are not counted in the dollar figure." : "Sum of (last price minus stop) times quantity: what the stops would cost if all hit."}/>
-        <Figure label="Invested" value={invested == null ? "—" : pct(invested * 100, { digits: invested != null && invested < 0.1 ? 1 : 0, sign: false })}/>
-        <Figure label={`vs ${bench} since start`} value={excess == null ? "—" : pct(excess, { sign: true })}
+        <Figure label="Swing invested" value={invested == null ? "—" : pct(invested * 100, { digits: invested != null && invested < 0.1 ? 1 : 0, sign: false })}
+          title={investedFromSleeve ? "Swing positions' market value divided by the swing sleeve equity." : "Swing sleeve equity unavailable: divided by whole-account net value instead."}/>
+        <Figure label={`vs ${bench} since start`} value={excess == null ? "—" : `${pct(excess, { sign: true })}${excessSuffix}`}
           tone={tone(excess)}
-          title={excess == null ? (performance?.message || "Not enough history yet for a fair comparison.") : undefined}/>
+          title={excess == null ? (performance?.message || "Not enough history yet for a fair comparison.") : excessSuffix ? "Not statistically significant yet." : undefined}/>
       </FigureRow>
       {portfolio?.balance?.stale && <p className="muted">The broker returned an empty balance; showing the last good values.</p>}
     </div>
 
     <div className={css["main"]}>
     <div className={css["pos"]}>
-      <Section title="Positions" meta={positions.length ? `${positions.length} open` : undefined}>
+      <Section title="Positions" meta={positions.length ? `${positions.length} swing open` : undefined}>
         <Ladder rows={rows} onSymbol={onSymbol}
           emptyNote={`No open positions. The bot buys when a symbol passes the gate; ${gate.pass} pass right now.`}/>
       </Section>
@@ -200,11 +210,7 @@ export default function Today({ status, portfolio, performance, events, pendingC
         budget={status.settings.options_entry_max_premium_usd ?? null}/>}
     </div>
 
-<<<<<<< HEAD
     <div className={css["chartbox"]}>{api ? <StrategiesVsSpy api={api} performance={performance}/> : <EquityChart performance={performance}/>}</div>
-=======
-    <div className={css["chartbox"]}><EquityChart performance={performance}/></div>
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
     </div>
 
     <div className={css["rail"]}>

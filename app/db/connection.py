@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -56,6 +57,34 @@ class LockedConnection:
         self.raw = raw
         self.lock = threading.RLock()
         self.closed = False
+        self._tx_depth = 0
+
+    @contextmanager
+    def transaction(self):
+        """Re-entrant transaction: BEGIN IMMEDIATE on the outermost entry, COMMIT on success,
+        ROLLBACK on any exception. Nested entries join the outer one. Holds the connection lock
+        throughout so no other thread interleaves statements."""
+        with self.lock:
+            if self._tx_depth > 0:
+                self._tx_depth += 1
+                try:
+                    yield self
+                finally:
+                    self._tx_depth -= 1
+                return
+            self.raw.execute("BEGIN IMMEDIATE")
+            self._tx_depth = 1
+            try:
+                yield self
+            except BaseException:
+                self._tx_depth = 0
+                if self.raw.in_transaction:
+                    self.raw.execute("ROLLBACK")
+                raise
+            else:
+                self._tx_depth = 0
+                if self.raw.in_transaction:
+                    self.raw.execute("COMMIT")
 
     def execute(self, sql: str, params: Any = ()) -> _Result:
         with self.lock:

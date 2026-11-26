@@ -1,4 +1,4 @@
-"""24/5 trading: ALL_DAY entries, overnight size factor, extended-hours spread guard, N-4."""
+"""24/5 trading: entries never use ALL_DAY (invalid for region us), overnight size factor, extended-hours spread guard, N-4."""
 from dataclasses import replace
 from datetime import datetime
 from types import SimpleNamespace
@@ -41,15 +41,15 @@ async def _place(session, symbol="AAPL", side="BUY", order_type="LIMIT", **kw):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cur", ["ALL", "NIGHT"])
-async def test_all_day_for_overnight_buy_limit(cur):
-    assert await _place(cur) == "ALL_DAY"
+async def test_overnight_buy_limit_uses_clock_session_not_all_day(cur):
+    # Webull region 'us' rejects ALL_DAY (valid: ALL, CORE, NIGHT); 2026-11-26 kill-switch incident
+    assert await _place(cur) == cur
 
 
 @pytest.mark.asyncio
 async def test_all_day_not_in_core_not_for_other_symbols_or_setting_off():
     assert await _place("CORE") == "CORE"
     assert await _place("ALL", symbol="ZZZZ") == "ALL"
-    assert await _place("NIGHT", entry_session_all_day=False) == "NIGHT"
 
 
 @pytest.mark.asyncio
@@ -138,3 +138,9 @@ async def test_unconfirmed_cancel_keeps_protective_row_tracked():
                            set_protective=lambda *a, **k: marked.append(a))
     out = await e._cancel_protective("AAPL", "sell1")
     assert out == [] and marked == []                      # refused cancel: row not marked cancelled
+
+
+def test_mock_rejects_all_day_like_webull_us():
+    import inspect
+    from app.mock import server
+    assert "Invalid trading_session for region 'us'" in inspect.getsource(server)

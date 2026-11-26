@@ -1,6 +1,5 @@
 """Pytest configuration and fixtures for AI Trader tests."""
 
-import asyncio
 import contextlib
 import os
 import sys
@@ -106,12 +105,13 @@ def _restore_test_clock():
     m.set_test_time(saved)
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+@pytest.fixture(autouse=True)
+def _restore_environ():
+    """Snapshot os.environ before each test and restore it after (no env leakage between tests)."""
+    saved = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(saved)
 
 
 @contextlib.contextmanager

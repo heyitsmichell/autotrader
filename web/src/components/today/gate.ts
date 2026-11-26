@@ -1,3 +1,4 @@
+import { weekdaysSinceEt } from "@/lib/format";
 import type { Signal } from "@/lib/types";
 
 export interface GateSummary {
@@ -39,16 +40,5 @@ export function isSystemEvent(message: string, level: string): boolean {
 /** Weekdays elapsed from `from` up to now (entry day excluded). */
 export function weekdaysSince(from: string | null | undefined, now = Date.now()): number | null {
   if (!from) return null;
-  const start = new Date(from);
-  if (!Number.isFinite(start.getTime())) return null;
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(now);
-  end.setHours(0, 0, 0, 0);
-  let n = 0;
-  while (start.getTime() < end.getTime()) {
-    start.setDate(start.getDate() + 1);
-    const w = start.getDay();
-    if (w !== 0 && w !== 6) n++;
-  }
-  return n;
+  return weekdaysSinceEt(from, now);
 }

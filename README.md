@@ -111,7 +111,7 @@ because the server's service runs `trader.py` directly, so don't call them on th
 | Entry orders | Limit orders. `ENTRY_ORDER_TYPE=marketable` uses a limit just through the touch (`MARKETABLE_OFFSET_BPS`) and chases for `ENTRY_CHASE_SECONDS`; entries are never true market orders. Code default is plain `limit` |
 | Exit orders | `EXIT_ORDER_TYPE=market` sends market orders, in the core session only; otherwise limit |
 | Stops | Broker stops are always CORE session and GTC |
-| Sessions | The order session follows the clock: CORE, ALL (pre/after-hours), NIGHT (overnight, opt-in with `OVERNIGHT_TRADING` and `OVERNIGHT_SYMBOLS`). `ENTRY_SESSION_ALL_DAY=true` lets entries use the ALL_DAY session. Extended-hours entries are sized down (`OVERNIGHT_SIZE_FACTOR`) and spread-guarded (`MAX_SPREAD_PCT_EXTENDED`) |
+| Sessions | The order session follows the clock: CORE, ALL (pre/after-hours), NIGHT (overnight, opt-in with `OVERNIGHT_TRADING` and `OVERNIGHT_SYMBOLS`). Webull region `us` accepts only CORE, ALL and NIGHT (no ALL_DAY), so extended-hours entry limits expire at each session boundary. Extended-hours entries are sized down (`OVERNIGHT_SIZE_FACTOR`) and spread-guarded (`MAX_SPREAD_PCT_EXTENDED`) |
 | Soft stop | Outside CORE the broker holds no stop, so the app watches prices and sells itself (`EXTENDED_HOURS_SOFT_STOP`). The app must stay up |
 | Webull MCP guards | The MCP server enforces `WEBULL_SYMBOL_WHITELIST`, `WEBULL_MAX_ORDER_NOTIONAL_USD`, `WEBULL_MAX_ORDER_QUANTITY`; market calendar in `app/market.py` (`MARKET_CLOSED_DATES`) |
 | Kill switch | Blocks new opening orders, stops the scheduler, dismisses pending proposals. Exits, stops and flatten still pass. Saved across restarts. Does not cancel orders already at Webull |

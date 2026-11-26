@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, HTTPException, Request
@@ -62,6 +63,27 @@ def _model_payload(db, s) -> dict:
 async def options_model(request: Request):
     """The options ML (learning mode): model facts and the last 15 auto option predictions."""
     st = request.app.state
+    return _model_payload(st.db, st.settings)
+
+
+@router.post("/api/options/train")
+async def options_train(request: Request):
+    """Retrain the options model now (same code path as the worker's scheduled retrain)."""
+    from .. import options_ml
+    st = request.app.state
+    if getattr(st, "options_training", False):
+        raise HTTPException(409, "Options model training is already running")
+    st.options_training = True
+    try:
+        live = await asyncio.to_thread(options_ml.live_training_rows, st.db)
+        model = await asyncio.to_thread(options_ml.train, live,
+                                        live_weight=st.settings.options_ml_live_weight)
+    finally:
+        st.options_training = False
+    if model is None:
+        raise HTTPException(409, "Not enough data to train the options model "
+                                 "(needs the backtest dataset or enough live outcomes)")
+    st.db.log("info", options_ml.report_line(model))
     return _model_payload(st.db, st.settings)
 
 

@@ -31,7 +31,14 @@ from .util import (MAX_PROPOSALS_PER_RUN, _coid, _is_option_symbol, _session_rej
 log = logging.getLogger("app.engine")
 
 
-class ExecutionMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import ExecutionHost as _Host
+else:
+    _Host = object
+
+class ExecutionMixin(_Host):
     @staticmethod
     def _is_opening(p: dict) -> bool:
         """True for an order that opens or adds risk (the only kind the kill switch blocks).

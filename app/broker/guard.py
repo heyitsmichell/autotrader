@@ -86,11 +86,38 @@ class OrderGuard:
             log.exception("kill_switch callable raised; treating as ON for opening orders")
             return True
 
+    def _check_closing(self, order: dict) -> None:
+        """Sanity checks for closing orders (never the kill switch / whitelist / notional).
+
+        All closing orders: quantity > 0. Closing STOCK sells that declare an ``order_type``
+        (LIMIT/MARKET exits) also: (no max_order_qty cap: exits must always be possible) and, if ``held`` is given,
+        quantity <= held. Protective stops (no order_type / STOP*) are sized to the position and
+        only get the quantity > 0 check.
+        """
+        symbol = str(order.get("symbol") or "").upper()
+        kind = order.get("kind", "stock")
+        if order.get("amount") is not None or not symbol:
+            return  # dollar-amount orders / replace-without-qty (no symbol) carry no usable qty
+        qty = float(order.get("quantity") or 0)
+        if qty <= 0:
+            raise OrderGuardError(f"{symbol}: closing order quantity {qty:g} must be > 0")
+        if kind != "stock" or str(order.get("side") or "").upper() != "SELL":
+            return
+        otype = str(order.get("order_type") or "").upper()
+        if not otype or "STOP" in otype:
+            return
+        # No max_order_qty cap here on purpose: a cap on exits could leave a large position
+        # (e.g. a 5,382-share sleeve holding vs MAX_ORDER_QTY=5000) impossible to close.
+        held = order.get("held")
+        if held is not None and qty > float(held) + 1e-9:
+            raise OrderGuardError(f"{symbol}: closing quantity {qty:g} exceeds held {float(held):g}")
+
     def check(self, order: dict, *, allow_when_killed: bool = False) -> None:
         """Raise OrderGuardError when the order must not be sent. Closing orders always pass."""
-        if not order.get("opening", True):
-            return
         s = self.settings
+        if not order.get("opening", True):
+            self._check_closing(order)
+            return
         symbol = str(order.get("symbol") or "").upper()
         kind = order.get("kind", "stock")
 

@@ -175,7 +175,14 @@ class Workers:
         return done
 
 
-class WorkersMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import WorkersHost as _Host
+else:
+    _Host = object
+
+class WorkersMixin(_Host):
     async def start_workers(self) -> None:
         self.workers.start()
 

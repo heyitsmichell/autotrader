@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { usePoll } from "@/lib/usePoll";
 import type { Api } from "@/lib/api";
 import type { ConfirmRequest } from "@/components/ConfirmModal";
 import { money } from "@/lib/format";
@@ -22,35 +23,15 @@ export default function Strategies({ api, onConfirm, onAction }: {
   onConfirm?: (r: ConfirmRequest | null) => void;
   onAction?: (label: string, fn: () => Promise<unknown>) => void | Promise<void>;
 }) {
-  const [data, setData] = useState<SleevesPayload | null>(null);
-  const [series, setSeries] = useState<SleeveEquityPoint[]>([]);
-  const [events, setEvents] = useState<SleeveEvent[]>([]);
   const [selId, setSelId] = useState("");
-  const [err, setErr] = useState("");
 
-  useEffect(() => {
-    let live = true;
-    const load = () => api<SleevesPayload>("/api/sleeves")
-      .then(d => { if (live) { setData(d); setErr(""); } })
-      .catch(e => { if (live) setErr(e instanceof Error ? e.message : "Could not load strategies."); });
-    void load();
-    const t = window.setInterval(load, 30_000);
-    return () => { live = false; window.clearInterval(t); };
-  }, [api]);
-
-  useEffect(() => {
-    let live = true;
-    const load = () => api<{ series: SleeveEquityPoint[] }>("/api/sleeves/equity?days=365")
-      .then(d => { if (live) setSeries(Array.isArray(d?.series) ? d.series : []); })
-      .catch(() => { /* the chart just shows its empty state */ });
-    const loadEv = () => api<{ events: SleeveEvent[] }>("/api/sleeves/events?days=400")
-      .then(d => { if (live) setEvents(Array.isArray(d?.events) ? d.events : []); })
-      .catch(() => { /* no markers */ });
-    void loadEv();
-    void load();
-    const t = window.setInterval(() => { void load(); void loadEv(); }, 300_000);
-    return () => { live = false; window.clearInterval(t); };
-  }, [api]);
+  const sp = usePoll<SleevesPayload>(api, "/api/sleeves", 30_000);
+  const data = sp.data;
+  const err = sp.error ? (sp.error.message || "Could not load strategies.") : "";
+  const eqd = usePoll<{ series: SleeveEquityPoint[] }>(api, "/api/sleeves/equity?days=365", 300_000).data;
+  const evd = usePoll<{ events: SleeveEvent[] }>(api, "/api/sleeves/events?days=400", 300_000).data;
+  const series = useMemo(() => (Array.isArray(eqd?.series) ? eqd.series : []), [eqd]);
+  const events = useMemo(() => (Array.isArray(evd?.events) ? evd.events : []), [evd]);
 
   const sleeves = useMemo(() => {
     const list = sortSleeves(data?.sleeves ?? []);
@@ -64,18 +45,21 @@ export default function Strategies({ api, onConfirm, onAction }: {
     <p className={css["muted"]}>{err || "Loading…"}</p></Section>;
 
   const acct = data.account;
-  const sumEq = acct?.sleeves_equity ?? sleeves.reduce((a, s) => a + (s.equity || 0), 0);
-  const target = (acct?.target_per_sleeve ?? 0) * sleeves.length;
+  const others = sleeves.filter(s => s.id !== "swing");
+  const sumEq = others.reduce((a, s) => a + (s.equity || 0), 0);
+  const target = others.reduce((a, s) => a + (s.start_capital || 0), 0);
+  const words = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight"];
+  const countWord = words[sleeves.length] ?? String(sleeves.length);
   const dayCls = !acct || !acct.day_pnl ? "" : acct.day_pnl > 0 ? css["gain"] : css["loss"];
 
   return <>
     {!data.enabled && <p className={css["note"]}>Multi-strategy mode is off (SLEEVES_ENABLED=false). Only Swing trades.</p>}
     {err && <p className={css["muted"]}>{err} Showing the last data received.</p>}
-    <Section title="Strategies" meta="Four strategies share one account">
+    <Section title="Strategies" meta={`${countWord} ${sleeves.length === 1 ? "strategy shares" : "strategies share"} one account`}>
       {acct && <div className={css["strip"]}>
         <div><span>Account value</span><b>{money(acct.net_liq)}</b></div>
         <div><span>Day P&amp;L</span><b className={dayCls}>{money(acct.day_pnl, { sign: true })}</b></div>
-        <div><span>In strategies</span><b>{money(sumEq)}{target ? <span> of {money(target)}</span> : null}</b></div>
+        <div><span title="Swing is the account remainder, so it is excluded.">In other strategies</span><b>{money(sumEq)}{target ? <span> of {money(target)}</span> : null}</b></div>
       </div>}
       <AllocationBar sleeves={sleeves}/>
     </Section>

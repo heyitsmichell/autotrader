@@ -16,7 +16,14 @@ from .util import _coid, _is_option_symbol
 log = logging.getLogger("app.engine")
 
 
-class ReconcileMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import ReconcileHost as _Host
+else:
+    _Host = object
+
+class ReconcileMixin(_Host):
     # -- unknown orders --------------------------------------------------------
     async def reconcile_orders(self) -> int:
         """Settle proposals whose order status is unknown (no reply from the broker) or
@@ -229,7 +236,8 @@ class ReconcileMixin:
             try:
                 hist_ids = {o.get("client_order_id")
                             for o in parse_orders(await self.broker.order_history_text())}
-            except Exception:  # noqa: BLE001 - incl. brokers without a history call
+            except Exception as exc:  # noqa: BLE001 - incl. brokers without a history call
+                log.debug("order history unavailable (stale-unknown check skipped): %s", exc)
                 hist_ids = None
             for x in (self.db.protective() if hist_ids is not None else []):
                 if x["kind"] == "sl" and self.portfolio.stale_unknown(x, open_ids, hist_ids):

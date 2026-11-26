@@ -7,12 +7,7 @@ import Section from "./ui/Section";
 import Segmented from "./ui/Segmented";
 import Mark from "./ui/Mark";
 import Empty from "./ui/Empty";
-<<<<<<< HEAD
-=======
-import TradeStats from "./results/TradeStats";
-import OptionsModel from "./results/OptionsModel";
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
-import { money, num, pct } from "@/lib/format";
+import { dateTime, money, num, pct } from "@/lib/format";
 import type { TradeLedgerEntry } from "@/lib/types";
 import css from "./TradeLedgerView.module.css";
 import rcss from "./results/results.module.css";
@@ -24,7 +19,7 @@ export default function TradeLedgerView() {
   const [trades, setTrades] = useState<TradeLedgerEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selectedTrade, setSelectedTrade] = useState<TradeLedgerEntry | null>(null);
-  const [statusFilter, setStatusFilter] = useState<"all" | "open" | "closed">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "open" | "closed" | "cancelled">("all");
   const [symbolFilter, setSymbolFilter] = useState("");
   const [showAll, setShowAll] = useState(false);
 
@@ -41,23 +36,17 @@ export default function TradeLedgerView() {
   }, []);
 
   const filteredTrades = trades.filter((t) =>
-    (statusFilter === "all" || t.status === statusFilter) &&
+    (statusFilter === "all" ? t.status !== "cancelled" : t.status === statusFilter) &&
     (symbolFilter === "" || t.symbol.toLowerCase().includes(symbolFilter.toLowerCase()))
   );
   const shown = showAll ? filteredTrades : filteredTrades.slice(0, CAP);
 
   return (
     <div className="trade-ledger-view">
-<<<<<<< HEAD
       <Section title="Swing round trips" meta={`${filteredTrades.length} shown · click a row for entry signals, slippage, MAE/MFE`} right={
-=======
-      <TradeStats />
-      <OptionsModel />
-      <Section title="Trades" meta={`${filteredTrades.length} shown`} rule right={
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
         <div className={rcss["filters"]}>
           <Segmented label="Status" value={statusFilter} onChange={setStatusFilter}
-            options={[{ value: "all", label: "All" }, { value: "open", label: "Open" }, { value: "closed", label: "Closed" }]} />
+            options={[{ value: "all", label: "All" }, { value: "open", label: "Open" }, { value: "closed", label: "Closed" }, { value: "cancelled", label: "Cancelled" }]} />
           <input type="text" aria-label="Filter by symbol" placeholder="Symbol" value={symbolFilter}
             onChange={(e) => setSymbolFilter(e.target.value)} />
         </div>
@@ -86,7 +75,7 @@ export default function TradeLedgerView() {
                     <td className="num mono">{t.quantity_filled ?? t.quantity_requested ?? "—"}</td>
                     <td className={`num mono ${pnlCls(t.realized_pnl)}`}>{money(t.realized_pnl, { sign: true })}</td>
                     <td className={`num mono ${pnlCls(t.realized_pnl_pct)}`}>{pct(t.realized_pnl_pct)}</td>
-                    <td className="num mono">{t.hold_seconds != null ? `${num(t.hold_seconds / 86400, 1)} d` : "—"}</td>
+                    <td className="num mono">{t.hold_seconds != null ? (t.hold_seconds < 172800 ? `${num(Math.max(0, t.hold_seconds) / 3600, 1)} h` : `${num(t.hold_seconds / 86400, 1)} d`) : "—"}</td>
                     <td>{t.exit_reason || "—"}</td>
                     <td><button className="button" onClick={(e) => { e.stopPropagation(); setSelectedTrade(t); }}>View</button></td>
                   </tr>
@@ -125,7 +114,7 @@ function TradeDetail({ trade, onClose }: { trade: TradeLedgerEntry; onClose: () 
               <dt>Fill Price</dt>
               <dd>{trade.entry_fill_price != null ? trade.entry_fill_price.toFixed(2) : "—"}</dd>
               <dt>Fill Time</dt>
-              <dd>{trade.entry_fill_time ? new Date(trade.entry_fill_time).toLocaleString() : "—"}</dd>
+              <dd>{trade.entry_fill_time ? `${dateTime(trade.entry_fill_time)} ET` : "—"}</dd>
               <dt>Slippage</dt>
               <dd className={trade.entry_slippage != null && trade.entry_slippage > 0 ? "negative" : "neutral"}>
                 {trade.entry_slippage != null ? trade.entry_slippage.toFixed(4) : "—"}
@@ -149,7 +138,7 @@ function TradeDetail({ trade, onClose }: { trade: TradeLedgerEntry; onClose: () 
               <dt>Fill Price</dt>
               <dd>{trade.exit_fill_price != null ? trade.exit_fill_price.toFixed(2) : "—"}</dd>
               <dt>Fill Time</dt>
-              <dd>{trade.exit_fill_time ? new Date(trade.exit_fill_time).toLocaleString() : "—"}</dd>
+              <dd>{trade.exit_fill_time ? `${dateTime(trade.exit_fill_time)} ET` : "—"}</dd>
               <dt>Slippage</dt>
               <dd className={trade.exit_slippage != null && trade.exit_slippage > 0 ? "negative" : "neutral"}>
                 {trade.exit_slippage != null ? trade.exit_slippage.toFixed(4) : "—"}
@@ -157,7 +146,7 @@ function TradeDetail({ trade, onClose }: { trade: TradeLedgerEntry; onClose: () 
               <dt>Exit Reason</dt>
               <dd>{trade.exit_reason || "—"}</dd>
               <dt>Hold Time</dt>
-              <dd>{trade.hold_seconds != null ? (trade.hold_seconds / 3600).toFixed(1) + "h" : "—"}</dd>
+              <dd>{trade.hold_seconds != null ? (Math.max(0, trade.hold_seconds) / 3600).toFixed(1) + "h" : "—"}</dd>
             </dl>
           </div>
 

@@ -15,17 +15,17 @@ router = APIRouter()
 
 def list_proposals(st, limit: int = 50, symbol: str | None = None) -> list[dict]:
     """Same list GET /api/proposals returns (the SSE `proposals` payload)."""
-    rows = st.db.proposals(min(limit, 500), symbol.upper() if symbol else None)
+    rows = st.db.proposals(max(1, min(int(limit), 500)), symbol.upper() if symbol else None)
     return [decode(r) for r in rows]
 
 
 @router.get("/api/proposals", response_model=list[ProposalOut])
-async def proposals(request: Request, limit: int = 50, symbol: str | None = None):
+def proposals(request: Request, limit: int = 50, symbol: str | None = None):
     return list_proposals(request.app.state, limit, symbol)
 
 
 @router.get("/api/proposals/{pid}")
-async def proposal_detail(request: Request, pid: int):
+def proposal_detail(request: Request, pid: int):
     db = request.app.state.db
     p = decode(db.get_proposal(pid))
     if p is None:

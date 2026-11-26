@@ -1,0 +1,16 @@
+=== Account Balance ===
+Currency:              USD
+Total Cash Balance:    25000.50
+Total Market Value:    3004.25
+Total Unrealized P&L:  251.75
+Net Liquidation:       28004.75
+Day P&L:               -120.30
+
+  --- USD ---
+  Cash Balance:        25000.50
+  Settled Cash:        24000.00
+  Unsettled Cash:      1000.50
+  Market Value:        3004.25
+  Buying Power:        48000.00
+  Unrealized P&L:      251.75
+  Available Withdrawal:24000.00

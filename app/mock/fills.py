@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -13,6 +14,19 @@ from .options import option_price, option_symbol
 from .quotes import price_of
 from .state import (ACCOUNT_ID, DISCLAIMER, FRACTIONAL_ELIGIBLE, OPEN_STATUSES, _children, _iso,
                     _now_iso, _set, equity, load, save)
+
+
+def realism() -> bool:
+    """Optional realism mode (MOCK_REALISM=1): spread, partial first fill, per-order fee."""
+    return os.environ.get("MOCK_REALISM", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def spread_bps() -> float:
+    return float(os.environ.get("MOCK_SPREAD_BPS", "5"))
+
+
+def order_fee() -> float:
+    return float(os.environ.get("MOCK_ORDER_FEE", "0.50"))
 
 
 def _fill(state: dict, order: dict, px: float) -> bool:
@@ -86,6 +100,7 @@ def try_fill(state: dict, price=price_of) -> None:
     """Expire old DAY orders, fill orders whose price is reached, run bracket logic."""
     today = datetime.now(timezone.utc).date().isoformat()
     changed = True
+    partials: set[str] = set()
     while changed:
         changed = False
         for order in state["orders"]:
@@ -97,7 +112,7 @@ def try_fill(state: dict, price=price_of) -> None:
                     _set(child, "CANCELLED")
                 changed = True
                 continue
-            if order["status"] != "SUBMITTED":
+            if order["status"] != "SUBMITTED" or order["client_order_id"] in partials:
                 continue
             # Get current price
             if order.get("instrument_type") == "OPTION":
@@ -117,7 +132,37 @@ def try_fill(state: dict, price=price_of) -> None:
             if not hit:
                 continue
             changed = True
-            if not _fill(state, order, px):
+            if realism() and order.get("instrument_type") != "OPTION":
+                half = spread_bps() / 20000.0           # half-spread as a fraction
+                px = round(px * (1 + half) if buy else px * (1 - half), 4)
+                total = order["quantity"]
+                partial = not order.get("partial_done") and total > 1e-9
+                if partial:
+                    order["quantity"] = round(total * 0.5, 4) or total
+                ok = _fill(state, order, px)
+                if ok and not order.get("fee_charged"):
+                    state["cash"] -= order_fee()
+                    order["fee_charged"] = True
+                    order["commission"] = order_fee()
+                if ok and partial:
+                    done = order["quantity"]
+                    order["filled_qty"] = order.get("filled_qty", 0.0) + done
+                    order["quantity"] = round(total - done, 4)
+                    order["partial_done"] = True
+                    order["total_qty"] = total
+                    if order["quantity"] > 1e-9:
+                        order["status"] = "SUBMITTED"   # remainder stays working
+                        partials.add(order["client_order_id"])
+                        continue
+                if ok and order.get("total_qty"):       # remainder filled: show the full size
+                    order["quantity"] = order["filled_qty"] = order["total_qty"]
+                if not ok:
+                    order["quantity"] = total
+            elif not _fill(state, order, px):
+                ok = False
+            else:
+                ok = True
+            if not ok:
                 _set(order, "FAILED")
                 for child in _children(state, order):
                     _set(child, "CANCELLED")

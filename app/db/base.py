@@ -17,6 +17,10 @@ class BaseRepo:
     webull_environment: str | None
     account_id: str | None
 
+    def transaction(self):
+        """Re-entrant atomic block over the shared connection (see LockedConnection.transaction)."""
+        return self.conn.transaction()
+
     def _heal_missing_column(self, table: str, err: sqlite3.OperationalError) -> bool:
         """Safety net for 'table X has no column named Y': add Y if the schema knows it."""
         m = re.search(r"has no column named (\w+)", str(err))

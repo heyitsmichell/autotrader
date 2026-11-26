@@ -37,7 +37,9 @@ OPEN_STATUSES = ("submitting", "working", "partial")
 TICK_SECONDS = 60.0
 CANCEL_AFTER_SECONDS = 180.0       # an unfilled marketable limit is cancelled and re-tried next tick
 GIVE_UP_SECONDS = 600.0            # never seen at the broker -> failed
-OFFSET_BPS = 10.0                  # marketable limit offset beyond the bid/ask
+OPTION_FEE_PER_CONTRACT = 0.65     # estimate: per-contract option fee (broker reports no fee field)
+STOCK_SELL_FEE_RATE = 0.0000278    # estimate: SEC + TAF regulatory fees on stock sells, x notional
+OFFSET_BPS = 10.0                 # marketable limit offset beyond the bid/ask
 DD_CONFIRM_TICKS = 3               # drawdown pause needs this many consecutive breaching ticks
 MAX_PASSES_PER_MONTH = 12          # rebalance passes before a month is closed with a warning
 VAA_SYMBOLS = list(dict.fromkeys(vaa.G12 + vaa.DEFENSIVE))
@@ -128,13 +130,11 @@ class SleeveManager:
                 self.db.set_kv("sleeves_capital_warned", day)
                 self.db.log("error", short, alert=True)
             return
-<<<<<<< HEAD
         try:
             await self._price("SPY", snap)    # SPY is rarely held, so the snapshot lacks it
-        except Exception:  # noqa: BLE001 - the benchmark line is optional, never block the tick
+        except Exception as exc:  # noqa: BLE001 - the benchmark line is optional, never block the tick
+            log.debug("SPY benchmark price failed: %s", exc)
             pass
-=======
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5
         self._record(values, snap)
         await self._drawdown_checks(values)
         self._drift_checks()
@@ -270,14 +270,16 @@ class SleeveManager:
         try:
             from ..engine.option_exits import parse_held_options
             opts = {h.symbol.upper(): h for h in parse_held_options(text or "")}
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.warning("held-option parse failed: %s", exc)
             opts = {}
         net_liq = None
         if self.eng.portfolio is not None:
             try:
                 bal = (await self.eng.portfolio.snapshot()).get("balance") or {}
                 net_liq = _f(bal.get("net_liq"))
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                log.warning("portfolio snapshot net_liq failed: %s", exc)
                 net_liq = None
         return {"last": last, "raw_qty": raw_qty, "options": opts, "net_liq": net_liq}
 
@@ -301,19 +303,31 @@ class SleeveManager:
             st = self.db.sleeve_state(sid)
             if not st:
                 continue
-            cash, invested = float(st.get("cash") or 0.0), 0.0
+            cash, invested, unmarked = float(st.get("cash") or 0.0), 0.0, False
             for h in self.db.sleeve_holdings(sid):
                 q = float(h["qty"])
                 if h["kind"] == "option":
                     held = snap["options"].get(h["symbol"].upper())
                     mark = _f(getattr(held, "mark", None)) if held else None
+                    if mark is None:
+                        unmarked = True   # estimate with cost for the swing remainder, but don't record it
                     invested += q * 100 * (mark if mark is not None else float(h.get("avg_cost") or 0))
                 else:
                     px = snap["last"].get(h["symbol"]) or h.get("avg_cost") or 0.0
                     invested += q * float(px)
-            out[sid] = {"equity": round(cash + invested, 2), "cash": round(cash, 2),
-                        "invested": round(invested, 2)}
-            others += cash + invested
+            # sold lots leave holdings when the order is sent but cash arrives on fill: count the
+            # still-unfilled proceeds so equity (and the drawdown check) doesn't dip mid-rebalance
+            pending = 0.0
+            for o in self.db.sleeve_orders(sid, 50, OPEN_STATUSES):
+                if str(o.get("side")).upper() != "SELL" or not o.get("limit_price"):
+                    continue
+                if o.get("kind") == "option" and o.get("position_intent") != "SELL_TO_CLOSE":
+                    continue                  # a sell-to-open adds a short on fill, nothing left holdings
+                rem = max(0.0, float(o.get("qty") or 0) - float(o.get("filled_qty") or 0))
+                pending += rem * float(o["limit_price"]) * (100 if o.get("kind") == "option" else 1)
+            out[sid] = {"equity": round(cash + invested + pending, 2), "cash": round(cash, 2),
+                        "invested": round(invested, 2), "unmarked": unmarked}
+            others += cash + invested + pending
         nl = snap.get("net_liq")
         if nl is not None:
             out["swing"] = {"equity": round(nl - others, 2), "cash": None, "invested": None}
@@ -321,8 +335,13 @@ class SleeveManager:
         return out
 
     def _record(self, values: dict, snap: dict) -> None:
+        if not is_trading_day(now_et().date()):
+            return                                   # no equity rows on weekends/holidays
         day = now_et().date().isoformat()
         for sid, v in values.items():
+            if v.get("unmarked"):
+                log.warning("sleeve %s: held option has no mark; skipping today's equity row", sid)
+                continue
             self.db.record_sleeve_equity(day, sid, v["equity"], v.get("cash"), v.get("invested"))
         spy = snap["last"].get("SPY")
         if spy:
@@ -465,8 +484,12 @@ class SleeveManager:
                 continue
             st = (o.get("status") or "").upper()
             filled = float(o.get("filled_qty") or 0)
-            px = _f(o.get("avg_fill_price")) or _f(o.get("filled_price")) or _f(r.get("limit_price"))
+            px = _f(o.get("avg_fill_price")) or _f(o.get("filled_price"))
             new = filled - float(r.get("filled_qty") or 0)
+            if new > 1e-9 and not px:
+                log.warning("sleeve sync: %s filled %s but no fill price reported; retrying next sync",
+                            r["client_order_id"], new)
+                continue                         # never book at the limit price
             if new > 1e-9 and px:
                 self._apply_fill(r, new, px)
                 self.db.update_sleeve_order(r["id"], filled_qty=filled, avg_fill_price=px)
@@ -492,6 +515,18 @@ class SleeveManager:
         self.db.update_sleeve_order(r["id"], status=status, reason=f"{r.get('reason') or ''}; {why}".strip("; "))
 
     def _apply_fill(self, r: dict, q: float, px: float) -> None:
+        self._apply_fill_trade(r, q, px)
+        # the broker order detail carries no fee field, so the fee is an estimate
+        if r["kind"] == "option":
+            fee = abs(q) * OPTION_FEE_PER_CONTRACT
+        elif r["side"] == "SELL":
+            fee = abs(q) * px * STOCK_SELL_FEE_RATE
+        else:
+            fee = 0.0
+        if fee > 0:
+            self._add_cash(r["sleeve"], -round(fee, 4))
+
+    def _apply_fill_trade(self, r: dict, q: float, px: float) -> None:
         sid, sym = r["sleeve"], r["symbol"]
         if r["kind"] == "option":
             intent = (r.get("position_intent") or "").upper()
@@ -557,6 +592,11 @@ class SleeveManager:
             p = await self._price(sym, snap)
             if p:
                 prices[sym] = p
+        missing = rebalance.missing_prices(holdings, tg, prices)
+        if missing:
+            self.db.log("warn", f"Sleeve {sid}: no price for {', '.join(missing)}; "
+                                "rebalance deferred, retrying next tick")
+            return
         equity = values.get(sid, {}).get("equity") or self._cash(sid)
         trades = rebalance.diff(holdings, tg, equity * 0.995, prices, self.s.sleeve_min_trade_usd)
         if not trades or meta.get("passes", 0) >= MAX_PASSES_PER_MONTH:
@@ -592,7 +632,8 @@ class SleeveManager:
             self.db.log("warn", f"Sleeve {sid}: cannot buy {sym} at ~${unit:,.2f}/share with MAX_ORDER_USD="
                                 f"{cap_usd:,.0f}; raise it before enabling sleeves", alert=True)
             return
-        for q in rebalance.chunks(int(qty), unit, cap_usd, s.max_order_qty):
+        whole = int(math.floor(qty + 1e-9))
+        for q in rebalance.chunks(whole, unit, cap_usd, s.max_order_qty):
             await self._place_stock(sid, sym, side, int(q), price, why)
 
     # ------------------------------------------------------------------ put-write
@@ -629,19 +670,26 @@ class SleeveManager:
     def _settle_expired(self, h: dict, occ: dict, snap: dict) -> None:
         """The put left the account: expired worthless, or assigned (shares appeared)."""
         sid, under, n = "putwrite", occ["underlying"], abs(float(h["qty"]))
-        raw = float(snap["raw_qty"].get(under, 0.0))
+        if not snap.get("raw_qty") and not snap.get("options"):
+            self.db.log("warn", f"Sleeve put-write: positions snapshot empty/failed; not settling "
+                                f"{h['symbol']}, retrying next tick")
+            return
+        raw =float(snap["raw_qty"].get(under, 0.0))
         reserved = self.db.sleeve_reserved().get(under, 0.0)
         swing_open = sum(float(t.get("quantity_filled_real") or t.get("quantity_filled") or 0)
                          for t in self.db.open_trades() if t.get("symbol") == under and t.get("side") == "BUY")
         extra = raw - reserved - swing_open
-        self.db.set_sleeve_holding(sid, h["symbol"], "option", 0, None)
-        meta = _meta(self.db.sleeve_state(sid))
-        meta["cycle_end_day"] = now_et().date().isoformat()
-        self.db.upsert_sleeve_state(sid, meta=meta)
-        if extra >= n * 100 * 0.99:
-            shares = n * 100
-            self.db.set_sleeve_holding(sid, under, "stock", shares, occ["strike"])
-            self._add_cash(sid, -shares * occ["strike"])
+        assigned = extra >= n * 100 * 0.99
+        shares = n * 100
+        with self.db.transaction():   # holding, cycle meta and assignment cash change together
+            self.db.set_sleeve_holding(sid, h["symbol"], "option", 0, None)
+            meta = _meta(self.db.sleeve_state(sid))
+            meta["cycle_end_day"] = now_et().date().isoformat()
+            self.db.upsert_sleeve_state(sid, meta=meta)
+            if assigned:
+                self.db.set_sleeve_holding(sid, under, "stock", shares, occ["strike"])
+                self._add_cash(sid, -shares * occ["strike"])
+        if assigned:
             self.db.log("warn", f"Sleeve put-write: {h['symbol']} was ASSIGNED; {shares:g} {under} booked "
                                 f"at {occ['strike']} and will be sold", alert=True)
             self._event(sid, "assigned", f"Put {h['symbol']} assigned: {shares:g} {under} at {occ['strike']}")
@@ -751,8 +799,11 @@ class SleeveManager:
         enabled = s.sleeves_enabled and (d.id == "swing" or d.id in self.enabled_ids())
         start = float(st.get("start_capital") or (s.sleeve_start_capital if d.id != "swing" else 0) or 0)
         series = [r for r in self.db.sleeve_equity_series(400) if r.get(d.id) is not None]
-        if d.id == "swing" and not start and series:
-            start = float(series[0][d.id])
+        if d.id == "swing" and not start:
+            from .. import results
+            start = results.swing_start(self.db) or 0.0
+            if not start and series:
+                start = float(series[0][d.id])
         prev = next((r[d.id] for r in reversed(series) if r["day"] < now_et().date().isoformat()), None)
         peak = _f(st.get("peak_equity")) or eq
         rets = []
@@ -815,7 +866,8 @@ class SleeveManager:
             try:
                 snap = await self._snapshot()
                 values = self.last_values = self._value(snap)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                log.warning("sleeve snapshot failed: %s", exc)
                 values = {}
         total = values.get("total", {}).get("equity")
         sleeves = [self._sleeve_view(d, values) for d in registry.SLEEVES]
@@ -856,7 +908,8 @@ class SleeveManager:
             try:
                 from ..engine.option_exits import parse_held_options
                 opts = {h.symbol.upper(): h for h in parse_held_options(text or "")}
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                log.warning("held-option parse failed: %s", exc)
                 opts = {}
             for h in self.db.sleeve_holdings(sid):
                 q, cost = float(h["qty"]), _f(h.get("avg_cost"))
@@ -889,7 +942,6 @@ class SleeveManager:
         return {**base, "holdings": holdings, "targets": targets, "orders": orders}
 
     def equity_series(self, days: int = 365) -> dict:
-<<<<<<< HEAD
         """Daily equity per sleeve plus 'total' and 'spy', with a start baseline row.
 
         The baseline row (``baseline: True``) sits on the last stored close before the
@@ -915,7 +967,8 @@ class SleeveManager:
         try:
             prev = [r for r in self.db.benchmark_daily() if r["day"] < start
                     and r.get("net_liq") is not None and r.get("spy_close") is not None]
-        except Exception:  # noqa: BLE001 - no baseline, lines index from their first day
+        except Exception as exc:  # noqa: BLE001 - no baseline, lines index from their first day
+            log.debug("benchmark baseline unavailable: %s", exc)
             prev = []
         others = {}
         for sid in self.enabled_ids():
@@ -933,6 +986,3 @@ class SleeveManager:
         return {"day": last["day"], "baseline": True, **others,
                 "swing": round(nl - sum(others.values()), 2), "total": round(nl, 2),
                 "spy": float(last["spy_close"])}
-=======
-        return {"series": self.db.sleeve_equity_series(days)}
->>>>>>> 2e32c5e54414a1984ef1cfefe57d83289c20ffb5

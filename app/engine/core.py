@@ -51,7 +51,14 @@ RUN_PARAM_GATES = (
 )
 
 
-class CoreMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import CoreHost as _Host
+else:
+    _Host = object
+
+class CoreMixin(_Host):
     def __init__(self, settings: Settings, db: DB, broker: Broker,
                  signals: SignalService, portfolio=None, alerts=None) -> None:
         self.s = settings

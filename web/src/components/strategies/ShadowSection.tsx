@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { usePoll } from "@/lib/usePoll";
 import type { Api } from "@/lib/api";
 import type { ConfirmRequest } from "@/components/ConfirmModal";
 import { money, num, pct } from "@/lib/format";
@@ -38,37 +39,16 @@ export default function ShadowSection({ api, sleeves, onConfirm, onAction }: {
   onConfirm?: (r: ConfirmRequest | null) => void;
   onAction?: (label: string, fn: () => Promise<unknown>) => void | Promise<void>;
 }) {
-  const [data, setData] = useState<ShadowsPayload | null>(null);
-  const [err, setErr] = useState("");
-  const [points, setPoints] = useState<ShadowEquityPoint[]>([]);
-  const [liveSeries, setLiveSeries] = useState<SleeveEquityPoint[]>([]);
   const [open, setOpen] = useState("");
-  const [tick, setTick] = useState(0);
 
-  useEffect(() => {
-    let live = true;
-    const load = () => api<ShadowsPayload>("/api/shadows")
-      .then(d => { if (live) { setData(d); setErr(""); } })
-      .catch(() => { if (live) setErr("Shadow strategies are not available right now."); });
-    void load();
-    const t = window.setInterval(load, 60_000);
-    return () => { live = false; window.clearInterval(t); };
-  }, [api, tick]);
-
-  useEffect(() => {
-    let live = true;
-    const load = () => {
-      api<{ series: ShadowEquityPoint[] }>("/api/shadows/equity?days=400")
-        .then(d => { if (live) setPoints(Array.isArray(d?.series) ? d.series : []); })
-        .catch(() => { /* chart shows its empty state */ });
-      api<{ series: SleeveEquityPoint[] }>("/api/sleeves/equity?days=400")
-        .then(d => { if (live) setLiveSeries(Array.isArray(d?.series) ? d.series : []); })
-        .catch(() => { /* no reference line */ });
-    };
-    load();
-    const t = window.setInterval(load, 300_000);
-    return () => { live = false; window.clearInterval(t); };
-  }, [api, tick]);
+  const sp = usePoll<ShadowsPayload>(api, "/api/shadows", 60_000);
+  const pp = usePoll<{ series: ShadowEquityPoint[] }>(api, "/api/shadows/equity?days=400", 300_000);
+  const lp = usePoll<{ series: SleeveEquityPoint[] }>(api, "/api/sleeves/equity?days=400", 300_000);
+  const data = sp.data;
+  const err = sp.error ? "Shadow strategies are not available right now." : "";
+  const points = useMemo(() => (Array.isArray(pp.data?.series) ? pp.data.series : []), [pp.data]);
+  const liveSeries = useMemo(() => (Array.isArray(lp.data?.series) ? lp.data.series : []), [lp.data]);
+  const reloadAll = () => { sp.reload(); pp.reload(); lp.reload(); };
 
   const title = "Shadow strategies";
   if (!data) return <Section title={title} meta="Virtual money, no orders">
@@ -79,7 +59,7 @@ export default function ShadowSection({ api, sleeves, onConfirm, onAction }: {
   const shadows = Array.isArray(data.shadows) ? data.shadows : [];
   const refs = sleeves.map(s => ({ sleeveId: s.id, item: { ...s, name: `Live: ${s.name}`, rule: s.rebalance_rule } as Item }));
   const detail = (s: Shadow) => <ShadowDetail api={api} shadow={s} onConfirm={onConfirm} onAction={onAction}
-    onReset={() => setTick(t => t + 1)}/>;
+    onReset={reloadAll}/>;
   const toggle = (id: string) => setOpen(o => (o === id ? "" : id));
 
   return <Section title={title} meta="Virtual money, no orders">

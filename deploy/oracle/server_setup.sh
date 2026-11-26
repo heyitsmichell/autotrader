@@ -52,6 +52,8 @@ cat > "$HOME/.config/systemd/user/ai-trader.service" <<EOF
 Description=AI Trader
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Type=simple

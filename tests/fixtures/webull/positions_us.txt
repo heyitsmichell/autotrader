@@ -1,0 +1,7 @@
+=== Positions ===
+  Symbol: QQQ  Position ID: M3IES5RIFPEGET0VNIIK8DRNI8  Qty: -8  Type: OPTION  Strategy: SINGLE  Cost: 12.54  Last: 7.87  Market Value: -6296.00  Unrealized P&L: 3736.00  Currency: USD
+            Leg: QQQ  Leg ID: M3IES5RIFPEGET0VNIIK8DRNI8  Qty: N/A  Type: OPTION  Option: PUT  Strike: 580  Exp: 2026-12-18  Multiplier: 100  Deliverable: 100  ExpType: PM
+  Symbol: TLT  Position ID: VEH8CSIIC16V4C9EBNLLNL58H8  Qty: 3  Type: OPTION  Strategy: SINGLE  Cost: 1.30  Last: 1.11  Market Value: 333.00  Unrealized P&L: -57.00  Currency: USD
+            Leg: TLT  Leg ID: VEH8CSIIC16V4C9EBNLLNL58H8  Qty: N/A  Type: OPTION  Option: CALL  Strike: 82  Exp: 2026-12-31  Multiplier: 100  Deliverable: 100  ExpType: PM
+  Symbol: AAPL  Position ID: EQ1AAPL  Qty: 10  Type: EQUITY  Cost: 150.25  Last: 172.4  Market Value: 1724.0  Unrealized P&L: 221.5  Currency: USD
+  Symbol: SPY  Position ID: EQ2SPY  Qty: 2.5  Type: EQUITY  Cost: 500.0  Last: 512.1  Market Value: 1280.25  Unrealized P&L: 30.25  Currency: USD

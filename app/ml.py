@@ -269,6 +269,66 @@ class MLUnavailable(RuntimeError):
     """PyTorch (or enough data) is missing, so a model cannot be built."""
 
 
+def scorecard_extras(ps: list[float], ys: list[float], min_p: float,
+                     importance: list[dict] | None = None) -> dict:
+    """Recall/F1/ECE/saturation from pooled out-of-sample predictions.
+
+    A prediction is 'taken' when p >= min_p. saturation_pct is a fraction (0-1) of
+    predictions below 0.05 or above 0.95 (same definition as SATURATION_THRESHOLD).
+    """
+    n = len(ps)
+    if n == 0 or n != len(ys):
+        return {}
+    wins = [y > 0.5 for y in ys]
+    taken = [p >= min_p for p in ps]
+    n_taken = sum(taken)
+    tp = sum(1 for t, w in zip(taken, wins) if t and w)
+    n_wins = sum(wins)
+    precision = tp / n_taken if n_taken else None
+    recall = tp / n_wins if n_wins else None
+    f1 = (2 * precision * recall / (precision + recall)
+          if precision is not None and recall is not None and (precision + recall) > 0 else None)
+    ece = 0.0
+    for b in range(10):
+        lo, hi = b / 10, (b + 1) / 10
+        idx = [i for i, p in enumerate(ps) if (lo <= p < hi) or (b == 9 and p == 1.0)]
+        if idx:
+            mp = sum(ps[i] for i in idx) / len(idx)
+            wr = sum(1 for i in idx if wins[i]) / len(idx)
+            ece += len(idx) / n * abs(mp - wr)
+    sat = sum(1 for p in ps if p < 0.05 or p > 0.95) / n
+    out = {"precision": precision, "recall": recall, "f1": f1,
+           "calibration_error": round(ece, 4), "saturation_pct": round(sat, 4)}
+    if importance:
+        out["feature_importance"] = importance
+    return out
+
+
+def permutation_importance(predict, xs: list[list[float]], ys: list[float],
+                           names: list[str], seed: int = 7, max_rows: int = 1500) -> list[dict]:
+    """Drop in accuracy-at-0.5 proxy (1 - Brier) when a feature column is shuffled."""
+    import random
+    rng = random.Random(seed)
+    if len(xs) > max_rows:
+        sel = rng.sample(range(len(xs)), max_rows)
+        xs = [xs[i] for i in sel]
+        ys = [ys[i] for i in sel]
+    if not xs:
+        return []
+
+    def brier(x):
+        return sum((p - y) ** 2 for p, y in zip(predict(x), ys)) / len(ys)
+
+    base = brier(xs)
+    out = []
+    for j, name in enumerate(names):
+        col = [r[j] for r in xs]
+        rng.shuffle(col)
+        xp = [r[:j] + [c] + r[j + 1:] for r, c in zip(xs, col)]
+        out.append({"feature": name, "importance": round(brier(xp) - base, 5)})
+    return sorted(out, key=lambda d: -d["importance"])
+
+
 def make_walkforward_predictor(settings: Settings, bars_by_symbol: dict[str, list[dict]], *,
                                refit_days: int = 126, purge_days: int = 30,
                                min_rows: int = 300):
@@ -584,13 +644,18 @@ class MLFilter:
             wf_config, min_total_test_trades=MIN_SELECTED, min_independent_test_trades=20)
 
         # Define model factory and predict functions for the new walkforward
+        last_fold: dict = {}
+
         def model_factory(train_rows):
             model, mean, std = _fit(train_rows)
             return (model, mean, std)
 
         def predict_fn(model_tuple, test_rows):
             model, mean, std = model_tuple
-            return _predict(model, mean, std, [r["x"] for r in test_rows])
+            ps = _predict(model, mean, std, [r["x"] for r in test_rows])
+            last_fold["model"] = model_tuple
+            last_fold["rows"] = test_rows
+            return ps
 
         # Run purged/embargoed walk-forward
         wf_result: WalkForwardResult = wf_walk_forward(
@@ -653,6 +718,21 @@ class MLFilter:
             "pooled": wf_result.details.get("pooled_rules_model", {}),
             "thresholds": wf_result.details.get("config", {}),
         }
+        try:
+            # walk_forward stamps r["p"] on every out-of-sample row it scored
+            oos = [r for r in rows if "p" in r]
+            imp = []
+            if last_fold.get("rows"):
+                m, mu, sd = last_fold["model"]
+                lr = last_fold["rows"]
+                imp = permutation_importance(
+                    lambda x: _predict(m, mu, sd, x), [list(r["x"]) for r in lr],
+                    [r["y"] for r in lr], list(FEATURES))
+            wf_dict.update({k: v for k, v in scorecard_extras(
+                [r["p"] for r in oos], [r["y"] for r in oos], self.s.ml_min_p, imp).items()
+                if k != "precision"})
+        except Exception as e:  # scorecard extras must never break training
+            self.db.log("warning", f"scorecard extras failed: {e}")
 
         if not wf_result.passed:
             base_note = "Did not beat the rules out-of-sample (purged walk-forward); not used"

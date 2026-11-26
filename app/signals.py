@@ -264,13 +264,15 @@ class SignalService:
             bench_bars = self._bars_cache.get(benchmark_symbol)
             if bench_bars and len(bench_bars[1]) >= len(bars):
                 bench_bars_list = bench_bars[1]
-                # Calculate relative strength over the lookback period
+                # Same definition as backtest: bars[-1] vs bars[-1 - lookback], benchmark aligned by date
                 lookback = getattr(self.s, "relative_strength_lookback", 20)
-                if len(bars) >= lookback and len(bench_bars_list) >= lookback:
-                    # Momentum = (close / close_lookback_ago) - 1
-                    sym_momentum = (bars[-1]["close"] / bars[-lookback]["close"]) - 1
-                    bench_momentum = (bench_bars_list[-1]["close"] / bench_bars_list[-lookback]["close"]) - 1
-                    relative_strength = (sym_momentum - bench_momentum) * 100  # in percent
+                if len(bars) > lookback:
+                    from .backtest.signals import bench_close_asof, relative_strength_pct
+                    b_now = bench_close_asof(bench_bars_list, bar_day(bars[-1]["time"]), bar_day)
+                    b_then = bench_close_asof(bench_bars_list, bar_day(bars[-1 - lookback]["time"]), bar_day)
+                    if b_now and b_then:
+                        relative_strength = relative_strength_pct(
+                            bars[-1]["close"], bars[-1 - lookback]["close"], b_now, b_then)
 
                 # Also compute market regime from benchmark
                 # indicators.features() returns the LATEST bar's feature dict, not a list

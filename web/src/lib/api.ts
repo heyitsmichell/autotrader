@@ -98,7 +98,10 @@ export const api: Api = async <T,>(path: string, method = "GET", body?: unknown)
       res = await send(path, upper, body, token);
     }
   }
-  const data = await res.json().catch(() => ({}));
+  let data: unknown;
+  let parsed = true;
+  try { data = await res.json(); } catch { data = {}; parsed = false; }
   if (!res.ok) throw new ApiError(errorText(data, res), res.status);
+  if (!parsed) throw new ApiError("Unexpected non-JSON response from server", res.status);
   return data as T;
 };

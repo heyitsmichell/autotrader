@@ -52,21 +52,61 @@ export const score = (value: unknown) => {
   return Number.isNaN(numeric) ? "—" : `${numeric > 0 ? "+" : ""}${numeric.toFixed(2)}`;
 };
 
-export const dateTime = (value: unknown) => {
-  if (!value) return "—";
-  const date = new Date(String(value));
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString("en-US", {
-    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-  });
+const ET = "America/New_York";
+const toDate = (value: unknown): Date | null => {
+  if (value == null || value === "") return null;
+  const d = value instanceof Date ? value : new Date(typeof value === "number" ? value : String(value));
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+const etFmt = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-US", { timeZone: ET, ...opts });
+const FMT_DATE = etFmt({ month: "short", day: "numeric" });
+const FMT_DATE_Y = etFmt({ month: "short", day: "numeric", year: "numeric" });
+const FMT_DT = etFmt({ month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const FMT_CLOCK = etFmt({ hour: "2-digit", minute: "2-digit" });
+const FMT_KEY = new Intl.DateTimeFormat("en-CA", { timeZone: ET, year: "numeric", month: "2-digit", day: "2-digit" });
+
+/** "Nov 26" in US Eastern time; "—" for bad input. */
+export const etDate = (value: unknown, opts: { year?: boolean } = {}) => {
+  const d = toDate(value);
+  return d ? (opts.year ? FMT_DATE_Y : FMT_DATE).format(d) : "—";
+};
+/** "Nov 26, 09:30 AM" in US Eastern time (no zone suffix; callers label "ET"). */
+export const etDateTime = (value: unknown) => {
+  const d = toDate(value);
+  return d ? FMT_DT.format(d) : "—";
+};
+/** "09:30 AM" in US Eastern time. */
+export const etClock = (value: unknown) => {
+  const d = toDate(value);
+  return d ? FMT_CLOCK.format(d) : "—";
+};
+/** YYYY-MM-DD in America/New_York, or "" for bad input. */
+export const etDayKey = (value: unknown = Date.now()) => {
+  const d = toDate(value);
+  return d ? FMT_KEY.format(d) : "";
+};
+export const isSameEtDay = (a: unknown, b: unknown = Date.now()) => {
+  const ka = etDayKey(a);
+  return ka !== "" && ka === etDayKey(b);
+};
+/** Weekdays elapsed between two ET calendar days (start day excluded). */
+export const weekdaysSinceEt = (from: unknown, now: unknown = Date.now()): number | null => {
+  const ka = etDayKey(from), kb = etDayKey(now);
+  if (!ka || !kb) return null;
+  const parse = (k: string) => { const [y, m, d] = k.split("-").map(Number); return Date.UTC(y, m - 1, d); };
+  let t = parse(ka);
+  const end = parse(kb);
+  let n = 0;
+  while (t < end) {
+    t += 86_400_000;
+    const w = new Date(t).getUTCDay();
+    if (w !== 0 && w !== 6) n++;
+  }
+  return n;
 };
 
-export const clockTime = (value: unknown) => {
-  if (!value) return "—";
-  const date = new Date(String(value));
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
-};
+export const dateTime = etDateTime;
+export const clockTime = etClock;
 
 export const minutesAgo = (value: unknown, now = Date.now()) => {
   if (!value) return null;
@@ -117,4 +157,13 @@ export const proposalExpiry =(createdAt: string | undefined, ttlMinutes: number 
   const created = new Date(createdAt);
   if (Number.isNaN(created.getTime())) return null;
   return created.getTime() + ttlMinutes * 60_000;
+};
+
+/** "XLF 52C Jan 2" from an OCC symbol, or null when it does not parse. */
+export const occShort = (symbol: unknown): string | null => {
+  const m = OCC.exec(String(symbol ?? "").trim().toUpperCase());
+  const month = m ? MONTHS[Number(m[3]) - 1] : undefined;
+  if (!m || !month) return null;
+  const strike = Number(m[6]) / 1000;
+  return `${m[1]} ${Number.isInteger(strike) ? strike : strike.toFixed(2)}${m[5]} ${month} ${Number(m[4])}`;
 };

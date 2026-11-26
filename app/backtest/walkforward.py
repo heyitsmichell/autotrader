@@ -73,33 +73,34 @@ class WalkForwardResult:
     details: dict[str, Any]
 
 
+def _key(k):
+    """Normalise an overlap key: int (date index) or (symbol, date_index)."""
+    return k if isinstance(k, tuple) else (None, k)
+
+
 def compute_label_overlap_weights(
-    test_indices: list[int],
+    test_indices: list,
     embargo_bars: int,
-    total_samples: int
+    total_samples: int = 0
 ) -> list[float]:
     """
-    Compute sample weights for overlapping labels.
+    Compute sample weights for overlapping labels (returned in INPUT order).
 
-    Each test sample's label looks ahead up to `embargo_bars` days.
-    Two samples i, j overlap if |i - j| < embargo_bars.
-    Weight = 1 / (number of samples overlapping with this one).
+    Items are date indices (ints) or (symbol, date_index) tuples. Each label looks ahead
+    `embargo_bars` bars; two samples of the same symbol overlap if their date-index distance
+    is < embargo_bars. Weight = 1 / (number of samples overlapping with it, incl. itself).
     """
     if not test_indices:
         return []
-
-    test_indices_sorted = sorted(test_indices)
-    n = len(test_indices_sorted)
-    weights = [1.0] * n
-
-    for i, idx_i in enumerate(test_indices_sorted):
-        # Count how many other test samples have overlapping labels
-        overlap_count = 1  # includes self
-        for j, idx_j in enumerate(test_indices_sorted):
-            if i != j and abs(idx_i - idx_j) < embargo_bars:
-                overlap_count += 1
-        weights[i] = 1.0 / overlap_count
-
+    by_sym: dict = {}
+    for pos, k in enumerate(test_indices):
+        sym, di = _key(k)
+        by_sym.setdefault(sym, []).append((di, pos))
+    weights = [1.0] * len(test_indices)
+    for items in by_sym.values():
+        for di, pos in items:
+            cnt = sum(1 for dj, _ in items if abs(di - dj) < embargo_bars)  # includes self
+            weights[pos] = 1.0 / cnt
     return weights
 
 
@@ -117,24 +118,23 @@ def effective_sample_size(weights: list[float]) -> float:
 
 
 def subsample_non_overlapping(
-    test_indices: list[int],
+    test_indices: list,
     embargo_bars: int
-) -> list[int]:
+) -> list:
     """
-    Subsample to keep only non-overlapping test samples.
+    Subsample to keep only non-overlapping test samples (per symbol, by date-index distance).
 
-    Greedy: sort by index, keep first, skip any that overlap with kept ones.
+    Items are date indices or (symbol, date_index) tuples; greedy in date order.
     """
     if not test_indices:
         return []
-
-    sorted_idx = sorted(test_indices)
-    kept = [sorted_idx[0]]
-
-    for idx in sorted_idx[1:]:
-        if all(abs(idx - k) >= embargo_bars for k in kept):
-            kept.append(idx)
-
+    kept: list = []
+    last: dict = {}
+    for k in sorted(test_indices, key=lambda k: _key(k)[1]):
+        sym, di = _key(k)
+        if sym not in last or di - last[sym] >= embargo_bars:
+            kept.append(k)
+            last[sym] = di
     return kept
 
 
@@ -148,8 +148,7 @@ def purge_test_samples(
 
     A test sample at index i has label looking ahead up to embargo_bars.
     If i - purge_bars <= train_end_idx, it overlaps with training data.
-    (The label for test sample i depends on data up to i + embargo_bars,
-    but the purge is about the test sample's index being too close to train_end)
+    Indices here are DATE indices (bar offsets), not row positions.
     """
     # Purge: remove test samples whose index is within purge_bars of train_end
     return [i for i in test_indices if i - purge_bars > train_end_idx]
@@ -165,20 +164,17 @@ def benjamini_hochberg(p_values: list[float], alpha: float = 0.05) -> tuple[list
         return [], []
 
     n = len(p_values)
-    # Sort p-values with original indices
-    sorted_p = sorted((p, i) for i, p in enumerate(p_values))
+    order = sorted(range(n), key=lambda i: p_values[i])
+    sorted_p = [(p_values[i], i) for i in order]
 
     rejected = [False] * n
+    # adjusted p by rank, then right-to-left cumulative min over the SORTED order
+    adj_sorted = [min(p * n / rank, 1.0) for rank, (p, _) in enumerate(sorted_p, 1)]
+    for r in range(n - 2, -1, -1):
+        adj_sorted[r] = min(adj_sorted[r], adj_sorted[r + 1])
     adjusted = [0.0] * n
-
-    for rank, (p, orig_idx) in enumerate(sorted_p, 1):
-        adjusted_p = p * n / rank
-        adjusted[orig_idx] = min(adjusted_p, 1.0)
-
-    # Ensure monotonicity of adjusted p-values (from largest to smallest)
-    for i in range(n - 2, -1, -1):
-        if adjusted[i] > adjusted[i + 1]:
-            adjusted[i] = adjusted[i + 1]
+    for r, (_, orig_idx) in enumerate(sorted_p):
+        adjusted[orig_idx] = adj_sorted[r]
 
     # Determine rejections: find largest k such that p_(k) <= alpha * k / n
     # Then reject all p_(1) ... p_(k)
@@ -276,6 +272,7 @@ def walk_forward(
     rows_sorted = sorted(rows, key=lambda r: (r["date"], r["symbol"]))
     dates = sorted({r["date"] for r in rows_sorted})
     n_dates = len(dates)
+    date_idx = {d: i for i, d in enumerate(dates)}
 
     if n_dates < config.n_folds * config.min_test_samples:
         return WalkForwardResult(
@@ -298,6 +295,8 @@ def walk_forward(
     all_rules_rows = []
     all_rules_model_rows = []
     all_fold_p_values = []  # For multiple testing correction
+    all_weights_acc: list[float] = []
+    leakage_detected = False
 
     for k in range(config.n_folds):
         # Test block: later dates for later folds
@@ -306,7 +305,7 @@ def walk_forward(
 
         # Embargo: gap between train and test
         train_end = test_start - config.embargo_bars
-        if train_end < config.min_train_samples:
+        if train_end <= 0:
             continue
 
         # Train window: expanding or rolling
@@ -325,14 +324,16 @@ def walk_forward(
         if len(train_rows) < config.min_train_samples or len(test_rows) < config.min_test_samples:
             continue
 
-        # Get indices in the full sorted dataset
-        train_indices = [i for i, r in enumerate(rows_sorted) if r["date"] in train_dates]
-        test_indices = [i for i, r in enumerate(rows_sorted) if r["date"] in test_dates]
-        train_end_idx = max(train_indices) if train_indices else -1
-
-        # Purge test samples that overlap with training period
-        purged_test_indices = purge_test_samples(test_indices, train_end_idx, config.purge_bars)
-        purged_test_rows = [rows_sorted[i] for i in purged_test_indices]
+        # Purge by DATE index (bar offsets), not row position
+        train_end_idx = max(date_idx[r["date"]] for r in train_rows)
+        purged_test_rows = [
+            r for r in test_rows
+            if purge_test_samples([date_idx[r["date"]]], train_end_idx, config.purge_bars)
+        ]
+        purged_keys = [(r["symbol"], date_idx[r["date"]]) for r in purged_test_rows]
+        min_test_di = min((date_idx[r["date"]] for r in purged_test_rows), default=None)
+        if min_test_di is not None and not (train_end_idx + config.embargo_bars <= min_test_di):
+            leakage_detected = True
 
         if not purged_test_rows:
             continue
@@ -355,33 +356,25 @@ def walk_forward(
         test_probs = predict_fn(model, purged_test_rows)
 
         # Add probabilities to test rows
-        for r, p in zip(purged_test_rows, test_probs):
-            r["p"] = p
+        # Copy rows: never mutate caller-owned rows
+        purged_test_rows = [dict(r, p=p) for r, p in zip(purged_test_rows, test_probs)]
 
         # Rules-only and rules+model subsets
         rules_rows = [r for r in purged_test_rows if r.get("ta", 0) >= ta_min]
         rules_model_rows = [r for r in rules_rows if r.get("p", 0) >= p_min]
 
-        # Compute overlap weights for purged test samples using their indices in rows_sorted
-        test_weights = compute_label_overlap_weights(
-            purged_test_indices,
-            config.embargo_bars,
-            len(rows_sorted)
-        )
-
-        # Subsample non-overlapping for independent count
-        independent_indices = subsample_non_overlapping(
-            purged_test_indices,
-            config.embargo_bars
-        )
+        # Overlap weights per symbol by date-index distance (input order == purged_test_rows)
+        test_weights = compute_label_overlap_weights(purged_keys, config.embargo_bars)
+        weight_by_id = {id(r): w for r, w in zip(purged_test_rows, test_weights)}
+        independent_indices = subsample_non_overlapping(purged_keys, config.embargo_bars)
+        all_weights_acc.extend(test_weights)
 
         # Compute metrics for this fold
         def _group_weighted(rs: list[dict]) -> dict:
             if not rs:
                 return {"n": 0, "hit": None, "avg_fwd": None, "ess": 0.0}
             # Find weights for these rows
-            idxs = [i for i, r in enumerate(rows_sorted) if r in rs]
-            wts = [test_weights[purged_test_indices.index(i)] if i in purged_test_indices else 1.0 for i in idxs]
+            wts = [weight_by_id.get(id(r), 1.0) for r in rs]
             ess = effective_sample_size(wts)
             hit = sum(r["y"] for r in rs) / len(rs) if rs else None
             avg_fwd = sum(r["fwd"] for r in rs) / len(rs) if rs else None
@@ -537,13 +530,11 @@ def walk_forward(
     mean_avg_return = sum(rules_model_returns) / len(rules_model_returns) if rules_model_returns else None
 
     # Overall effective sample size
-    all_weights = []
-    for f in folds:
-        all_weights.extend([1.0] * f.n_test_independent)  # approximate
-    ess = effective_sample_size(all_weights) if all_weights else 0.0
+    ess = effective_sample_size(all_weights_acc) if all_weights_acc else 0.0
 
     # Multiple testing correction
     multiple_testing_adjusted_p = None
+    deflated_sharpe_value = None
     if config.multiple_testing_method == "bonferroni":
         _, adjusted = bonferroni(all_fold_p_values, config.significance_level)
         multiple_testing_adjusted_p = min(adjusted) if adjusted else 1.0
@@ -555,7 +546,8 @@ def walk_forward(
         fold_returns = [f.metrics["rules_model"].get("avg_fwd", 0) for f in folds]
         if fold_returns and len(fold_returns) > 1:
             sharpe = statistics.mean(fold_returns) / statistics.stdev(fold_returns) if statistics.stdev(fold_returns) > 0 else 0
-            multiple_testing_adjusted_p = deflated_sharpe_ratio(sharpe, len(folds), total_independent)
+            deflated_sharpe_value = deflated_sharpe_ratio(sharpe, len(folds), total_independent)
+            multiple_testing_adjusted_p = deflated_sharpe_value  # legacy key (value is a Sharpe, not a p)
 
     # Final checks
     rules_hit_overall = sum(1 for r in all_rules_rows if r["y"] > 0.5) / len(all_rules_rows) if all_rules_rows else 0
@@ -576,7 +568,14 @@ def walk_forward(
         no_saturation = True
 
     # Purge/embargo prevents leakage
-    no_leakage = True  # By design: purge + embargo ensures no train label overlaps test
+    no_leakage = not leakage_detected  # computed per fold: max train date + embargo <= min test date
+
+    # Multiple testing must feed the verdict
+    if config.multiple_testing_method == "deflated_sharpe":
+        multiple_testing_ok = deflated_sharpe_value is not None and deflated_sharpe_value > 0
+    else:
+        multiple_testing_ok = (multiple_testing_adjusted_p is not None
+                               and multiple_testing_adjusted_p <= config.significance_level)
 
     checks = {
         "auc": mean_auc is not None and mean_auc >= config.min_auc,
@@ -585,6 +584,7 @@ def walk_forward(
         "sample": len(all_rules_model_rows) >= config.min_total_test_trades,
         "min_folds": len(folds) >= config.min_folds,
         "independent_trades": total_independent >= config.min_independent_test_trades,
+        "multiple_testing": multiple_testing_ok,
         # Backward-compatible checks
         "no_leakage": no_leakage,
         "no_saturation": no_saturation,
@@ -606,6 +606,11 @@ def walk_forward(
     if not checks["independent_trades"]:
         rejection_notes.append(f"independent trades {total_independent} < {config.min_independent_test_trades}")
 
+    if not checks["multiple_testing"]:
+        rejection_notes.append("multiple-testing check failed")
+    if not checks["no_leakage"]:
+        rejection_notes.append("train/test leakage detected")
+
     passed = all(checks.values())
     rejection_reason = "; ".join(rejection_notes) if not passed else None
 
@@ -620,7 +625,7 @@ def walk_forward(
         effective_sample_size=ess,
         rejection_reason=rejection_reason,
         multiple_testing_adjusted_p=multiple_testing_adjusted_p,
-        deflated_sharpe=multiple_testing_adjusted_p if config.multiple_testing_method == "deflated_sharpe" else None,
+        deflated_sharpe=deflated_sharpe_value,
         details={
             "checks": checks,
             "pooled_rules": {

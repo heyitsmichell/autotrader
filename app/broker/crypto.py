@@ -6,7 +6,14 @@ from __future__ import annotations
 from .errors import BrokerError
 
 
-class CryptoMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import CryptoHost as _Host
+else:
+    _Host = object
+
+class CryptoMixin(_Host):
     async def crypto_instruments(self, symbols: list[str] | None = None) -> str:
         args = {"category": "US_CRYPTO", "page_size": 50}
         if symbols:

@@ -230,7 +230,8 @@ class Settings:
     # Broker request limits (Webull answers HTTP 429 "too many requests" when hammered)
     broker_max_concurrency: int = 4        # BROKER_MAX_CONCURRENCY: simultaneous broker calls
     broker_rate_limit_retries: int = 4     # BROKER_RATE_LIMIT_RETRIES: retries after a 429
-    broker_backoff_seconds: float = 2.0    # BROKER_BACKOFF_SECONDS: first backoff, doubles each retry
+    broker_call_timeout_seconds: float = 30.0  # BROKER_CALL_TIMEOUT_SECONDS: deadline per broker call
+    broker_backoff_seconds: float = 2.0   # BROKER_BACKOFF_SECONDS: first backoff, doubles each retry
     core_enabled: bool = False        # CORE_ENABLED: run the core-satellite rebalancer + satellite cap (off by default)
     # ML-first mode: when a promoted model exists, the model ranks and sizes entries and the
     # TA score is only a floor. With no promoted model everything falls back to the rules.
@@ -392,7 +393,6 @@ class Settings:
     entry_order_type: str = "limit"            # ENTRY_ORDER_TYPE: limit | marketable (limit at ask + offset, capped at the price band)
     marketable_offset_bps: float = 10.0        # MARKETABLE_OFFSET_BPS: marketable BUY limit = ask (or last) x (1 + bps/10000)
     entry_chase_seconds: float = 0.0           # ENTRY_CHASE_SECONDS: 0 = off; re-send an unfilled entry once as marketable (CORE only)
-    entry_session_all_day: bool = True         # ENTRY_SESSION_ALL_DAY: BUY limit entries outside CORE for OVERNIGHT_SYMBOLS use Webull's ALL_DAY session (no expiry at each session boundary)
     overnight_size_factor: float = 0.5         # OVERNIGHT_SIZE_FACTOR: BUY quantity multiplier in the NIGHT session (1 = off)
     max_spread_pct_extended: float = 1.0       # MAX_SPREAD_PCT_EXTENDED: reject a BUY outside CORE when (ask-bid)/mid exceeds this % (0 = off)
     market_notional_buffer_pct: float = 1.0    # MARKET_NOTIONAL_BUFFER_PCT: guard notional for a MARKET order = last x qty x (1 + this %)

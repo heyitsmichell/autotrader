@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from ..broker import BrokerError
 from ..market import now_utc
@@ -18,12 +19,25 @@ from ..market import now_utc
 log = logging.getLogger("app.engine")
 
 
-class CycleMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import CycleHost as _Host
+else:
+    _Host = object
+
+class CycleMixin(_Host):
     # How long a cycle waits for a cold-path refresh before it carries on without it.
     COLD_REFRESH_TIMEOUT_SECONDS = 120.0
 
     def _watchlist(self) -> list[str]:
         return list(self.research.effective_watchlist() if self.research else self.s.watchlist)
+
+    def _warn_read_failure(self, what: str, err: Exception) -> None:
+        now = time.monotonic()
+        if now - getattr(self, "_read_fail_logged_at", -1e9) >= 300:
+            self._read_fail_logged_at = now
+            log.warning("broker %s read failed (%r); assuming there is work", what, err)
 
     async def _has_actionable_work(self, sigs: list[dict] | None = None) -> bool:
         """Check if there's anything actionable that would justify a cycle.
@@ -41,8 +55,9 @@ class CycleMixin:
             positions = await self.broker.positions()
             if any(qty > 0 for qty in positions.values()):
                 return True
-        except Exception:
-            pass  # If we can't read positions, assume we need to check
+        except Exception as e:  # noqa: BLE001 - failed read must not skip exit management
+            self._warn_read_failure("positions", e)
+            return True
 
         # Check pending/working orders
         pending = self.db.pending_proposals()
@@ -55,8 +70,9 @@ class CycleMixin:
             if open_text and not open_text.startswith("No data"):
                 # Has some working orders
                 return True
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            self._warn_read_failure("open orders", e)
+            return True
 
         # Check if any symbol could potentially pass the BUY gate
         try:
@@ -65,7 +81,8 @@ class CycleMixin:
             for sig in sigs:
                 if sig.get("consensus") == "long":
                     return True
-        except Exception:
+        except Exception as exc:
+            log.warning("signal snapshot check failed: %s", exc)
             pass
 
         return False
@@ -102,7 +119,8 @@ class CycleMixin:
         # inside the lock (signals.ensure refreshes over the network when its row is stale).
         try:
             positions = await self.broker.positions()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.warning("positions read failed in cycle (assuming none): %s", exc)
             positions = {}
         for symbol, qty in positions.items():
             if qty > 0:

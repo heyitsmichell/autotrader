@@ -200,7 +200,8 @@ class ShadowManager:
                     cache["prices"][h["symbol"]] = p
             cache["at"] = time.monotonic()
         eq, _ = self._equity(sid)
-        self.db.record_shadow_equity(now_et().date().isoformat(), sid, eq)
+        if is_trading_day(now_et().date()):          # no equity rows on weekends/holidays
+            self.db.record_shadow_equity(now_et().date().isoformat(), sid, eq)
         st = self.db.shadow_state(sid) or {}
         peak = float(st.get("peak_equity") or eq)
         if eq > peak:

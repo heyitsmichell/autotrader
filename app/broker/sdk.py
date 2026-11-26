@@ -48,7 +48,8 @@ def _payload(response: Any) -> Any:
     if callable(js):
         try:
             return js()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.debug("response.json() failed, falling back to text: %s", exc)
             return getattr(response, "text", None)
     return response
 
@@ -106,7 +107,8 @@ class SdkTransport:
         (the SDK's built-in endpoint table only has production hosts)."""
         try:
             from webull_openapi_mcp.sdk_client import UAT_ENDPOINTS
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.debug("UAT endpoint table unavailable: %s", exc)
             return None
         return (UAT_ENDPOINTS.get("region_mapping", {}).get(region.lower()) or {}).get("api")
 

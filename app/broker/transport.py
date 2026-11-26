@@ -125,6 +125,7 @@ class McpTransport:
         self._rate_limit_retry_after: float = 0
         self._rate_limit_backoff_base = float(getattr(settings, "broker_backoff_seconds", 2.0))
         self._rate_limit_max_retries = int(getattr(settings, "broker_rate_limit_retries", 4))
+        self._call_timeout = float(getattr(settings, "broker_call_timeout_seconds", 30.0))
         # Concurrency cap; created lazily so it binds to the running loop.
         self._max_concurrency = int(getattr(settings, "broker_max_concurrency", 4))
         self._call_sem: asyncio.Semaphore | None = None
@@ -243,12 +244,21 @@ class McpTransport:
         if self._task:
             try:
                 await asyncio.wait_for(self._task, 10)
-            except BaseException:  # noqa: BLE001
+            except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001
+                cancelled = isinstance(exc, asyncio.CancelledError)
+                if not cancelled:
+                    log.debug("transport task did not stop cleanly: %r", exc)
                 self._task.cancel()
                 try:
                     await self._task
-                except BaseException:
-                    pass
+                except asyncio.CancelledError:
+                    pass  # the task we just cancelled
+                except Exception as exc2:  # noqa: BLE001
+                    log.debug("transport task ended with error: %s", exc2)
+                if cancelled:
+                    self._task = None
+                    self.session = None
+                    raise
         self._task = None
         self.session = None
         # Give the subprocess a moment to fully terminate
@@ -281,8 +291,16 @@ class McpTransport:
                 await self._spacer.acquire(name)
             try:
                 async with self._call_sem:
-                    result = await self.session.call_tool(name, arguments=arguments)
-            except Exception as e:  # timeouts, closed connection, protocol errors
+                    result = await asyncio.wait_for(
+                        self.session.call_tool(name, arguments=arguments),
+                        timeout=self._call_timeout or None)
+            except asyncio.TimeoutError as e:
+                # The call may still have taken effect at the broker. Never retried here (a
+                # timeout is not a 429), so a mutating call is not sent twice; callers settle
+                # the unknown outcome by client_order_id.
+                raise BrokerError(f"{name} timed out after {self._call_timeout:g}s "
+                                  "(outcome unknown)", transport=True) from e
+            except Exception as e:  # closed connection, protocol errors
                 flat = _flatten(e)
                 if is_rate_limited(flat) and attempt < self._rate_limit_max_retries:
                     await self._rate_limit_wait(name, attempt, flat)

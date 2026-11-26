@@ -98,6 +98,11 @@ def parse_option_positions(text: str) -> list[dict]:
             current = {"symbol": None, "underlying": None, "option_type": None,
                        "strike": None, "expiration": None, "qty": 0.0,
                        "cost_basis": None, "mark_price": None, "unrealized_pnl": None}
+        elif current is not None and current["symbol"] and re.search(r"\bSymbol:", line):
+            # a second Symbol line is the next (non-option) position: end the block so it can
+            # never lend its symbol/qty to the option
+            positions.append(current)
+            current = None
         elif current is not None:
             sym = re.search(r"\bSymbol:\s*(\S+)", line)
             if sym:

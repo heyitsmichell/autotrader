@@ -138,9 +138,9 @@ export default function MarketChart({ symbols, api, signals = [], status = null 
       } catch (e) { if (active) setNote(`Price history unavailable · ${e instanceof Error ? e.message : "broker error"}`); }
       if (!active) return;
       source = new EventSource(`/api/stream?symbol=${encodeURIComponent(symbol)}`);
-      source.addEventListener("hello", (e) => { const v = JSON.parse((e as MessageEvent).data); setLive(v.mode === "stream" ? "streaming" : "delayed"); });
+      source.addEventListener("hello", (e) => { let v; try { v = JSON.parse((e as MessageEvent).data); } catch { return; } setLive(v.mode === "stream" ? "streaming" : "delayed"); });
       source.onmessage = (e) => {
-        const tick = JSON.parse(e.data); if (tick.symbol !== symbol) return;
+        let tick; try { tick = JSON.parse(e.data); } catch { return; } if (!tick || tick.symbol !== symbol) return;
         setPrice(tick.p); const t = frame === "1D" ? new Date(tick.t * 1000).toLocaleDateString("en-CA", { timeZone: "America/New_York" }) : Math.floor(tick.t / span) * span;
         const last = bars[bars.length - 1];
         if (last && String(last.time) === String(t)) { last.high = Math.max(last.high, tick.p); last.low = Math.min(last.low, tick.p); last.close = tick.p; last.volume += tick.v || 0; }

@@ -7,43 +7,43 @@ import dataclasses
 
 
 @pytest.fixture
-def fractional_settings(tmp_data_dir):
+def fractional_settings(tmp_data_dir, monkeypatch):
     """Load test settings with fractional enabled."""
     from app.config import load_settings
     import os
-    os.environ["TRADER_DATA_DIR"] = str(tmp_data_dir)
-    os.environ["MOCK_STATE_FILE"] = str(tmp_data_dir / "mock_state.json")
-    os.environ["FRACTIONAL_ENABLED"] = "true"
-    os.environ["FRACTIONAL_MIN_USD"] = "1.0"
-    os.environ["FRACTIONAL_DECIMALS"] = "4"
-    os.environ["FRACTIONAL_WHITELIST"] = "AAPL,MSFT,NVDA,SPY,QQQ"
+    monkeypatch.setenv("TRADER_DATA_DIR", str(tmp_data_dir))
+    monkeypatch.setenv("MOCK_STATE_FILE", str(tmp_data_dir / "mock_state.json"))
+    monkeypatch.setenv("FRACTIONAL_ENABLED", "true")
+    monkeypatch.setenv("FRACTIONAL_MIN_USD", "1.0")
+    monkeypatch.setenv("FRACTIONAL_DECIMALS", "4")
+    monkeypatch.setenv("FRACTIONAL_WHITELIST", "AAPL,MSFT,NVDA,SPY,QQQ")
     # Disable bracket orders for fractional tests so they don't round down to whole shares
-    os.environ["BRACKET_ORDERS"] = "false"
+    monkeypatch.setenv("BRACKET_ORDERS", "false")
     # Use llm sizing mode so model's quantity is respected (clamped by limits)
-    os.environ["SIZING_MODE"] = "llm"
+    monkeypatch.setenv("SIZING_MODE", "llm")
     # Add GOOG to watchlist so fractional whitelist check can run
-    os.environ["WATCHLIST"] = "AAPL,MSFT,NVDA,SPY,QQQ,GOOG"
+    monkeypatch.setenv("WATCHLIST", "AAPL,MSFT,NVDA,SPY,QQQ,GOOG")
     s = load_settings()
     return s
 
 
 @pytest.fixture
-def fractional_settings_with_brackets(tmp_data_dir):
+def fractional_settings_with_brackets(tmp_data_dir, monkeypatch):
     """Load test settings with fractional enabled AND bracket orders."""
     from app.config import load_settings
     import os
-    os.environ["TRADER_DATA_DIR"] = str(tmp_data_dir)
-    os.environ["MOCK_STATE_FILE"] = str(tmp_data_dir / "mock_state.json")
-    os.environ["FRACTIONAL_ENABLED"] = "true"
-    os.environ["FRACTIONAL_MIN_USD"] = "1.0"
-    os.environ["FRACTIONAL_DECIMALS"] = "4"
-    os.environ["FRACTIONAL_WHITELIST"] = "AAPL,MSFT,NVDA,SPY,QQQ"
+    monkeypatch.setenv("TRADER_DATA_DIR", str(tmp_data_dir))
+    monkeypatch.setenv("MOCK_STATE_FILE", str(tmp_data_dir / "mock_state.json"))
+    monkeypatch.setenv("FRACTIONAL_ENABLED", "true")
+    monkeypatch.setenv("FRACTIONAL_MIN_USD", "1.0")
+    monkeypatch.setenv("FRACTIONAL_DECIMALS", "4")
+    monkeypatch.setenv("FRACTIONAL_WHITELIST", "AAPL,MSFT,NVDA,SPY,QQQ")
     # Enable bracket orders for this test
-    os.environ["BRACKET_ORDERS"] = "true"
+    monkeypatch.setenv("BRACKET_ORDERS", "true")
     # Use llm sizing mode so model's quantity is respected (clamped by limits)
-    os.environ["SIZING_MODE"] = "llm"
+    monkeypatch.setenv("SIZING_MODE", "llm")
     # Add GOOG to watchlist so fractional whitelist check can run
-    os.environ["WATCHLIST"] = "AAPL,MSFT,NVDA,SPY,QQQ,GOOG"
+    monkeypatch.setenv("WATCHLIST", "AAPL,MSFT,NVDA,SPY,QQQ,GOOG")
     s = load_settings()
     return s
 
@@ -333,21 +333,21 @@ class TestFractionalSizing:
     """Test fractional sizing logic."""
 
     @pytest.fixture
-    def fractional_settings(self, tmp_data_dir):
+    def fractional_settings(self, tmp_data_dir, monkeypatch):
         from app.config import load_settings
         import os
-        os.environ["TRADER_DATA_DIR"] = str(tmp_data_dir)
-        os.environ["FRACTIONAL_ENABLED"] = "true"
-        os.environ["FRACTIONAL_DECIMALS"] = "4"
+        monkeypatch.setenv("TRADER_DATA_DIR", str(tmp_data_dir))
+        monkeypatch.setenv("FRACTIONAL_ENABLED", "true")
+        monkeypatch.setenv("FRACTIONAL_DECIMALS", "4")
         s = load_settings()
         return s
 
     @pytest.fixture
-    def non_fractional_settings(self, tmp_data_dir):
+    def non_fractional_settings(self, tmp_data_dir, monkeypatch):
         from app.config import load_settings
         import os
-        os.environ["TRADER_DATA_DIR"] = str(tmp_data_dir)
-        os.environ["FRACTIONAL_ENABLED"] = "false"
+        monkeypatch.setenv("TRADER_DATA_DIR", str(tmp_data_dir))
+        monkeypatch.setenv("FRACTIONAL_ENABLED", "false")
         s = load_settings()
         return s
 
@@ -398,23 +398,23 @@ class TestFractionalRiskManager:
     """Test RiskManager fractional validation."""
 
     @pytest.fixture
-    def fractional_settings(self, tmp_data_dir):
+    def fractional_settings(self, tmp_data_dir, monkeypatch):
         from app.config import load_settings
         import os
-        os.environ["TRADER_DATA_DIR"] = str(tmp_data_dir)
-        os.environ["FRACTIONAL_ENABLED"] = "true"
-        os.environ["FRACTIONAL_MIN_USD"] = "1.0"
-        os.environ["FRACTIONAL_DECIMALS"] = "4"
-        os.environ["FRACTIONAL_WHITELIST"] = "AAPL,MSFT"
+        monkeypatch.setenv("TRADER_DATA_DIR", str(tmp_data_dir))
+        monkeypatch.setenv("FRACTIONAL_ENABLED", "true")
+        monkeypatch.setenv("FRACTIONAL_MIN_USD", "1.0")
+        monkeypatch.setenv("FRACTIONAL_DECIMALS", "4")
+        monkeypatch.setenv("FRACTIONAL_WHITELIST", "AAPL,MSFT")
         s = load_settings()
         return s
 
     @pytest.fixture
-    def non_fractional_settings(self, tmp_data_dir):
+    def non_fractional_settings(self, tmp_data_dir, monkeypatch):
         from app.config import load_settings
         import os
-        os.environ["TRADER_DATA_DIR"] = str(tmp_data_dir)
-        os.environ["FRACTIONAL_ENABLED"] = "false"
+        monkeypatch.setenv("TRADER_DATA_DIR", str(tmp_data_dir))
+        monkeypatch.setenv("FRACTIONAL_ENABLED", "false")
         s = load_settings()
         return s
 

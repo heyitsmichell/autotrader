@@ -23,153 +23,16 @@ from .autopsy import run_autopsy, format_autopsy_for_llm
 
 log = logging.getLogger(__name__)
 
-BALANCE_FIELDS = {
-    "currency": "Currency", "cash": "Total Cash Balance", "market_value": "Total Market Value",
-    "unrealized": "Total Unrealized P&L", "net_liq": "Net Liquidation", "day_pnl": "Day P&L",
-    "buying_power": "Buying Power",
-}
-ACTIVE = {"SUBMITTED", "PARTIAL_FILLED", "PARTIALLY_FILLED", "WORKING", "NEW", "ACCEPTED"}
-DONE_CANCELLED = {"CANCELLED", "CANCELED", "FAILED", "REJECTED", "EXPIRED"}
-STALE_UNKNOWN_SECONDS = 300.0       # an 'unknown' stop row this old must show up at the broker
-EXIT_RETRY_SECONDS = 900.0          # one exit order per symbol per window
-REANCHOR_RETRY_SECONDS = 300.0      # stale-stop cancel attempts per trade
-# cancel replies that are NOT a confirmation (the MCP returns them as plain text, not an error)
-UNCONFIRMED_CANCEL = ("not found", "may have been filled", "permission denied")
+from .portfolio_parsing import (  # noqa: F401  (re-exported: public + test-imported names)
+    ACTIVE, BALANCE_FIELDS, DONE_CANCELLED, EXIT_RETRY_SECONDS, REANCHOR_RETRY_SECONDS,
+    STALE_UNKNOWN_SECONDS, UNCONFIRMED_CANCEL, _NUMERIC, _ORDER_KEYS, _age, _option_rows,
+    balance_is_empty, parse_balance, parse_orders, parse_position_rows, swing_rows,
+)
+from .portfolio_analytics import MaeMfeMixin
 
 
-def balance_is_empty(b: dict | None) -> bool:
-    """True for a balance the broker could not really have meant: every money field missing
-    or zero. A real account never reports zero net liquidation, zero cash and zero buying
-    power at once, but the broker does answer that way while its connection is being
-    re-established. Storing it wrecks the equity curve, the P&L and the drawdown peak."""
-    if not b:
-        return True
-    return all(not (b.get(k) or 0) for k in ("net_liq", "cash", "market_value", "buying_power"))
 
-
-def parse_balance(text: str) -> dict:
-    out: dict = {}
-    for key, label in BALANCE_FIELDS.items():
-        m = re.search(rf"^\s*{re.escape(label)}:\s*(\S+)", text, re.M)
-        if m:
-            out[key] = m.group(1) if key == "currency" else _num(m.group(1))
-    if out.get("net_liq") is None and out.get("cash") is not None:
-        out["net_liq"] = (out.get("cash") or 0) + (out.get("market_value") or 0)
-    return out
-
-
-def _option_rows(text: str) -> list[dict]:
-    """Option positions from the positions text, using the same one-row-per-line parser the
-    option exit manager relies on (broker.parsers.parse_option_positions expects a block layout
-    the broker does not print). [] on any problem: the dashboard must not break on an odd row."""
-    try:
-        from .engine.option_exits import parse_held_options
-        from .engine.util import parse_occ
-        rows = []
-        for h in parse_held_options(text or ""):
-            occ = parse_occ(h.symbol) or {}
-            upl = (round((h.mark - h.cost) * h.qty * 100, 2)
-                   if h.mark is not None and h.cost is not None else None)
-            rows.append({"symbol": h.symbol, "underlying": occ.get("underlying"),
-                         "option_type": occ.get("option_type"), "strike": occ.get("strike"),
-                         "expiration": occ.get("expiration"), "qty": h.qty,
-                         "cost_basis": h.cost, "mark_price": h.mark, "unrealized_pnl": upl})
-        return rows
-    except Exception:  # noqa: BLE001
-        return []
-
-
-def parse_position_rows(text: str) -> list[dict]:
-    rows = []
-    for line in text.splitlines():
-        if "Leg:" in line or "Symbol:" not in line:
-            continue
-        kind = re.search(r"\bType:\s*(\S+)", line)
-        if kind and kind.group(1).upper() not in {"EQUITY", "STOCK", "ETF"}:
-            continue
-
-        def field(label: str, pattern: str = r"(-?[\d.,]+)"):
-            m = re.search(rf"(?<!Available )\b{re.escape(label)}:\s*{pattern}", line)
-            return m.group(1) if m else None
-
-        sym, qty = field("Symbol", r"(\S+)"), _num(field("Qty") or "")
-        if not sym or qty is None:
-            continue
-        cost, last = _num(field("Cost") or ""), _num(field("Last") or "")
-        mv = _num(field("Market Value") or "")
-        upl = _num(field("Unrealized P&L") or "")
-        if mv is None and last is not None:
-            mv = round(qty * last, 2)       # the US API does not report market value
-        if upl is None and None not in (last, cost):
-            upl = round((last - cost) * qty, 2)
-        rows.append({"symbol": sym.upper(), "qty": qty, "cost": cost, "last": last,
-                     "market_value": mv, "unrealized": upl,
-                     "unrealized_pct": round((last / cost - 1) * 100, 3)
-                     if last and cost else None})
-    return rows
-
-
-def swing_rows(rows: list[dict], reserved: dict[str, float] | None) -> list[dict]:
-    """Position rows with the multi-strategy sleeves' shares removed (scaled value and P&L), so
-    Today's protection ladder lists swing positions only. Rows left at 0 shares drop out."""
-    if not reserved:
-        return rows
-    out = []
-    for r in rows:
-        held = float(r.get("qty") or 0)
-        res = float(reserved.get(r["symbol"], 0.0))
-        if res <= 0 or held <= 0:
-            out.append(r)
-            continue
-        left = held - res
-        if left < 1e-9:
-            continue
-        f = left / held
-        out.append({**r, "qty": left, "sleeve_qty": res,
-                    "market_value": round(r["market_value"] * f, 2) if r.get("market_value") is not None else None,
-                    "unrealized": round(r["unrealized"] * f, 2) if r.get("unrealized") is not None else None})
-    return out
-
-
-_ORDER_KEYS = {
-    "Order ID": "order_id", "Symbol": "symbol", "Side": "side", "Status": "status",
-    "Order Type": "order_type", "Total Quantity": "quantity", "Filled Quantity": "filled_qty",
-    "Limit Price": "limit_price", "Stop Price": "stop_price", "Filled Price": "filled_price",
-    "Time In Force": "tif", "Place Time": "placed_at", "Filled Time": "filled_at",
-    "Average Fill Price": "avg_fill_price", "Commission": "commission",
-    "Combo Type": "combo_type", "Client Order ID": "client_order_id",
-}
-_NUMERIC = {"quantity", "filled_qty", "limit_price", "stop_price", "filled_price", "avg_fill_price", "commission"}
-
-
-def parse_orders(text: str) -> list[dict]:
-    """Every order (including each leg of a combo) from get_open_orders / history."""
-    orders: list[dict] = []
-    group, combo, cur = None, None, None
-    for line in text.splitlines():
-        if m := re.match(r"^Client Order ID:\s*(\S+)", line):
-            group, cur = m.group(1), None
-        elif m := re.match(r"^Combo Type:\s*(\S+)", line):
-            combo = m.group(1)
-        elif m := re.match(r"^\s{2,}Client Order ID:\s*(\S+)", line):
-            cur = {"client_order_id": m.group(1), "group_id": group, "combo_type": combo}
-            orders.append(cur)
-        elif cur is not None and (m := re.match(r"^\s{2,}([A-Za-z ]+?):\s*(.*)$", line)):
-            key = _ORDER_KEYS.get(m.group(1).strip())
-            if key:
-                value = m.group(2).strip()
-                value = None if value in ("", "N/A", "None") else value
-                cur[key] = _num(value) if key in _NUMERIC and value else value
-    return orders
-
-
-def _age(row: dict) -> float:
-    """Seconds since a protective-order row last changed."""
-    stamp = datetime.fromisoformat(row.get("updated_at") or row["created_at"])
-    return (now_utc() - stamp).total_seconds()
-
-
-class Portfolio:
+class Portfolio(MaeMfeMixin):
     def __init__(self, settings: Settings, db: DB, broker: Broker) -> None:
         self.s, self.db, self.broker = settings, db, broker
         self._cache: dict | None = None
@@ -181,13 +44,15 @@ class Portfolio:
     def _sleeve_reserved(self) -> dict[str, float]:
         try:
             return self.db.sleeve_reserved()
-        except Exception:  # noqa: BLE001 - stub DBs / older schemas
+        except Exception as exc:  # noqa: BLE001 - stub DBs / older schemas
+            log.debug("sleeve_reserved unavailable: %s", exc)
             return {}
 
     def _sleeve_options(self) -> set[str]:
         try:
             return self.db.sleeve_option_symbols()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.debug("sleeve_option_symbols unavailable: %s", exc)
             return set()
 
     async def snapshot(self, max_age: float = 5.0) -> dict:
@@ -367,54 +232,6 @@ class Portfolio:
                                      f"{r['price']}: {e}. Set one in Webull.")
         return n
 
-    async def _compute_mae_mfe(self, symbol: str, entry_price: float,
-                               entry_time: datetime, exit_time: datetime) -> tuple[float, float]:
-        """
-        Compute MAE (Maximum Adverse Excursion) and MFE (Maximum Favorable Excursion)
-        from intraday bars during the trade hold period.
-
-        Returns (mae_pct, mfe_pct) as percentages.
-        """
-        try:
-            # Use 5-minute bars for reasonable granularity
-            bars = await self.broker.intraday_bars(symbol, timespan="5m", count=390)
-        except Exception:
-            # Fallback: return simple entry/exit based values
-            return 0.0, 0.0
-
-        if not bars or entry_price <= 0:
-            return 0.0, 0.0
-
-        # Convert entry/exit times to UTC for comparison
-        entry_ts = entry_time.timestamp()
-        exit_ts = exit_time.timestamp()
-
-        # Find intraday bars that fall within the trade hold period
-        trade_bars = []
-        for bar in bars:
-            try:
-                bar_time = bar["time"]
-                if isinstance(bar_time, str):
-                    bar_time = datetime.fromisoformat(bar_time.replace('Z', '+00:00'))
-                if entry_ts <= bar_time.timestamp() <= exit_ts:
-                    trade_bars.append(bar)
-            except Exception:
-                continue
-
-        if not trade_bars:
-            return 0.0, 0.0
-
-        # For long trades: MAE = max drawdown from entry, MFE = max run-up from entry
-        # MAE = min(0, (low - entry) / entry * 100)
-        # MFE = max(0, (high - entry) / entry * 100)
-        min_low = min(b["low"] for b in trade_bars)
-        max_high = max(b["high"] for b in trade_bars)
-
-        mae = min(0.0, (min_low - entry_price) / entry_price * 100)
-        mfe = max(0.0, (max_high - entry_price) / entry_price * 100)
-
-        return round(mae, 2), round(mfe, 2)
-
     # -- stop re-anchoring (fill landed at/below the planned stop) -----------------
     def _entry_atr(self, trade: dict) -> float | None:
         """ATR for a trade: the ledger row, then the latest stored signal for the symbol."""
@@ -467,7 +284,8 @@ class Portfolio:
                                 f"stop re-anchored to ${sl:.2f} (target ${tp:.2f})", alert=True)
             try:
                 live = await self.broker.last_price(sym)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                log.warning("last_price failed during stop re-anchor: %s", exc)
                 live = None
             if live and live <= sl:
                 self.db.log("warn", f"{sym}: price ${live:.2f} already below the re-anchored stop "
@@ -486,7 +304,8 @@ class Portfolio:
             if order_session() != "CORE":
                 return None
             live = await self.broker.last_price(sym)
-        except Exception:  # noqa: BLE001 - no live price: place the stop as usual
+        except Exception as exc:  # noqa: BLE001 - no live price: place the stop as usual
+            log.debug("last_price failed (placing stop as usual): %s", exc)
             return None
         return float(live) if live and float(stop) >= float(live) else None
 
@@ -593,7 +412,8 @@ class Portfolio:
                     continue                                        # a valid (profit-locking) stop
                 try:
                     live = await self.broker.last_price(sym)
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("last_price failed during stop re-anchor: %s", exc)
                     live = None
                 if not live or bad < float(live):
                     continue                                        # not above the market
@@ -778,6 +598,9 @@ class Portfolio:
             if r.get("proposal_id") == pid and r["kind"] in ("sl", "tp"):
                 o = orders.get(r.get("client_order_id"))
                 if filled_sell(o):
+                    at0 = self._ts(o.get("filled_at"))
+                    if entry_at and at0 and at0 < entry_at:
+                        continue   # filled before this trade's entry: belongs to an earlier lot
                     return (o, *reason_of(r))
         cands = []
         for o in orders.values():                        # 2. newest filled SELL after the entry
@@ -927,16 +750,22 @@ class Portfolio:
                             entry_time = datetime.fromisoformat(trade["entry_fill_time"].replace('Z', '+00:00'))
                             exit_time = datetime.fromisoformat(fill_time.replace('Z', '+00:00'))
                             hold_seconds = int((exit_time - entry_time).total_seconds())
+                            if hold_seconds < 0:
+                                self.db.log("warn", f"{trade['symbol']} (proposal {proposal_id}): exit fill "
+                                                    f"{fill_time} precedes entry fill {trade['entry_fill_time']} "
+                                                    f"({hold_seconds}s); hold clamped to 0")
+                                hold_seconds = 0
 
                             # MAE/MFE - compute from intraday bars during the trade hold period
                             mae, mfe = await self._compute_mae_mfe(
                                 trade["symbol"], entry_price, entry_time, exit_time
                             )
 
-                            self.db.update_trade_exit(proposal_id, fill_price, fill_time,
-                                                      exit_reason, commission, slippage)
-                            self.db.update_trade_pnl(proposal_id, realized_pnl, realized_pnl_pct,
-                                                     mae, mfe, hold_seconds)
+                            with self.db.transaction():   # exit + P&L land together or not at all
+                                self.db.update_trade_exit(proposal_id, fill_price, fill_time,
+                                                          exit_reason, commission, slippage)
+                                self.db.update_trade_pnl(proposal_id, realized_pnl, realized_pnl_pct,
+                                                         mae, mfe, hold_seconds)
                             self.db.log("info", f"Trade exited: {trade['symbol']} @ {fill_price:.2f} "
                                                  f"(qty: {qty}, {exit_reason}, P&L: ${realized_pnl:+.2f}, {realized_pnl_pct:+.2f}%)")
 

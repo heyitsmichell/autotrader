@@ -761,6 +761,20 @@ WantedBy=default.target
             return {"installed": False, "method": "systemd user service", "details": str(e)}
 
 
+def pc_disabled(repo_root: Path | None = None) -> bool:
+    root = Path(repo_root) if repo_root else Path(__file__).resolve().parent.parent
+    return (root / "PC_BOT_DISABLED").exists()
+
+
+def _guard_pc_disabled(args) -> None:
+    """Exit non-zero when the PC_BOT_DISABLED marker exists, unless --override is given."""
+    if pc_disabled() and not getattr(args, "override", False):
+        print("Refusing to start: the PC_BOT_DISABLED marker file exists in the project root "
+              "(the bot runs on the server, not this PC). Delete it or pass --override.",
+              file=sys.stderr)
+        sys.exit(2)
+
+
 def main():
     parser = argparse.ArgumentParser(description="AI Trader cross-platform launcher")
     subparsers = parser.add_subparsers(dest="command", help="Subcommands")
@@ -788,6 +802,10 @@ def main():
     # Stop
     stop_parser = subparsers.add_parser("stop", help="Gracefully stop the trader")
 
+    for p in (run_parser, install_parser):
+        p.add_argument("--override", action="store_true",
+                       help="Run even though the PC_BOT_DISABLED marker file exists")
+
     args = parser.parse_args()
 
     # Default to 'run' if no command given
@@ -804,6 +822,7 @@ def main():
         sys.exit(0 if success else 1)
 
     if args.command == "install":
+        _guard_pc_disabled(args)
         success = launcher.install_autostart()
         sys.exit(0 if success else 1)
 
@@ -827,6 +846,7 @@ def main():
         sys.exit(0 if success else 1)
 
     # Normal run
+    _guard_pc_disabled(args)
     sys.exit(launcher.run())
 
 

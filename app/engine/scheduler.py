@@ -27,7 +27,14 @@ from .util import (MAX_PROPOSALS_PER_RUN, _coid, _is_option_symbol, _session_rej
 log = logging.getLogger("app.engine")
 
 
-class SchedulerMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import SchedulerHost as _Host
+else:
+    _Host = object
+
+class SchedulerMixin(_Host):
     # -- scheduler -----------------------------------------------------------
     @property
     def cycle_minutes_effective(self) -> int:

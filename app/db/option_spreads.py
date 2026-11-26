@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 
+from ..market import now_et
 from .base import BaseRepo
 
 COLS = ("ts", "minutes_from_open", "underlying", "symbol", "kind", "dte", "strike", "bid", "ask",
@@ -19,5 +20,5 @@ class OptionSpreadsRepo(BaseRepo):
         self.conn.executemany(sql, [tuple(r.get(c) for c in COLS) for r in rows])
 
     def option_spreads(self, days: int = 20) -> list[dict]:
-        since = (datetime.now(timezone.utc) - timedelta(days=int(days))).isoformat(timespec="seconds")
+        since = (now_et().astimezone(timezone.utc) - timedelta(days=int(days))).isoformat(timespec="seconds")
         return self._rows("SELECT * FROM option_spreads WHERE ts >= ? ORDER BY ts", since)

@@ -87,7 +87,7 @@ async def main():
     from app.sentiment import SentimentEngine
     from app.ml import MLFilter
     from app.research import ResearchService
-    db = DB(DATA_DIR / "trader.db", settings.broker_mode, settings.webull_environment, settings.webull_account_id)
+    db = DB(DATA_DIR / "uat_order_test.db", settings.broker_mode, settings.webull_environment, settings.webull_account_id)
     broker = Broker(settings)
     sentiment = SentimentEngine(settings, broker, db)
     ml = MLFilter(settings, db)

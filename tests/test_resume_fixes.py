@@ -63,6 +63,43 @@ async def test_ml_scorecard_for_an_older_model(tmp_path):
         db.close()
 
 
+
+async def test_ml_scorecard_falls_back_to_walk_forward_metrics(tmp_path):
+    app = make_app(tmp_path)
+    db = app.state.db
+    try:
+        mid = db.add_model(created_at="2026-11-25T00:00:00+00:00", status="champion",
+                           metrics={"mean_auc": 0.51, "mean_hit_rate": 0.59, "total_test_trades": 300})
+        async with make_client(app) as c:
+            body = (await c.get(f"/api/ml/{mid}/scorecard")).json()
+        assert body["auc"] == pytest.approx(0.51)
+        assert body["precision"] == pytest.approx(0.59)
+        assert body["test_trades"] == 300
+        assert body["hit_rate"] == pytest.approx(0.59)
+        assert body["auc_mean_folds"] == pytest.approx(0.51)
+        assert body["passed"] is None and body["checks"] == {} and body["recall"] is None
+    finally:
+        db.close()
+
+
+async def test_ml_scorecard_exposes_walk_forward_verdict(tmp_path):
+    app = make_app(tmp_path)
+    db = app.state.db
+    try:
+        mid = db.add_model(created_at="2026-11-25T00:00:00+00:00", status="rejected",
+                           metrics={"mean_auc": 0.5, "mean_avg_return": -0.1, "passed": False,
+                                    "rejection_reason": "auc too low",
+                                    "total_independent_test_trades": 40,
+                                    "checks": {"auc": False}, "thresholds": {"min_auc": 0.55}})
+        async with make_client(app) as c:
+            body = (await c.get(f"/api/ml/{mid}/scorecard")).json()
+        assert body["passed"] is False and body["rejection_reason"] == "auc too low"
+        assert body["checks"] == {"auc": False} and body["thresholds"] == {"min_auc": 0.55}
+        assert body["total_independent_test_trades"] == 40
+        assert body["mean_avg_return"] == pytest.approx(-0.1)
+    finally:
+        db.close()
+
 def test_option_dte_uses_the_exchange_date(test_settings, monkeypatch):
     import app.risk as risk
     from app.market import ET
@@ -83,3 +120,17 @@ async def test_lesson_apply_replaces_frozen_settings(test_engine):
     assert test_engine.s.consensus_min_news == 4 and isinstance(test_engine.s.consensus_min_news, int)
     assert before.consensus_min_news != 4 or before is not test_engine.s
     assert test_engine.refresh_lessons() == 0          # already in effect: nothing new
+
+
+async def test_options_train_endpoint(tmp_path, monkeypatch):
+    from app import options_ml
+    app = make_app(tmp_path)
+    monkeypatch.setattr(options_ml, "live_training_rows", lambda db: [])
+    monkeypatch.setattr(options_ml, "train", lambda live, live_weight=1.0: None)
+    try:
+        async with make_client(app) as c:
+            from tests.test_api_support import HDR
+            r = await c.post("/api/options/train", headers=HDR)
+        assert r.status_code == 409
+    finally:
+        app.state.db.close()

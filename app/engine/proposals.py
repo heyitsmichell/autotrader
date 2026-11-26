@@ -27,7 +27,14 @@ from .util import (MAX_PROPOSALS_PER_RUN, _coid, _is_option_symbol, _session_rej
 log = logging.getLogger("app.engine")
 
 
-class ProposalsMixin:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing-only host contract; no runtime base class
+    from ._host import ProposalsHost as _Host
+else:
+    _Host = object
+
+class ProposalsMixin(_Host):
     async def _generate_proposals_deterministic(self, run_id: int, sigs: list[dict]) -> int:
         """Generate trade proposals deterministically (no LLM).
 
@@ -98,7 +105,8 @@ class ProposalsMixin:
             # regular close (no extended print yet) -> do not anchor an entry to it.
             try:
                 stale = await self.broker.is_price_stale(symbol)
-            except Exception:  # noqa: BLE001 - stub brokers without the method
+            except Exception as exc:  # noqa: BLE001 - stub brokers without the method
+                log.debug("is_price_stale check failed (assuming fresh): %s", exc)
                 stale = False
             if stale:
                 self.db.log("info", f"Skipping BUY {symbol}: no extended-hours price; the "

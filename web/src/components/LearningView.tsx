@@ -249,13 +249,13 @@ function LessonDetail({ lesson, onClose }: { lesson: Lesson; onClose: () => void
               <dt>Created By</dt>
               <dd>{lesson.created_by}</dd>
               <dt>Created</dt>
-              <dd>{new Date(lesson.created_at).toLocaleString()}</dd>
+              <dd>{dateTime(lesson.created_at)} ET</dd>
               {lesson.approved_by && (
                 <>
                   <dt>Approved By</dt>
                   <dd>{lesson.approved_by}</dd>
                   <dt>Approved</dt>
-                  <dd>{lesson.approved_at ? new Date(lesson.approved_at).toLocaleString() : "—"}</dd>
+                  <dd>{lesson.approved_at ? `${dateTime(lesson.approved_at)} ET` : "—"}</dd>
                 </>
               )}
               {lesson.retired_reason && (

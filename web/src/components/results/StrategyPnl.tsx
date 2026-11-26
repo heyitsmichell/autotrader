@@ -3,6 +3,7 @@
 import Section from "@/components/ui/Section";
 import { ColorType, createChart, LineSeries, LineStyle, type Time } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePoll } from "@/lib/usePoll";
 import type { Api } from "@/lib/api";
 import { money, signTone } from "@/lib/format";
 import type { PnlPayload, PnlRow } from "@/lib/types";
@@ -26,22 +27,14 @@ function cutoff(range: Range, last: string): string {
 const tone = (v: unknown) => { const t = signTone(v); return t === "positive" ? css["gain"] : t === "negative" ? css["loss"] : ""; };
 
 export default function StrategyPnl({ api }: { api: Api }) {
-  const [data, setData] = useState<PnlPayload | null>(null);
-  const [failed, setFailed] = useState(false);
   const [range, setRange] = useState<Range>("All");
   const [shadows, setShadows] = useState(false);
   const host = useRef<HTMLDivElement>(null);
   const tip = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    let live = true;
-    const load = () => api<PnlPayload>("/api/results/pnl?days=365")
-      .then(d => { if (live) { setData(d); setFailed(false); } })
-      .catch(() => { if (live) setFailed(true); });
-    load();
-    const t = window.setInterval(load, 300_000);
-    return () => { live = false; window.clearInterval(t); };
-  }, [api]);
+  const poll = usePoll<PnlPayload>(api, "/api/results/pnl?days=365", 300_000);
+  const data = poll.data;
+  const failed = !!poll.error;
 
   const shadowIds = useMemo(() => {
     const ids = new Set<string>();

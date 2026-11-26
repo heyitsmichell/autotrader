@@ -14,9 +14,9 @@ router = APIRouter()
 
 
 @router.get("/api/lessons", response_model=list[LessonOut])
-async def lessons(request: Request, status: str | None = None, param_name: str | None = None,
+def lessons(request: Request, status: str | None = None, param_name: str | None = None,
                   limit: int = 50):
-    return request.app.state.db.lessons(status, param_name, min(limit, 200))
+    return request.app.state.db.lessons(status, param_name, max(1, min(int(limit), 200)))
 
 
 @router.post("/api/lessons/{lesson_id}/status")
@@ -43,7 +43,10 @@ async def lesson_status(request: Request, lesson_id: int, body: LessonStatusIn):
 async def lesson_rollback(request: Request, lesson_id: int, body: LessonRollbackIn):
     """Rollback lesson to previous version."""
     db = request.app.state.db
-    new_id = db.rollback_lesson(lesson_id, body.rolled_back_by)
+    try:
+        new_id = db.rollback_lesson(lesson_id, body.rolled_back_by)
+    except ValueError as e:
+        raise HTTPException(409, f"Cannot rollback: {e}") from e
     if new_id is None:
         raise HTTPException(409, "Cannot rollback: no previous version or lesson not found")
     return {"ok": True, "rolled_back_to": new_id}
@@ -78,7 +81,7 @@ async def put_lessons(request: Request, body: TextIn):
 
 
 @router.get("/api/learning")
-async def learning(request: Request):
+def learning(request: Request):
     st = request.app.state
     learner = st.learner
     s = st.settings
