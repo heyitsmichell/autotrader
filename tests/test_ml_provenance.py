@@ -102,7 +102,9 @@ class TestMLProvenance:
 
         # Create synthetic sine-wave bars (like the mock broker uses)
         sine_bars = []
-        for i in range(500):
+        # 1000 bars (not 500): with 500 the early "too few independent trades" gate rejects first,
+        # so the full walk-forward check block (walkforward.py model-trades check) is never reached.
+        for i in range(1000):
             # Sum of sine waves with different periods (like mock_mcp_server.py)
             price = 100 + 5 * math.sin(i * 0.1) + 2 * math.sin(i * 0.05) + 1 * math.sin(i * 0.02)
             sine_bars.append({

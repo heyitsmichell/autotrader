@@ -4,12 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { Lesson } from "@/lib/types";
 import { useConfirm } from "./ConfirmModal";
-import Dialog from "./Dialog";
 import Section from "./ui/Section";
 import Segmented from "./ui/Segmented";
-import Mark from "./ui/Mark";
-import Empty from "./ui/Empty";
-import { dateTime, num } from "@/lib/format";
 
 import LessonTable from "./learning/LessonTable";
 import LessonDetail from "./learning/LessonDetail";
@@ -110,8 +106,6 @@ export default function LearningView({ onAction }: { onAction?: Perform }) {
   };
 
   const meta = Object.entries(statusCounts).map(([s, c]) => `${c} ${(statusLabel[s] || s).toLowerCase()}`).join(" · ");
-  const btn = (label: string, fn: () => void) =>
-    <button className="button" onClick={(e) => { e.stopPropagation(); fn(); }}>{label}</button>;
 
   return (
     <div className="learning-view">

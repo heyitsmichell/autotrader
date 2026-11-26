@@ -30,6 +30,17 @@ export function AccountPanel({ portfolio, status, onRefresh }: {
   </Section>;
 }
 
+/** "Stop $X" for stop orders (they have no limit price, so they used to show as "Market"). */
+function orderTypeLabel(order: { order_type?: string | null; limit_price?: number | null; stop_price?: number | null }): string {
+  const t = (order.order_type || "").toUpperCase();
+  if (t.includes("STOP")) {
+    const stop = order.stop_price ? `Stop ${money(order.stop_price)}` : "Stop";
+    return order.limit_price ? `${stop} / Limit ${money(order.limit_price)}` : stop;
+  }
+  if (order.limit_price) return `Limit ${money(order.limit_price)}`;
+  return t === "MARKET" || !t ? "Market" : t.charAt(0) + t.slice(1).toLowerCase();
+}
+
 export function OrdersPanel({ portfolio }: { portfolio: Portfolio | null }) {
   const openOrders = portfolio?.open_orders || [];
   return <Section title="Open orders" meta={openOrders.length ? `${openOrders.length} at the broker` : undefined}>
@@ -41,7 +52,7 @@ export function OrdersPanel({ portfolio }: { portfolio: Portfolio | null }) {
           <td>{order.symbol}</td>
           <td>{order.side}</td>
           <td className="num">{order.quantity}</td>
-          <td className="num">{order.limit_price ? `Limit ${money(order.limit_price)}` : "Market"}</td>
+          <td className="num">{orderTypeLabel(order)}</td>
           <td><Mark tone="neutral">{order.status || "working"}</Mark></td>
         </tr>)}</tbody>
       </table></div>}

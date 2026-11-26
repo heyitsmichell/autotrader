@@ -7,7 +7,7 @@ import Section from "./ui/Section";
 import Segmented from "./ui/Segmented";
 import Mark from "./ui/Mark";
 import Empty from "./ui/Empty";
-import { num, pct } from "@/lib/format";
+import { pct } from "@/lib/format";
 import type { Autopsy } from "@/lib/types";
 import css from "./AutopsyView.module.css";
 import rcss from "./results/results.module.css";

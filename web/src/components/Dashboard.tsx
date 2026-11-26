@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import ApproveDrawer from "./ApproveDrawer";
 import AutopsyView from "./AutopsyView";
 import BannerRail from "./BannerRail";
@@ -64,7 +64,7 @@ export default function Dashboard() {
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "Unable to load proposal details");
     }
-  }, [api]);
+  }, [api, setNotice]);
 
   const startFlatten = () => setConfirm({
     title: "Flatten everything?",

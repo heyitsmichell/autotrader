@@ -186,6 +186,10 @@ async def _startup(app: FastAPI, stack: AsyncExitStack) -> None:
     reg("risk loop", engine.stop_risk_loop)
     publisher = asyncio.create_task(stream.publisher_loop(app))
     reg("publisher", lambda: _cancel_and_wait(publisher))
+    if settings.broker_mode != "mock":     # warm the slow Yahoo caches behind the Research tab
+        from .. import research_views as _rv
+        warm = asyncio.create_task(_rv.warm_cache(30.0, every=_rv.CACHE_SECONDS - 300))
+        reg("research warm-up", lambda: _cancel_and_wait(warm))
 
 
 async def _cancel_and_wait(task):

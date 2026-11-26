@@ -25,19 +25,20 @@ export type PollState<T> = { data: T | null; error: Error | null; loading: boole
 export function usePoll<T>(api: Api | undefined, path: string | null, intervalMs: number): PollState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<Error | null>(null);
-  const [loading, setLoading] = useState<boolean>(!!path);
+  // loading is derived: true while there is an active path whose first response has not settled yet
+  const [settledPath, setSettledPath] = useState<string | null>(null);
+  const loading = !!api && !!path && settledPath !== path;
   const reqId = useRef(0);
   const loadRef = useRef<(force: boolean) => void>(() => {});
 
   useEffect(() => {
-    if (!api || !path) { setLoading(false); loadRef.current = () => {}; return; }
+    if (!api || !path) { loadRef.current = () => {}; return; }
     let alive = true;
-    setLoading(true);
     const load = (force: boolean) => {
       const id = ++reqId.current;
       shared<T>(api, path, force)
-        .then(d => { if (alive && id === reqId.current) { setData(d); setError(null); setLoading(false); } })
-        .catch(e => { if (alive && id === reqId.current) { setError(e instanceof Error ? e : new Error(String(e))); setLoading(false); } });
+        .then(d => { if (alive && id === reqId.current) { setData(d); setError(null); setSettledPath(path); } })
+        .catch(e => { if (alive && id === reqId.current) { setError(e instanceof Error ? e : new Error(String(e))); setSettledPath(path); } });
     };
     loadRef.current = load;
     load(false);

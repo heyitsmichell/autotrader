@@ -109,6 +109,8 @@ export interface OpenOrder {
   side: string;
   quantity: number;
   limit_price?: number | null;
+  stop_price?: number | null;
+  order_type?: string | null;
   status?: string;
 }
 

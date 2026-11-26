@@ -133,7 +133,6 @@ export default function MLScorecard({ ml, onRefresh, onAction, busy = false }: {
   ];
   const gate = gateAll.filter(g => g.value != null).map(g => ({ ...g, value: g.value as string,
     threshold: fb ? g.threshold : "", ok: fb ? g.ok : null }));
-  const thresholds = sc?.thresholds ? Object.entries(sc.thresholds) : [];
 
   return (
     <div className="ml-scorecard-view">

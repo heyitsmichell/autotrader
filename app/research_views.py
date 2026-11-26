@@ -76,6 +76,29 @@ async def closes(name: str) -> pd.DataFrame:
     return df if df is not None else pd.DataFrame()
 
 
+async def warm_cache(delay: float = 30.0, names: tuple[str, ...] = ("sp500", "market", "vaa"),
+                     every: float | None = None) -> None:
+    """Background warm-up of the Yahoo close caches behind Momentum (slow, ~35 s cold), Regime and VAA.
+    With ``every`` set it repeats (just under CACHE_SECONDS) so the views stay warm, not only for
+    the first hour after a restart. Never raises (except cancellation); downloads run in threads."""
+    if delay > 0:
+        await asyncio.sleep(delay)
+    while True:
+        try:
+            for name in names:
+                t0 = time.monotonic()
+                df = await closes(name)          # already swallows download errors
+                log.info("research warm-up: %s %s in %.1fs", name, "ok" if not df.empty else "empty",
+                         time.monotonic() - t0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - warm-up is best effort
+            log.warning("research warm-up failed: %s", e)
+        if not every:
+            return
+        await asyncio.sleep(every)
+
+
 def _asof() -> str:
     return now_et().isoformat(timespec="seconds")
 
