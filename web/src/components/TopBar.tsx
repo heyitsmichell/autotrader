@@ -7,6 +7,7 @@
 
 import { useEffect } from "react";
 import type { Status } from "@/lib/types";
+import { TABS, type Tab } from "@/lib/tabs";
 import css from "./TopBar.module.css";
 
 /** Market data older than this (seconds) is flagged as stale while the market is open. */
@@ -22,7 +23,7 @@ export function dataAgeTone(status: Status | null): "fresh" | "aging" | "stale" 
   return "fresh";
 }
 
-export type Tab = "today" | "strategies" | "options" | "research" | "learning" | "backtests" | "settings";
+export type { Tab };
 
 export default function TopBar({ status, busy, tab, onTab, onMode, onFlatten, onKill, onScheduler }: {
   status: Status | null;
@@ -37,16 +38,7 @@ export default function TopBar({ status, busy, tab, onTab, onMode, onFlatten, on
 }) {
   const killOn = !!status?.kill_switch;
   const paused = !status?.scheduler_on;
-  const tabs: [Tab, string][] = [
-    ["today", "Today"],
-    ["strategies", "Strategies"],
-    ["research", "Research"],
-    ["learning", "Results"],
-    ["backtests", "Backtests"],
-    // The manual option-chain tab was removed (2026-11-25): auto-entry picks contracts itself, and
-    // option positions/settings/spreads live on Today and Settings. OptionChain.tsx is kept.
-    ["settings", "Settings"],
-  ];
+  const tabs: [Tab, string][] = TABS.filter(t => !t.hidden).map(t => [t.id, t.label]);
 
   // Shift+K opens the kill-switch dialog from anywhere (not while typing in a field).
   useEffect(() => {

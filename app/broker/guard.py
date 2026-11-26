@@ -72,6 +72,18 @@ class OrderGuard:
     def __init__(self, settings) -> None:
         self.settings = settings
         self.kill_switch: Callable[[], bool] | None = None
+        # Caps are read directly (no getattr default): a missing/renamed setting raises
+        # AttributeError here, at startup, instead of silently disabling a cap.
+        caps = {"max_order_qty": settings.max_order_qty, "max_order_usd": settings.max_order_usd,
+                "options_max_contracts_per_order": settings.options_max_contracts_per_order,
+                "market_notional_buffer_pct": settings.market_notional_buffer_pct}
+        # max_order_notional is genuinely optional (not a Settings field; an extra cap for stubs).
+        opt = getattr(settings, "max_order_notional", None)
+        if opt is not None:
+            caps["max_order_notional"] = opt
+        for name, val in caps.items():
+            if float(val or 0) < 0:
+                raise ValueError(f"{name} must be >= 0 (got {val})")
 
     def set_context(self, kill_switch: Callable[[], bool] | None = None) -> None:
         if kill_switch is not None:
@@ -124,19 +136,19 @@ class OrderGuard:
         if self._killed() and not (allow_when_killed or in_flatten_mode()):
             raise OrderGuardError(f"Kill switch is ON: opening order for {symbol} refused")
 
-        whitelist = {w.upper() for w in (getattr(s, "symbol_whitelist", None) or [])}
+        whitelist = {w.upper() for w in (s.symbol_whitelist or [])}
         if whitelist and symbol and symbol not in whitelist:
             raise OrderGuardError(f"{symbol} is not in the symbol whitelist; order refused")
 
         qty = float(order.get("quantity") or 0)
         mult = float(order.get("multiplier") or (100 if kind == "option" else 1))
         if kind == "option":
-            max_contracts = int(getattr(s, "options_max_contracts_per_order", 0) or 0)
+            max_contracts = int(s.options_max_contracts_per_order or 0)
             if max_contracts and qty > max_contracts:
                 raise OrderGuardError(
                     f"{symbol}: {qty:g} contracts exceeds the per-order limit of {max_contracts}")
         elif order.get("amount") is None:
-            max_qty = float(getattr(s, "max_order_qty", 0) or 0)
+            max_qty = float(s.max_order_qty or 0)
             if max_qty and qty > max_qty:
                 raise OrderGuardError(f"{symbol}: quantity {qty:g} exceeds max_order_qty {max_qty:g}")
 
@@ -148,11 +160,11 @@ class OrderGuard:
                 # a buffer for the move before it fills. No reference price -> refuse (fail closed).
                 if price is None or float(price) <= 0:
                     raise OrderGuardError(f"{symbol}: MARKET opening order has no reference price")
-                buf = float(getattr(s, "market_notional_buffer_pct", 1.0) or 0.0)
+                buf = float(s.market_notional_buffer_pct or 0.0)
                 price = float(price) * (1 + buf / 100.0)
             notional = None if price is None else float(price) * qty * mult
         if notional is not None:
-            caps = [float(c) for c in (getattr(s, "max_order_usd", 0),
+            caps = [float(c) for c in (s.max_order_usd,
                                        getattr(s, "max_order_notional", 0)) if c]
             cap = min(caps) if caps else 0.0
             if cap and notional > cap + 1e-9:

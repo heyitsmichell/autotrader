@@ -88,7 +88,8 @@ async def options_train(request: Request):
 
 
 @router.get("/api/options/chain")
-async def option_chain(request: Request, underlying: str, min_dte: int | None = None, max_dte: int | None = None):
+async def option_chain(request: Request, underlying: str, min_dte: int | None = None, max_dte: int | None = None,
+                       debug: int = 0):
     """Get option chain for an underlying."""
     st = request.app.state
     if not st.settings.options_enabled:
@@ -98,13 +99,16 @@ async def option_chain(request: Request, underlying: str, min_dte: int | None = 
     underlying = underlying.upper()
     if underlying not in st.settings.options_allowed_underlyings:
         raise HTTPException(400, f"{underlying} not in OPTIONS_ALLOWED_UNDERLYINGS")
-    min_dte = min_dte or st.settings.options_min_dte
-    max_dte = max_dte or st.settings.options_max_dte
+    min_dte = st.settings.options_min_dte if min_dte is None else min_dte
+    max_dte = st.settings.options_max_dte if max_dte is None else max_dte
     try:
         result = await st.broker.option_contracts([underlying])
         # Parse the text response from Webull MCP / mock server
         contracts = _parse_option_chain_text(result, min_dte, max_dte)
-        return {"underlying": underlying, "contracts": contracts, "raw": result}
+        out = {"underlying": underlying, "contracts": contracts}
+        if debug == 1:
+            out["raw"] = result
+        return out
     except BrokerError as e:
         raise HTTPException(400, str(e)) from e
 

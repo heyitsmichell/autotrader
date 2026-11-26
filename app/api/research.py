@@ -19,7 +19,7 @@ def _yf(request: Request):
 
 
 @router.get("/api/research")
-async def research_packets(request: Request, limit: int = 100):
+def research_packets(request: Request, limit: int = 100):
     st = request.app.state
     auto_execution = bool(st.settings.auto_trade_research_candidates
                           and st.engine.trading_mode == "auto")

@@ -113,38 +113,23 @@ def _bar_key(d, o, h, c):
 # ---- entry hook -----------------------------------------------------------------------------
 @contextlib.contextmanager
 def entry_hook(variant: Variant, bars_dir: Path, ml_keys: set | None):
-    """Replace engine.signal_at with a wrapper implementing the entry family and the ML gate.
-    (app/backtest is not edited; the module attribute is swapped for the duration of the run.)"""
+    """Yield run_backtest kwargs (signal_fn, portfolio_factory) implementing the entry family, the ML gate,
+    the max-positions cap and the code-managed exits. Nothing in app/backtest is monkeypatched."""
     from ..backtest import engine, signals
     from .. import ta
     orig = engine.signal_at
-    orig_pbl, orig_can = engine.Portfolio.process_bar_live, engine.Portfolio.can_enter
     bars = ml_candles.load_bars(str(bars_dir))
     tables = families.build_tables(variant.entry, bars) if variant.entry in NEW_FAMILIES else {}
     reg = families.regime_map(bars, variant.regime)
     native = tables if variant.exit_style == "native" else None
     chand = families.chandelier_exit(bars) if variant.exit_style == "chand3" else None
-    sym_cache: dict = {}
-
-    def sym_of(blist):
-        k = id(blist)
-        if k not in sym_cache:
-            b0, b1 = blist[0], blist[-1]
-            sym_cache[k] = next((s for s, df in bars.items() if len(df) == len(blist)
-                                 and abs(float(df.open.iloc[0]) - b0["open"]) < 1e-6
-                                 and abs(float(df.close.iloc[-1]) - b1["close"]) < 1e-6), None)
-        return sym_cache[k]
-    mom_thr, key_to_sym = {}, {}
+    mom_thr = {}
     if variant.entry == "momentum":
         r20 = pd.DataFrame({s: df.close.pct_change(20) for s, df in bars.items() if s != "SPY"})
         q = r20.quantile(0.8, axis=1)
         mom_thr = {_d(k): v for k, v in q.items() if np.isfinite(v)}
-    if ml_keys is not None:
-        for s, df in bars.items():
-            for dt, o, h, c in zip(df.index, df.open.values, df.high.values, df.close.values):
-                key_to_sym[_bar_key(_d(dt), o, h, c)] = s
 
-    def custom(blist, features, index, settings):
+    def custom(sym, blist, features, index, settings):
         f = features[index] if 0 <= index < len(features) else None
         if f is None or index < 200:
             return {"ok": False, "reason": "warmup"}
@@ -169,7 +154,7 @@ def entry_hook(variant: Variant, bars_dir: Path, ml_keys: set | None):
             rsi = f.get("rsi14")
             hit = rsi is not None and rsi < 30 and c > m200
         elif fam in NEW_FAMILIES:
-            row = tables.get(sym_of(blist), {}).get(blist[index]["time"].date())
+            row = tables.get(sym, {}).get(blist[index]["time"].date())
             hit = bool(row and row[0])
             score = row[1] if row else None
         if not hit:
@@ -180,40 +165,33 @@ def entry_hook(variant: Variant, bars_dir: Path, ml_keys: set | None):
                "trend": a.get("trend"), "ml_p": None, "features": f}
         return {"ok": sl is not None, "eligible": True, "signal": sig, "sl": sl, "tp": tp, "gate": {}}
 
-    def hooked(blist, features, index, settings, **kw):
-        res = custom(blist, features, index, settings) if variant.entry in CUSTOM_ENTRIES \
+    def hooked(symbol, blist, features, index, settings, **kw):
+        res = custom(symbol, blist, features, index, settings) if variant.entry in CUSTOM_ENTRIES \
             else orig(blist, features, index, settings, **kw)
         if res.get("ok") and ml_keys is not None:
-            b = blist[index]
-            sym = key_to_sym.get(_bar_key(b["time"].date(), b["open"], b["high"], b["close"]))
-            if (b["time"].date(), sym) not in ml_keys:
+            if (blist[index]["time"].date(), symbol) not in ml_keys:
                 return {"ok": False, "reason": "ML filter"}
         return res
 
-    def pbl(self, symbol, bar, day, *a, **kw):
-        orig_pbl(self, symbol, bar, day, *a, **kw)
-        pos = self.positions.get(symbol)
-        if pos is None or pos.get("pending_exit"):
-            return
-        d = day if isinstance(day, date) else day.date()
-        if native is not None and native.get(symbol, {}).get(d, (0, 0, False))[2]:
-            pos["pending_exit"] = "native_exit"
-        elif chand is not None and chand.get(symbol, {}).get(d):
-            pos["pending_exit"] = "chandelier"
+    class _VariantPortfolio(engine.Portfolio):
+        def process_bar_live(self, symbol, bar, day, *a, **kw):
+            super().process_bar_live(symbol, bar, day, *a, **kw)
+            pos = self.positions.get(symbol)
+            if pos is None or pos.get("pending_exit"):
+                return
+            d = day if isinstance(day, date) else day.date()
+            if native is not None and native.get(symbol, {}).get(d, (0, 0, False))[2]:
+                pos["pending_exit"] = "native_exit"
+            elif chand is not None and chand.get(symbol, {}).get(d):
+                pos["pending_exit"] = "chandelier"
 
-    def can_enter(self, symbol, *a, **kw):
-        if variant.max_pos and len(self.positions) >= variant.max_pos:
-            return 0, "max positions"
-        return orig_can(self, symbol, *a, **kw)
+        def can_enter(self, symbol, *a, **kw):
+            if variant.max_pos and len(self.positions) >= variant.max_pos:
+                return 0, "max positions"
+            return super().can_enter(symbol, *a, **kw)
 
-    engine.signal_at = hooked
-    engine.Portfolio.process_bar_live = pbl
-    engine.Portfolio.can_enter = can_enter
-    try:
-        yield
-    finally:
-        engine.signal_at = orig
-        engine.Portfolio.process_bar_live, engine.Portfolio.can_enter = orig_pbl, orig_can
+    yield {"signal_fn": hooked,
+           "portfolio_factory": lambda settings, cash: _VariantPortfolio(settings, cash=cash)}
 
 
 # ---- metrics --------------------------------------------------------------------------------
@@ -313,17 +291,19 @@ def run_variant(variant: Variant | str, scope: str = "research", data_dir: Path 
     from ..universe import get_predefined_universe
     variant = REGISTRY[variant] if isinstance(variant, str) else variant
     src = Path(data_dir or ROOT / "data" / "bars_yahoo")
-    os.chdir(ROOT)
     t0 = time.time()
+    prior_peeks = log_holdout(variant.name, variant.config_hash()) if scope == "holdout" else None
     cutoff, all_dates = data_cutoff(src)
     bars_dir = research_dir(src, cutoff) if scope == "research" else src
     ml_keys = _ml_keys(scope, bars_dir, cutoff, all_dates) if variant.ml_filter else None
     s = build_settings(variant.overrides(), bars_dir)
     universe = list(dict.fromkeys(get_predefined_universe("tech_semis") + [x.upper() for x in s.watchlist]))
-    with entry_hook(variant, bars_dir, ml_keys):
-        res = run_backtest(s, universe=universe, benchmark_symbol="SPY", **FEES)
+    with entry_hook(variant, bars_dir, ml_keys) as hooks:
+        res = run_backtest(s, universe=universe, benchmark_symbol="SPY", **FEES, **hooks)
     out = {"variant": variant.name, "config_hash": variant.config_hash(), "scope": scope,
            "cutoff": str(cutoff), "n_trials": n_trials}
+    if prior_peeks is not None:
+        out["prior_holdout_peeks"] = prior_peeks
     if scope == "research":
         rd, _, _ = split_dates(all_dates)
         folds = [segment_metrics(res, s0, s1) for _te, s0, s1 in make_folds(rd)]

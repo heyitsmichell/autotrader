@@ -23,7 +23,8 @@ import SettingsPanel from "./SettingsPanel";
 import { AccountPanel, HealthPanel, OrdersPanel } from "./SidePanels";
 import SignalsTable from "./SignalsTable";
 import ResearchPicker from "./research/ResearchPicker";
-import TopBar, { type Tab } from "./TopBar";
+import TopBar from "./TopBar";
+import { useActions, useHashTab } from "@/lib/useActions";
 import StrategyPnl from "./results/StrategyPnl";
 import AllTrades from "./results/AllTrades";
 import TradeStats from "./results/TradeStats";
@@ -46,46 +47,14 @@ export default function Dashboard() {
   const [selected, setSelected] = useState<Proposal | null>(null);
   const [detail, setDetail] = useState<ProposalDetail | null>(null);
   const [approving, setApproving] = useState<ApproveRequest | null>(null);
-  const [busy, setBusy] = useState("");
-  const [notice, setNotice] = useState("");
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>("today");
-  // Deep link: /#strategies (any tab id) opens that tab, e.g. from a phone bookmark.
-  useEffect(() => {
-    const tabs: Tab[] = ["today", "strategies", "research", "options", "learning", "backtests", "settings"];
-    const apply = () => {
-      const h = window.location.hash.replace("#", "") as Tab;
-      if (tabs.includes(h)) setActiveTab(h);
-    };
-    const t = window.setTimeout(apply, 0);
-    window.addEventListener("hashchange", apply);
-    return () => { window.clearTimeout(t); window.removeEventListener("hashchange", apply); };
-  }, []);
+  const [activeTab, setActiveTab] = useHashTab();
+  const { busy, notice, setNotice, perform } = useActions(refresh);
 
   const pending = useMemo(() => proposals.filter(p => p.status === "pending"), [proposals]);
   const positions = portfolio?.positions || [];
   const openOrders = portfolio?.open_orders || [];
   const live = !!status?.is_live;
-
-  const noticeTimer = useRef<number | null>(null);
-  useEffect(() => () => { if (noticeTimer.current) window.clearTimeout(noticeTimer.current); }, []);
-
-  const perform = useCallback(async (label: string, fn: () => Promise<unknown>) => {
-    setBusy(label);
-    if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
-    setNotice("");
-    try {
-      await fn();
-      setNotice(`${label} complete`);
-      await refresh();
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : "Action failed");
-    } finally {
-      setBusy("");
-      if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
-      noticeTimer.current = window.setTimeout(() => setNotice(""), 6000);
-    }
-  }, [refresh]);
 
   const openProposal = useCallback(async (proposal: Proposal) => {
     setSelected(proposal);

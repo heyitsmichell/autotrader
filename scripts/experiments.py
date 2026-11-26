@@ -153,9 +153,8 @@ def main() -> int:
     if scope == "holdout":
         if variants.CHAMPION not in [v.name for v in vs]:
             vs = [variants.REGISTRY[variants.CHAMPION]] + vs   # promotion needs the champion's holdout
-        for v in vs:
-            prior = harness.log_holdout(v.name, v.config_hash())
-            print(f"HOLDOUT PEEK logged: {v.name} (previous peeks: {prior})")
+        # run_variant(scope="holdout") logs each peek itself (prior count in result["prior_holdout_peeks"])
+        print(f"HOLDOUT run for: {', '.join(v.name for v in vs)} (each peek is logged by run_variant)")
     ntr = max(len(variants.REGISTRY), len(leaderboard.load().config_hash.unique()))
     jobs = [(v.name, scope, ntr) for v in vs]
     results = []

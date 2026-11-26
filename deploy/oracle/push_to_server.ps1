@@ -58,9 +58,6 @@ if (-not $CodeOnly -and -not $Research) {
     }
 }
 
-$excludes = @(".venv", "node_modules", ".git", "__pycache__", ".pytest_cache", ".mypy_cache",
-              "logs", "web/.next", "web/out_prev*", "web/tsconfig.tsbuildinfo",
-              "data/trader.lock", "data/api_token", "PC_BOT_DISABLED")
 if ($Research) {
     $files = Get-ChildItem -Path (Join-Path $Root "data/experiments"), (Join-Path $Root "data/backtests") -Recurse -File -ErrorAction SilentlyContinue |
         Where-Object { ($_.Name -like "*.md" -or $_.Name -eq "trials_registry.csv" -or $_.Name -like "*leaderboard*.csv" -or
@@ -85,17 +82,34 @@ if ($Research) {
     return
 }
 
-if ($CodeOnly) { $excludes += @("data", "conf", ".env") }
+# Allowlist: tracked files (git ls-files) + the built dashboard web/out (untracked). Anything else
+# (data/, conf/, .env*, *.key, PC_BOT_DISABLED, logs, caches) is never packed by accident.
+# A full first-time push additionally sends data/, conf/ and .env (the DB and settings), minus lock/token.
+$list = Join-Path $env:TEMP "trader_push_files.txt"
+$files = @(& git -C $Root ls-files)
+if ($LASTEXITCODE -ne 0) { throw "git ls-files failed" }
+$files += @(Get-ChildItem -Path (Join-Path $Root "web/out") -Recurse -File |
+    ForEach-Object { $_.FullName.Substring($Root.Length + 1) -replace "\\", "/" })
+if (-not $CodeOnly) {
+    $files += @(Get-ChildItem -Path (Join-Path $Root "data"), (Join-Path $Root "conf") -Recurse -File -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.FullName.Substring($Root.Length + 1) -replace "\\", "/" })
+    if (Test-Path (Join-Path $Root ".env")) { $files += ".env" }
+}
+$files = $files | Where-Object {
+    ($_ -notmatch '\.key$') -and ($_ -ne "PC_BOT_DISABLED") -and
+    ($_ -notmatch '^data/(trader\.lock|api_token)$') -and ($_ -notmatch '__pycache__') -and
+    ($CodeOnly -eq $false -or ($_ -notmatch '^(data|conf)/' -and $_ -notmatch '^\.env')) -and
+    (Test-Path (Join-Path $Root $_))      # skip tracked-but-deleted files
+} | Sort-Object -Unique
+[IO.File]::WriteAllLines($list, [string[]]$files)
 
 $archive = Join-Path $env:TEMP "trader_push.tgz"
 if (Test-Path $archive) { Remove-Item $archive -Force }
-$tarArgs = @("-czf", $archive)
-foreach ($e in $excludes) { $tarArgs += "--exclude=./$e" }
-$tarArgs += @("--exclude=__pycache__", "-C", $Root, ".")
 
-Write-Host "Packing $(if ($CodeOnly) { 'code' } else { 'code, database and settings' })..."
-& tar.exe @tarArgs
+Write-Host "Packing $(if ($CodeOnly) { 'code' } else { 'code, database and settings' }) ($($files.Count) files)..."
+& tar.exe -czf $archive -C $Root -T $list
 if ($LASTEXITCODE -ne 0) { throw "tar failed" }
+Remove-Item $list -Force -ErrorAction SilentlyContinue
 Write-Host ("Archive: {0:N0} MB" -f ((Get-Item $archive).Length / 1MB))
 
 try {
@@ -112,7 +126,8 @@ try {
         # Back up the live DB first; abort (no restart) if the backup fails.
         Invoke-Remote ("cd ~/trader && if [ -f data/trader.db ] && [ -x .venv/bin/python ]; then .venv/bin/python scripts/backup_db.py data/trader.db --keep 10 || exit 1; fi")
         Invoke-Remote ("cd ~/trader && if [ ! -x .venv/bin/python ]; then echo 'Not set up yet: run  bash deploy/oracle/server_setup.sh  on the server.'; exit 0; fi" +
-            " && .venv/bin/python -m pip install -q -r requirements.txt" +
+            " && .venv/bin/python -m pip install -q pip==26.3" +
+            " && .venv/bin/python -m pip install -q -r requirements.txt -c requirements.lock" +
             " && if systemctl --user is-active --quiet ai-trader; then systemctl --user restart ai-trader && echo 'Bot restarted with the new code.';" +
             " else echo 'Bot is not running; start it with: systemctl --user start ai-trader'; fi")
     } else {

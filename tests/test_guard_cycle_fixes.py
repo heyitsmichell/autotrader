@@ -9,7 +9,8 @@ from app.engine.cycle import CycleMixin
 
 
 def _g():
-    return OrderGuard(SimpleNamespace(max_order_qty=100))
+    return OrderGuard(SimpleNamespace(max_order_qty=100, max_order_usd=0, options_max_contracts_per_order=0,
+                                      market_notional_buffer_pct=1.0, symbol_whitelist=[]))
 
 
 def _sell(qty, **kw):

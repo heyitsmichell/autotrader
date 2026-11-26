@@ -773,7 +773,8 @@ class Portfolio(MaeMfeMixin):
                             closed_trade = self.db.get_trade(proposal_id)
                             if closed_trade:
                                 causes = run_autopsy(closed_trade, broker=self.broker,
-                                                     entry_time=entry_time, exit_time=exit_time)
+                                                     entry_time=entry_time, exit_time=exit_time,
+                                                     settings=self.s)
                                 llm_prompt = format_autopsy_for_llm(closed_trade, causes)
                                 # Store autopsy - LLM narration will be filled in by review process
                                 self.db.add_autopsy(closed_trade, [vars(c) for c in causes])

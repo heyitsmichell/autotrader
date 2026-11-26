@@ -30,9 +30,12 @@ function same(a: unknown, b: unknown): boolean {
 }
 
 /** useState whose setter ignores a value structurally equal to the current one. */
-function useStable<T>(initial: T): [T, (next: T) => void] {
+function useStable<T>(initial: T): [T, (next: T | ((prev: T) => T)) => void] {
   const [value, setValue] = useState<T>(initial);
-  const set = useCallback((next: T) => setValue(prev => (same(prev, next) ? prev : next)), []);
+  const set = useCallback((next: T | ((prev: T) => T)) => setValue(prev => {
+    const n = typeof next === "function" ? (next as (p: T) => T)(prev) : next;
+    return same(prev, n) ? prev : n;
+  }), []);
   return [value, set];
 }
 
@@ -55,10 +58,13 @@ export function useDashboardData() {
   const [failures, setFailures] = useStable<Record<string, string>>({});
   const [duplicateInstance, setDuplicateInstance] = useState<{ timestamp: number; message: string } | null>(null);
   const failRef = useRef<Record<string, string>>({});
+  const reqIds = useRef<Record<string, number>>({});
 
   const track = useCallback(async <T,>(name: string, fn: () => Promise<T>, apply: (v: T) => void) => {
+    const id = (reqIds.current[name] = (reqIds.current[name] || 0) + 1);
     try {
       const v = await fn();
+      if (id !== reqIds.current[name]) return; // superseded by a newer request
       apply(v);
       if (name in failRef.current) {
         const rest = { ...failRef.current };
@@ -128,8 +134,6 @@ export function useDashboardData() {
   }, [refreshFast, refreshSlow]);
 
   // Live updates.
-  const statusRef = useRef<Status | null>(null);
-  useEffect(() => { statusRef.current = status; }, [status]);
   const stream = useHubStream({
     status: d => applyStatus(d as Status),
     portfolio: d => setPortfolio(d as Portfolio),
@@ -137,7 +141,7 @@ export function useDashboardData() {
     events: d => setEvents(asList<EventRow>(d)),
     kill: d => {
       const k = d as { on?: boolean; reason?: string | null };
-      setStatus(statusRef.current ? { ...statusRef.current, kill_switch: !!k.on, kill_reason: k.reason ?? null } : null);
+      setStatus(prev => prev ? { ...prev, kill_switch: !!k.on, kill_reason: k.reason ?? null } : prev);
     },
     fill: () => {
       void track("portfolio", () => api<Portfolio>("/api/portfolio"), setPortfolio);

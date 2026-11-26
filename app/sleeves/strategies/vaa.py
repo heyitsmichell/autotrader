@@ -23,6 +23,7 @@ def targets(closes: pd.DataFrame) -> dict[str, float]:
     need = G12 + [s for s in DEFENSIVE if s not in G12]
     if closes is None or any(s not in closes.columns for s in need):
         return {}
+    closes = closes.ffill(limit=1)
     mo = {s: m13612w(closes[s]) for s in need}
     if any(math.isnan(x) for x in mo.values()):
         return {}

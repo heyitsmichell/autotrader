@@ -26,7 +26,10 @@ from ..sizing import max_allowed_qty, ml_size_factor, volatility_scaled_qty
 from .util import (MAX_PROPOSALS_PER_RUN, _coid, _is_option_symbol, _session_rejection,
                    normalize_proposal)
 
+from ..broker.parsers import live_price_for_session
+
 log = logging.getLogger("app.engine")
+FLATTEN_EXTENDED_SLIPPAGE_PCT = 3.0     # minimum flatten slippage in ALL/NIGHT sessions
 
 
 from typing import TYPE_CHECKING
@@ -150,15 +153,26 @@ class FlattenMixin(_Host):
         whole = int(qty)
         fractional_part = qty - whole
 
+        session = order_session()
+        extended = session in ("ALL", "NIGHT")
         try:
-            last = await self.broker.last_price(sym)
+            last = None
+            if extended and hasattr(self.broker, "get_snapshot"):
+                snap = await self.broker.get_snapshot(sym)
+                if snap:
+                    last = live_price_for_session(snap, session)[0]
+            if not last:
+                last = await self.broker.last_price(sym)
         except BrokerError as e:
             last = None
             self.db.log("error", f"Flatten: no price for {sym}: {e}")
         if not last:
             result["errors"].append(f"no price for {sym}; sell it in Webull")
             return
-        limit = round(last * (1 - self.s.flatten_slippage_pct / 100), 2)
+        slip = self.s.flatten_slippage_pct
+        if extended:
+            slip = max(slip, FLATTEN_EXTENDED_SLIPPAGE_PCT)   # thin books: sell must stay marketable
+        limit = round(last * (1 - slip / 100), 2)
 
         # Sell whole shares first
         if whole > 0:

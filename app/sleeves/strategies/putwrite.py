@@ -5,7 +5,35 @@ import math
 from datetime import date, datetime, time, timedelta
 
 
-def pick_contract(chain, spot, today, target_delta=0.30, dte=30, dte_min=21, dte_max=45):
+DTE_MIN = 21
+DTE_MAX = 45
+EST_VOL = 0.25           # vol used to estimate the target strike before quotes are fetched
+FALLBACK_STRIKE_PCT = 0.96
+SELL_SPREAD_FRAC = 0.25  # sell-to-open: mid minus this fraction of the spread
+TICK_BIG, TICK_SMALL, TICK_SPLIT = 0.05, 0.01, 3.00
+
+
+def tick_for(px: float, tick=None) -> float:
+    if tick:
+        return float(tick)
+    return TICK_BIG if px >= TICK_SPLIT else TICK_SMALL
+
+
+def round_tick(px: float, mode: str = "nearest", tick=None) -> float:
+    """Round to the contract tick ($0.05 from $3.00, else $0.01, or the quote's own tick)."""
+    t = tick_for(px, tick)
+    q = px / t
+    n = math.ceil(q - 1e-9) if mode == "up" else math.floor(q + 1e-9) if mode == "down" else round(q)
+    return round(max(n, 1) * t, 2)
+
+
+def sell_open_limit(bid: float, ask: float, tick=None) -> float:
+    """Nearest tick to the target price, never below the bid."""
+    px = round_tick((bid + ask) / 2 - SELL_SPREAD_FRAC * (ask - bid), "nearest", tick)
+    return max(px, round_tick(bid, "up", tick))
+
+
+def pick_contract(chain, spot, today, target_delta=0.30, dte=30, dte_min=DTE_MIN, dte_max=DTE_MAX):
     puts = [r for r in chain if str(r.get("option_type", "")).upper() == "PUT"]
     ok = {}
     for r in puts:
@@ -22,7 +50,7 @@ def pick_contract(chain, spot, today, target_delta=0.30, dte=30, dte_min=21, dte
     if with_delta:
         best = min(with_delta, key=lambda r: abs(abs(r["delta"]) - target_delta))
     else:
-        best = min(rows, key=lambda r: abs(r["strike"] - spot * 0.96))
+        best = min(rows, key=lambda r: abs(r["strike"] - spot * FALLBACK_STRIKE_PCT))
     return {**best, "dte": ok[exp]}
 
 

@@ -1,7 +1,7 @@
 """Backfill trials_registry.csv with the rotation-sweep rows and wide-sweep trials that were never logged.
 
 Idempotent: skips rows whose (lab, strategy) or config_hash already exist. One append write at the end.
-Usage: python scripts/backfill_registry.py [--dry-run]
+Usage: python scripts/archive/backfill_registry.py [--dry-run]
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 EXP = ROOT / "data" / "experiments"
 COLS = ["ts", "lab", "strategy", "config_hash", "universe", "start", "end", "cagr", "sharpe", "maxdd", "turnover", "notes"]
 

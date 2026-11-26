@@ -324,7 +324,10 @@ class RiskManager:
                 else:
                     # multi-strategy sleeves: the swing limit applies to the swing sleeve only, so the
                     # other sleeves' day P&L (provider set by SleeveManager) is taken out
-                    other = (getattr(broker, "__dict__", {}) or {}).get("sleeve_day_pnl")
+                    # Documented hook: ``Broker.sleeve_day_pnl_provider: Callable[[], float] | None``
+                    # (set by SleeveManager). The legacy ``__dict__["sleeve_day_pnl"]`` is still read.
+                    other = (getattr(broker, "sleeve_day_pnl_provider", None)
+                             or (getattr(broker, "__dict__", {}) or {}).get("sleeve_day_pnl"))
                     if other is not None:
                         try:
                             pnl -= float(other() or 0.0)

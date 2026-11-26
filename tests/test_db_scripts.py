@@ -13,7 +13,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
 
 def _load(name):
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name.split("/")[-1], SCRIPTS / f"{name}.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -48,7 +48,7 @@ def test_backup_fails_on_corrupt_copy(tmp_path, monkeypatch):
 
 
 def test_migrate_refuses_while_app_lock_is_held(tmp_path, monkeypatch):
-    mig = _load("migrate_db_namespace")
+    mig = _load("archive/migrate_db_namespace")
     lock = tmp_path / "trader.lock"
     lock.write_text(f"{os.getpid()}:1")                     # this process is alive
     assert mig.app_is_running(lock) is True

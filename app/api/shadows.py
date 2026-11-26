@@ -27,17 +27,17 @@ def _check(shadow_id: str) -> None:
 
 
 @router.get("/api/shadows")
-async def shadows(request: Request):
+def shadows(request: Request):
     return _manager(request).summary()
 
 
 @router.get("/api/shadows/equity")
-async def shadows_equity(request: Request, days: int = 365):
+def shadows_equity(request: Request, days: int = 365):
     return _manager(request).equity_series(max(1, min(int(days), 3650)))
 
 
 @router.get("/api/shadows/{shadow_id}")
-async def shadow_detail(request: Request, shadow_id: str):
+def shadow_detail(request: Request, shadow_id: str):
     _check(shadow_id)
     return _manager(request).detail(shadow_id)
 

@@ -454,12 +454,11 @@ def test_backtest_respects_gross_exposure():
 # --- Validation function -----------------------------------------------------
 
 def test_validate_backtester():
-    """The validation function runs without error."""
-    import os
+    """The validation function checks a hand-computed 5-bar trade."""
     out = validate_backtester()
-    assert out["validation"] == "synthetic test structure ready"
-    assert out["bars"] == 3
-    assert out["features"] == 3
+    assert out["validation"] == "ok"
+    assert out["bars"] == 5
+    assert out["trades"] == 1
 
 
 # --- Metrics integration -----------------------------------------------------

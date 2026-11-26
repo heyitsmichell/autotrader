@@ -66,7 +66,11 @@ Full guide: `deploy/oracle/README.md` (Oracle Cloud, Ubuntu).
   `powershell -ExecutionPolicy Bypass -File deploy\oracle\push_to_server.ps1 -Server ubuntu@<server>`
 - Later code updates: the same command with `-CodeOnly`. It leaves the server's database,
   `.env` and Webull login alone and restarts the service if it was running. Build the dashboard
-  first if you changed `web/`.
+  first if you changed `web/`. Only files tracked by git (plus the built `web/out/`) are sent, so
+  `git add` new files first. It backs up the server database before the restart and skips the
+  restart if the backup fails; packages install pinned by `requirements.lock`.
+  The first full copy refuses to run if the server already has a database, `.env` or `conf/`,
+  or if the check over SSH fails.
 - On the server (`cd ~/trader`): `./auth.sh` to log in to Webull, then
   `systemctl --user start ai-trader`.
 
@@ -98,8 +102,8 @@ Launchers: `Start_Trader.bat`, `Start_Trader.command`, `start.sh`, `Stop_Trader.
 (`Start_Trader.bat`, `Start_Trader.command`, `start.sh`, `install_autostart.sh`) refuse to start.
 It is there so a hosted bot and a PC bot never trade the same account. `push_to_server.ps1`
 does not copy it. To run on the PC, stop the server bot first, then delete the file.
-The guard is in the launchers only. `python scripts/trader.py run` and `install` do not check it,
-because the server's service runs `trader.py` directly, so don't call them on the PC while the server bot is live.
+The launchers and `python scripts/trader.py run` / `install` all check it and refuse to start
+(`--override` skips the check). The marker is never copied to the server.
 
 ## Safety design
 
@@ -114,9 +118,12 @@ because the server's service runs `trader.py` directly, so don't call them on th
 | Sessions | The order session follows the clock: CORE, ALL (pre/after-hours), NIGHT (overnight, opt-in with `OVERNIGHT_TRADING` and `OVERNIGHT_SYMBOLS`). Webull region `us` accepts only CORE, ALL and NIGHT (no ALL_DAY), so extended-hours entry limits expire at each session boundary. Extended-hours entries are sized down (`OVERNIGHT_SIZE_FACTOR`) and spread-guarded (`MAX_SPREAD_PCT_EXTENDED`) |
 | Soft stop | Outside CORE the broker holds no stop, so the app watches prices and sells itself (`EXTENDED_HOURS_SOFT_STOP`). The app must stay up |
 | Webull MCP guards | The MCP server enforces `WEBULL_SYMBOL_WHITELIST`, `WEBULL_MAX_ORDER_NOTIONAL_USD`, `WEBULL_MAX_ORDER_QUANTITY`; market calendar in `app/market.py` (`MARKET_CLOSED_DATES`) |
+| Order guard (`app/broker/guard.py`) | Caps on every opening order (`MAX_ORDER_USD`, `MAX_ORDER_QTY`, option contracts, whitelist); closing sells must be above 0 and no larger than the position. Exits are never capped by `MAX_ORDER_QTY`, so a large holding can always be closed. Bracket prices are checked before sending |
+| Broker calls | Every Webull call has a deadline (`BROKER_CALL_TIMEOUT_SECONDS`, 30). A timed-out order is never resent blindly: the app looks it up by its client order id first, so stops are not doubled |
+| Flatten | One flatten at a time; it cancels stops, re-reads open orders and sells only what is not already covered by a working sell. Outside CORE it prices from the live session quote |
 | Kill switch | Blocks new opening orders, stops the scheduler, dismisses pending proposals. Exits, stops and flatten still pass. Saved across restarts. Does not cancel orders already at Webull |
 | Automatic kill switch (`app/supervisor.py`) | Trips on drawdown, daily loss or repeated failures; only you can release it. `KILL_ACTION`: `pause`, `cancel_entries` or `flatten` |
-| Network | Binds to 127.0.0.1 and accepts loopback host names plus those in `TRUSTED_HOSTS` (`app/api/auth.py`). Every state-changing API call needs `X-Trader: 1` and the per-launch token in `X-Trader-Token` (file `data/api_token`) |
+| Network | Binds to 127.0.0.1 and accepts loopback host names plus those in `TRUSTED_HOSTS` (`app/api/auth.py`). Every state-changing API call needs `X-Trader: 1` and the per-launch token in `X-Trader-Token` (file `data/api_token`). The token reaches the dashboard inside the served page; `/api/auth/token` only answers on localhost or with `TRADER_DEV_TOKEN_ENDPOINT=1`. Responses forbid framing. Behind `tailscale serve`, limit who can reach the machine with Tailscale access rules |
 
 ## Options trading
 
@@ -159,7 +166,11 @@ expiry, expiry close, and the underlying's stop or time stop (`OPTIONS_EXIT_UNDE
 app/main.py, app/api/   web server, routes, auth and host checks (auth.py)
 app/engine/             scheduler, cycle, proposals, execution, flatten, option entries/exits
 app/broker/             Webull MCP client      app/mock/, app/mock_mcp_server.py  simulated broker
-app/config/             settings.py (defaults), loader.py (.env)
+app/config/             settings.py (defaults), loader.py (.env), groups.py (grouped read-only views)
+app/portfolio.py        positions, fills and the trade ledger (+ portfolio_parsing.py, portfolio_analytics.py)
+app/sleeves/            the four strategies: manager.py + valuation, orders, rebalance_ops, putwrite_ops, views
+app/shadows/            virtual-money shadow strategies
+app/db/                 SQLite repositories, migrations, db.transaction()
 app/risk.py, eligibility.py, consensus.py, exits.py   limits, entry gates, exit logic
 app/supervisor.py       unattended operation: reconnect, unknown orders, auto kill switch
 app/market.py, llm.py, alerts.py   market clock, LLM client, alert channels
@@ -167,6 +178,7 @@ app/backtest/, strategy_lab/, ml_lab/, rotation_lab/   research code
 web/                    dashboard (Next.js, built to web/out)
 scripts/trader.py       launcher: run, setup, auth, stop, install, status
 scripts/                research and maintenance (experiments.py, gen_env_example.py, smoke_test.py ...)
+scripts/archive/        one-off migrations and fixes that were already run; do not re-run
 deploy/oracle/          README.md, server_setup.sh, push_to_server.ps1
 Start_Trader.bat/.command, start.sh, stop.sh, auth.sh, setup.sh, install_autostart.sh   launchers
 strategy.md             your trading rules (the analyst reads it each run)
@@ -181,9 +193,12 @@ for the ML tests). Tests freeze the clock at 2026-11-20 and never read your `.en
 
 | Command | What it does |
 |---|---|
-| `python -m pytest` | Full suite, parallel on all cores (`pytest-xdist`, `-n auto` in `pytest.ini`); about 2 min |
+| `python -m pytest` | Full suite, serial by default; use `-n 2` for parallel (`pytest-xdist`, memory-limited) |
 | `python -m pytest -m "not slow"` | Skips the 13 tests marked `slow`; a slightly quicker pre-check |
-| `python -m pytest -o addopts="" -p no:xdist` | Serial run (about 12 min), to rule out order-dependent bugs |
+| `python -m pytest -p no:xdist` | Strictly serial, to rule out order-dependent bugs |
+
+Parser tests also run against real Webull output saved in `tests/fixtures/webull/`. `MOCK_REALISM=1`
+makes the mock broker fill at bid/ask, fill partially and charge fees.
 
 After changing a setting, also run `python scripts/gen_env_example.py --check`.
 Frontend: `cd web && npx tsc --noEmit && npm run lint`.

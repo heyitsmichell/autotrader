@@ -32,7 +32,14 @@ def write_token_file(path: Path, token: str) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if sys.platform == "win32":
-        path.write_text(token, encoding="utf-8")   # best effort: inherits the per-user data dir ACL
+        path.write_text(token, encoding="utf-8")
+        try:
+            import subprocess
+            user = os.environ.get("USERNAME", "")
+            subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+                           check=True, capture_output=True, timeout=10)
+        except Exception as e:  # noqa: BLE001 - best effort
+            logging.getLogger(__name__).warning("could not restrict token file ACL: %s", e)
         return
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:

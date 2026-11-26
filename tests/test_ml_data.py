@@ -8,6 +8,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts" / "archive"))
 
 from app.ml_data import (ALL_COLS, BarStore, append_trades, features_at, is_holdout, load, spy_regime_at)  # noqa: E402
 

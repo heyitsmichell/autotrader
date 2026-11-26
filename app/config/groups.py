@@ -2,7 +2,7 @@
 
 ``Settings`` stays flat (``s.max_order_usd``) so existing code and
 ``dataclasses.replace(settings, ...)`` keep working. ``s.risk``, ``s.options``,
-``s.ml``, ``s.feed``, ``s.alerts``, ``s.backtest`` and ``s.llm`` return these frozen
+``s.ml``, ``s.sleeves``, ``s.news``, ``s.broker``, ``s.orders``, ``s.feed``, ``s.alerts``, ``s.backtest`` and ``s.llm`` return these frozen
 sub-models, each holding a copy of the relevant fields under the same names.
 """
 
@@ -69,6 +69,32 @@ GROUP_FIELDS: dict[str, tuple[str, ...]] = {
         "yfinance_timeout_seconds", "yfinance_negative_ttl_seconds",
         "yfinance_breaker_failures", "yfinance_breaker_cooldown_seconds",
     ),
+    "SleevesSettings": (
+        "sleeves_enabled", "sleeve_start_capital", "sleeve_pause_dd_pct",
+        "sleeve_momentum_enabled", "sleeve_putwrite_enabled", "sleeve_vaa_enabled",
+        "sleeve_momentum_n", "sleeve_putwrite_underlying", "sleeve_putwrite_delta",
+        "sleeve_putwrite_dte", "sleeve_min_trade_usd", "sleeve_rebalance_after_et",
+        "shadows_enabled",
+    ),
+    "NewsSettings": (
+        "news_lookback_hours", "news_refresh_minutes", "news_concurrency", "news_max_per_source",
+        "news_half_life_hours", "news_relevance_filter", "news_google_concurrency",
+        "news_rss_spacing_seconds", "news_google_cooldown_minutes", "news_google_spacing_seconds",
+        "news_google_refresh_minutes", "news_outage_minutes", "news_nasdaq_enabled",
+        "news_nasdaq_rss_url", "news_seekingalpha_enabled", "news_seekingalpha_rss_url",
+        "news_bing_enabled", "news_bing_rss_url", "news_webull_enabled", "news_llm_batch_size",
+        "news_llm_max_batches", "news_llm_cooldown_minutes",
+    ),
+    "BrokerSettings": (
+        "broker_mode", "webull_environment", "webull_region", "webull_account_id",
+        "broker_execution", "broker_max_concurrency", "broker_rate_limit_retries",
+        "broker_call_timeout_seconds", "broker_backoff_seconds", "broker_down_alert_minutes",
+    ),
+    "OrderSettings": (
+        "entry_order_type", "exit_order_type", "market_notional_buffer_pct", "bracket_orders",
+        "bracket_take_profit", "fractional_enabled", "fractional_min_usd", "fractional_decimals",
+        "fractional_whitelist", "market_hours_only", "max_order_usd", "max_order_qty",
+    ),
 }
 
 
@@ -91,3 +117,7 @@ FeedSettings = _make("FeedSettings", GROUP_FIELDS["FeedSettings"])
 AlertSettings = _make("AlertSettings", GROUP_FIELDS["AlertSettings"])
 BacktestSettings = _make("BacktestSettings", GROUP_FIELDS["BacktestSettings"])
 LLMSettings = _make("LLMSettings", GROUP_FIELDS["LLMSettings"])
+SleevesSettings = _make("SleevesSettings", GROUP_FIELDS["SleevesSettings"])
+NewsSettings = _make("NewsSettings", GROUP_FIELDS["NewsSettings"])
+BrokerSettings = _make("BrokerSettings", GROUP_FIELDS["BrokerSettings"])
+OrderSettings = _make("OrderSettings", GROUP_FIELDS["OrderSettings"])

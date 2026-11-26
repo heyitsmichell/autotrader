@@ -33,12 +33,12 @@ async def sleeves(request: Request):
 
 
 @router.get("/api/sleeves/equity")
-async def sleeves_equity(request: Request, days: int = 365):
+def sleeves_equity(request: Request, days: int = 365):
     return _manager(request).equity_series(max(1, min(int(days), 3650)))
 
 
 @router.get("/api/sleeves/events")
-async def sleeve_events(request: Request, days: int = 365, sleeve: str | None = None):
+def sleeve_events(request: Request, days: int = 365, sleeve: str | None = None):
     if sleeve:
         _check(sleeve)
     rows = _manager(request).db.sleeve_events(max(1, min(int(days), 3650)), sleeve or None)
@@ -46,7 +46,7 @@ async def sleeve_events(request: Request, days: int = 365, sleeve: str | None = 
 
 
 @router.get("/api/sleeves/{sleeve_id}/band")
-async def sleeve_band(request: Request, sleeve_id: str):
+def sleeve_band(request: Request, sleeve_id: str):
     _check(sleeve_id)
     series = _manager(request).db.sleeve_equity_series(3650)
     band = analytics.band_for(sleeve_id, [(r["day"], r.get(sleeve_id)) for r in series])
@@ -54,7 +54,7 @@ async def sleeve_band(request: Request, sleeve_id: str):
 
 
 @router.get("/api/sleeves/{sleeve_id}/tearsheet")
-async def sleeve_tearsheet(request: Request, sleeve_id: str, source: str = "live", window: int = 126):
+def sleeve_tearsheet(request: Request, sleeve_id: str, source: str = "live", window: int = 126):
     _check(sleeve_id)
     if source not in ("live", "backtest"):
         raise HTTPException(400, "source must be 'live' or 'backtest'")

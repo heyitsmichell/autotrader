@@ -5,24 +5,32 @@ export interface GateSummary {
   watched: number;
   eligible: number;
   pass: number;
+  /** of `pass`, symbols already held (they won't produce a new entry) */
+  passHeld: number;
   reasons: Array<{ name: string; count: number }>;
 }
 
 /** Funnel from consensus_checks: eligible = clears the first gate stage; pass = no failing check. */
-export function summarizeGate(signals: Signal[]): GateSummary {
+export function summarizeGate(signals: Signal[], heldSymbols: Iterable<string> = []): GateSummary {
+  const held = new Set([...heldSymbols].map(s => s.toUpperCase()));
   const counts = new Map<string, number>();
   let eligible = 0;
   let pass = 0;
+  let passHeld = 0;
   for (const s of signals) {
     const checks = s.consensus_checks || [];
     if (!checks.length) continue;
     if (checks[0]?.ok) eligible++;
     const f = checks.find(c => !c.ok);
-    if (!f) { pass++; continue; }
+    if (!f) {
+      pass++;
+      if (held.has(String(s.symbol || "").toUpperCase())) passHeld++;
+      continue;
+    }
     counts.set(f.name, (counts.get(f.name) || 0) + 1);
   }
   const reasons = [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
-  return { watched: signals.length, eligible, pass, reasons };
+  return { watched: signals.length, eligible, pass, passHeld, reasons };
 }
 
 const SYSTEM = /prune|loop|worker|started|connected to mcp|mcp connected|live prices|scheduler|reconcil|signals refreshed|refreshed signals/i;

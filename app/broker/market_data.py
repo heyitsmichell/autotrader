@@ -98,7 +98,7 @@ class MarketDataMixin(_Host):
                 # soft stop (which needs a fresh quote) could never fire. Verified live 2026-11-24.
                 text = await self.call("get_stock_snapshot", symbols=symbols_str,
                                        extend_hour_required=True, overnight_required=True)
-                snaps = parse_snapshot(text)
+                snaps = parse_snapshot(text, wanted)
                 stamp = time.time()
                 session = order_session()
                 is_mock = getattr(getattr(self, "settings", None), "broker_mode", "") == "mock"

@@ -99,34 +99,42 @@ def analyze_gap_risk(trade: dict) -> list[Cause]:
     return causes
 
 
-def analyze_stop_placement(trade: dict) -> list[Cause]:
-    """Analyze stop placement relative to ATR."""
+DEFAULT_SL_ATR_MULT = 2.0     # band = 0.75x..1.5x of SL_ATR_MULT -> 1.5..3.0 ATR at the default
+DEFAULT_TA_MIN = 0.3
+DEFAULT_ML_MIN_P = 0.55
+
+
+def analyze_stop_placement(trade: dict, settings=None) -> list[Cause]:
+    """Analyze stop placement relative to ATR. Normal band = 0.75x..1.5x of settings.sl_atr_mult
+    (1.5-3.0 ATR with the default 2.0, used when settings is None)."""
     causes = []
+    sl_mult = float(getattr(settings, "sl_atr_mult", DEFAULT_SL_ATR_MULT) or DEFAULT_SL_ATR_MULT)
+    lo, hi = sl_mult * 0.75, sl_mult * 1.5
     entry_price = trade.get("entry_fill_price")
     stop_price = trade.get("stop_price")
     entry_atr = trade.get("entry_atr")
 
     if entry_price and stop_price and entry_atr:
         atr_dist = abs(entry_price - stop_price) / entry_atr if entry_atr > 0 else 0
-        # Stop too tight (<1.5 ATR) or too wide (>3 ATR)
-        if atr_dist < 1.5:
+        # Stop too tight (< lo ATR) or too wide (> hi ATR)
+        if atr_dist < lo:
             causes.append(Cause(
                 cause="stop_too_tight",
                 evidence=f"Stop distance {atr_dist:.1f}x ATR (entry: {entry_price:.2f}, stop: {stop_price:.2f}, ATR: {entry_atr:.2f})",
-                strength=min((1.5 - atr_dist) / 1.5, 1.0),
+                strength=min((lo - atr_dist) / lo, 1.0),
                 category="process"
             ))
-        elif atr_dist > 3.0:
+        elif atr_dist > hi:
             causes.append(Cause(
                 cause="stop_too_wide",
                 evidence=f"Stop distance {atr_dist:.1f}x ATR (entry: {entry_price:.2f}, stop: {stop_price:.2f}, ATR: {entry_atr:.2f})",
-                strength=min((atr_dist - 3.0) / 3.0, 1.0),
+                strength=min((atr_dist - hi) / hi, 1.0),
                 category="process"
             ))
         else:
             causes.append(Cause(
                 cause="stop_placement_appropriate",
-                evidence=f"Stop distance {atr_dist:.1f}x ATR within normal range (1.5-3.0)",
+                evidence=f"Stop distance {atr_dist:.1f}x ATR within normal range ({lo:.1f}-{hi:.1f})",
                 strength=0.7,
                 category="good_process"
             ))
@@ -134,23 +142,26 @@ def analyze_stop_placement(trade: dict) -> list[Cause]:
     return causes
 
 
-def analyze_signal_quality(trade: dict) -> list[Cause]:
-    """Analyze signal quality at entry."""
+def analyze_signal_quality(trade: dict, settings=None) -> list[Cause]:
+    """Analyze signal quality at entry against settings.consensus_ta_min / ml_min_p
+    (0.3 / 0.55 when settings is None)."""
     causes = []
+    ta_min = float(getattr(settings, "consensus_ta_min", DEFAULT_TA_MIN))
+    ml_min = float(getattr(settings, "ml_min_p", DEFAULT_ML_MIN_P))
     ta_score = trade.get("entry_ta_score")
     sent_score = trade.get("entry_sent_score")
     ml_p = trade.get("entry_ml_p")
     trend = trade.get("entry_trend")
 
-    # Weak TA score (<0.3)
-    if ta_score is not None and ta_score < 0.3:
+    # Weak TA score (below the configured consensus minimum)
+    if ta_score is not None and ta_score < ta_min:
         causes.append(Cause(
             cause="weak_ta_signal",
-            evidence=f"TA score {ta_score:.2f} at entry (threshold ~0.3)",
-            strength=min((0.3 - ta_score) / 0.3, 1.0),
+            evidence=f"TA score {ta_score:.2f} at entry (threshold {ta_min:.2f})",
+            strength=min((ta_min - ta_score) / max(abs(ta_min), 0.1), 1.0),
             category="process"
         ))
-    elif ta_score is not None and ta_score >= 0.5:
+    elif ta_score is not None and ta_score >= max(0.5, ta_min):
         causes.append(Cause(
             cause="strong_ta_signal",
             evidence=f"TA score {ta_score:.2f} at entry",
@@ -168,11 +179,11 @@ def analyze_signal_quality(trade: dict) -> list[Cause]:
         ))
 
     # Low ML probability
-    if ml_p is not None and ml_p < 0.55:
+    if ml_p is not None and ml_p < ml_min:
         causes.append(Cause(
             cause="low_ml_probability",
-            evidence=f"ML win probability {ml_p:.2f} at entry (threshold ~0.55)",
-            strength=min((0.55 - ml_p) / 0.55, 1.0),
+            evidence=f"ML win probability {ml_p:.2f} at entry (threshold {ml_min:.2f})",
+            strength=min((ml_min - ml_p) / max(ml_min, 0.1), 1.0),
             category="process"
         ))
 
@@ -224,7 +235,11 @@ def _pct(v) -> str:
 
 
 def analyze_mae_mfe(trade: dict) -> list[Cause]:
-    """Analyze MAE/MFE for trade management quality."""
+    """Analyze MAE/MFE for trade management quality.
+
+    Units: realized_pnl_pct, mae and mfe are all PERCENT of the entry price (live ledger:
+    (fill/entry - 1) * 100 and portfolio._compute_mae_mfe), so they compare directly.
+    """
     causes = []
     pnl_pct = trade.get("realized_pnl_pct") or 0
     mae = trade.get("mae") or 0
@@ -240,14 +255,18 @@ def analyze_mae_mfe(trade: dict) -> list[Cause]:
             category="process"
         ))
 
-    # Stop loss hit but MAE not much worse (good stop placement)
-    if exit_reason == "stop" and pnl_pct < 0 and abs(mae) < abs(pnl_pct) * 1.5:
-        causes.append(Cause(
-            cause="stop_protected_downside",
-            evidence=f"Stop limited loss: MAE {mae:.1f}% vs realized {pnl_pct:.1f}%",
-            strength=0.7,
-            category="good_process"
-        ))
+    # Stop loss hit and the realized loss stayed within the planned stop distance (no gap through it).
+    # (The old check compared MAE with realized P&L, which is true for nearly every stop-out.)
+    entry_px, stop_px = trade.get("entry_fill_price"), trade.get("stop_price")
+    if exit_reason == "stop" and pnl_pct < 0 and entry_px and stop_px and stop_px < entry_px:
+        planned_pct = (entry_px - stop_px) / entry_px * 100.0
+        if abs(pnl_pct) <= planned_pct * 1.25:
+            causes.append(Cause(
+                cause="stop_protected_downside",
+                evidence=f"Loss {pnl_pct:.1f}% stayed within planned stop risk {planned_pct:.1f}% (MAE {mae:.1f}%)",
+                strength=0.7,
+                category="good_process"
+            ))
 
     # Target hit efficiently (MFE close to profit)
     if exit_reason == "target" and pnl_pct > 0 and mfe > 0 and pnl_pct / mfe > 0.8:
@@ -342,15 +361,15 @@ def analyze_counterfactuals(trade: dict, broker, entry_time: datetime, exit_time
     return causes
 
 
-def run_autopsy(trade: dict, broker=None, entry_time=None, exit_time=None) -> list[Cause]:
-    """Run complete deterministic autopsy on a closed trade."""
+def run_autopsy(trade: dict, broker=None, entry_time=None, exit_time=None, settings=None) -> list[Cause]:
+    """Run complete deterministic autopsy on a closed trade (settings: thresholds, None = old defaults)."""
     all_causes = []
 
     # Run all evidence analyzers
     all_causes.extend(analyze_slippage(trade))
     all_causes.extend(analyze_gap_risk(trade))
-    all_causes.extend(analyze_stop_placement(trade))
-    all_causes.extend(analyze_signal_quality(trade))
+    all_causes.extend(analyze_stop_placement(trade, settings))
+    all_causes.extend(analyze_signal_quality(trade, settings))
     all_causes.extend(analyze_sizing(trade))
     all_causes.extend(analyze_regime_mismatch(trade))
     all_causes.extend(analyze_mae_mfe(trade))

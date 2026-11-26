@@ -20,6 +20,28 @@ def sp500_symbols() -> list[str]:
             if ln.strip() and not ln.startswith("#")]
 
 
+def drop_incomplete_today(df: pd.DataFrame, at=None) -> pd.DataFrame:
+    """Drop a row dated today (ET) while that day's session has not closed: rank on the last
+    COMPLETED daily bar."""
+    from .. import market
+    if df is None or df.empty:
+        return df
+    now = at or market.now_et()
+    today = now.date()
+    last = pd.Timestamp(df.index[-1]).date()
+    close = market.session_close(today)
+    if last == today and close is not None and now.time() < close:
+        return df.iloc[:-1]
+    return df
+
+
+def clean_closes(df: pd.DataFrame, at=None) -> pd.DataFrame:
+    """Completed bars only, forward-filling at most one missing value per series."""
+    if df is None or df.empty:
+        return df
+    return drop_incomplete_today(df, at).ffill(limit=1)
+
+
 def daily_closes(symbols: list[str], period: str = "18mo") -> pd.DataFrame:
     """Adjusted daily closes, index ascending, one column per symbol (missing ones dropped)."""
     import yfinance as yf
@@ -37,7 +59,7 @@ def daily_closes(symbols: list[str], period: str = "18mo") -> pd.DataFrame:
     missing = sorted(set(syms) - set(close.columns[close.notna().any()]))
     if missing:
         log.info("sleeve data: no Yahoo history for %d symbol(s): %s", len(missing), ", ".join(missing[:20]))
-    return close.dropna(axis=1, how="all")
+    return clean_closes(close.dropna(axis=1, how="all"))
 
 
 def daily_ohlc(symbols: list[str], period: str = "18mo") -> dict[str, pd.DataFrame]:

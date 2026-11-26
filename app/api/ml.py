@@ -11,14 +11,14 @@ router = APIRouter()
 
 
 @router.get("/api/ml")
-async def ml_status(request: Request):
+def ml_status(request: Request):
     st = request.app.state
     return {**st.ml.status(), "models": [decode(m) for m in st.db.models(20)],
             "retrain_days": st.settings.ml_retrain_days}
 
 
 @router.get("/api/ml/{model_id}/scorecard")
-async def ml_scorecard(request: Request, model_id: int):
+def ml_scorecard(request: Request, model_id: int):
     """Get ML model scorecard with gate-check metrics and feature importance."""
     model = decode(request.app.state.db.get_model_by_id(model_id))
     if model is None:

@@ -1,6 +1,9 @@
 """Reader/writer for data/ml_dataset/trades.csv.gz."""
 from __future__ import annotations
 
+import contextlib
+import os
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -40,14 +43,45 @@ def append_trades(source: str, rows, path: Path | None = None, store: BarStore |
     df = normalize_rows(source, rows, store, add_features)
     if df.empty:
         return 0
-    if path.exists():
-        old = pd.read_csv(path, low_memory=False)
-        keys = set(zip(df["source"], df["variant"].fillna("")))
-        keep = [(s, v) not in keys for s, v in zip(old["source"], old["variant"].fillna(""))]
-        df = pd.concat([old[keep].reindex(columns=ALL_COLS), df], ignore_index=True)
     path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(path, index=False, compression="gzip")
+    with _file_lock(path.with_name(path.name + ".lock")):
+        if path.exists():
+            old = pd.read_csv(path, low_memory=False)
+            keys = set(zip(df["source"], df["variant"].fillna("")))
+            keep = [(s, v) not in keys for s, v in zip(old["source"], old["variant"].fillna(""))]
+            df = pd.concat([old[keep].reindex(columns=ALL_COLS), df], ignore_index=True)
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        df.to_csv(tmp, index=False, compression="gzip")
+        os.replace(tmp, path)
     return len(df)
+
+
+@contextlib.contextmanager
+def _file_lock(lock_path: Path, timeout: float = 60.0, stale: float = 300.0):
+    """Cross-platform lock file (O_EXCL create + retry); a lock older than `stale` seconds is broken."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - lock_path.stat().st_mtime > stale:
+                    lock_path.unlink()
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"could not acquire {lock_path}")
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
 
 
 def load(path: Path | None = None, holdout: int | None = None, source: str | None = None) -> pd.DataFrame:

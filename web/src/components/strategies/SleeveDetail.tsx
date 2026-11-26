@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
+import { usePoll } from "@/lib/usePoll";
 import type { Api } from "@/lib/api";
 import type { ConfirmRequest } from "@/components/ConfirmModal";
 import { dateTime, money, num, pct } from "@/lib/format";
@@ -18,17 +19,9 @@ export default function SleeveDetail({ api, sleeves, id, onSelect, middle, onCon
   onConfirm?: (r: ConfirmRequest | null) => void;
   onAction?: (label: string, fn: () => Promise<unknown>) => void | Promise<void>;
 }) {
-  const [data, setData] = useState<Detail | null>(null);
-  const [err, setErr] = useState("");
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    if (!id) return;
-    let live = true;
-    api<Detail>(`/api/sleeves/${id}`).then(d => { if (live) { setData(d); setErr(""); } })
-      .catch(e => { if (live) setErr(e instanceof Error ? e.message : "Could not load this strategy."); });
-    return () => { live = false; };
-  }, [api, id, tick]);
+  const poll = usePoll<Detail>(api, id ? `/api/sleeves/${id}` : null, 3_600_000);
+  const data = poll.data;
+  const err = poll.error ? (poll.error.message || "Could not load this strategy.") : "";
 
   const sel = sleeves.find(s => s.id === id);
   if (!sel) return null;
@@ -37,7 +30,7 @@ export default function SleeveDetail({ api, sleeves, id, onSelect, middle, onCon
 
   const ask = (r: ConfirmRequest) => (onConfirm ? onConfirm(r) : void r.onConfirm());
   const run = (label: string, fn: () => Promise<unknown>) => {
-    const wrapped = async () => { await fn(); setTick(t => t + 1); };
+    const wrapped = async () => { await fn(); poll.reload(); };
     return onAction ? onAction(label, wrapped) : wrapped();
   };
   const togglePause = () => ask({

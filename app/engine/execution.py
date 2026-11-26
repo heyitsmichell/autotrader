@@ -601,7 +601,12 @@ class ExecutionMixin(_Host):
         row = self.db.add_protective(p["id"], p["symbol"], "sl", coid, shares, stop, "unknown",
                                      "re-protects shares after a sell")
         try:
-            await self.broker.place_stop(p["symbol"], shares, stop, coid, allow_when_killed=True)
+            try:
+                await self.broker.place_stop(p["symbol"], shares, stop, coid, allow_when_killed=True)
+            except BrokerError as e0:
+                # timed out ("outcome unknown"): adopt the order if it is already live
+                if not (e0.transport and await self._open_order_exists(coid)):
+                    raise
             self.db.set_protective(row, "active", "re-protects shares after a sell")
             self.db.log("info", f"Stop placed for {shares:g} {p['symbol']} at {stop}")
         except BrokerError as e:

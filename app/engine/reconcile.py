@@ -14,6 +14,7 @@ from ..portfolio import ACTIVE, DONE_CANCELLED, parse_orders
 from .util import _coid, _is_option_symbol
 
 log = logging.getLogger("app.engine")
+RECONCILE_LOCK_WAIT_S = 10.0
 
 
 from typing import TYPE_CHECKING
@@ -24,6 +25,18 @@ else:
     _Host = object
 
 class ReconcileMixin(_Host):
+    async def _open_order_exists(self, coid: str) -> bool:
+        """True when an open order with this client_order_id is live at the broker. Used after
+        a transport timeout so a stop/entry is adopted instead of re-sent under a new coid."""
+        try:
+            for o in parse_orders(await self.broker.open_orders_text()):
+                if o.get("client_order_id") == coid:
+                    st = (o.get("status") or "").upper()
+                    return st in ACTIVE or st.startswith(("PENDING", "PARTIAL")) or st == "FILLED"
+        except BrokerError:
+            return False
+        return False
+
     # -- unknown orders --------------------------------------------------------
     async def reconcile_orders(self) -> int:
         """Settle proposals whose order status is unknown (no reply from the broker) or
@@ -36,8 +49,21 @@ class ReconcileMixin(_Host):
         the portfolio reconcile (status sync, stop restore), which handles those rows.
         """
         rows = self.db.unresolved_proposals()
-        if not rows or self._exec_lock.locked():
+        if not rows:
             return 0
+        if self._exec_lock.locked():
+            # an order is being sent: wait (bounded) for it to finish instead of skipping the
+            # whole pass, then run. Still busy after the timeout -> skip, next tick retries.
+            self._reconcile_requested = True
+            try:
+                await asyncio.wait_for(self._exec_lock.acquire(), RECONCILE_LOCK_WAIT_S)
+            except asyncio.TimeoutError:
+                return 0
+            self._exec_lock.release()
+            self._reconcile_requested = False
+            rows = self.db.unresolved_proposals()
+            if not rows:
+                return 0
         try:
             open_text = await self.broker.open_orders_text()
             hist_text = await self.broker.order_history_text()
@@ -290,7 +316,16 @@ class ReconcileMixin(_Host):
             row = self.db.add_protective(None, sym, "sl", coid, qty, stop, "unknown",
                                          "re-placed by protective stop check: no stop was found")
             try:
-                await self.broker.place_stop(sym, qty, stop, coid, allow_when_killed=True)
+                try:
+                    await self.broker.place_stop(sym, qty, stop, coid, allow_when_killed=True)
+                except BrokerError as e0:
+                    # timed out ("outcome unknown"): adopt the order if it reached the broker,
+                    # so the stop is never doubled
+                    if e0.transport and await self._open_order_exists(coid):
+                        self.db.log("warn", f"{sym}: stop {coid} timed out but is live at the "
+                                            "broker; adopted")
+                    else:
+                        raise
             except BrokerError as e:
                 if not e.transport:
                     self.db.set_protective(row, "closed", f"stop not placed: {e}")

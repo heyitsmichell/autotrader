@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import random
+import re
 import sys
 import time
 
@@ -29,6 +30,10 @@ log = logging.getLogger(__name__)
 # cache (L1): a cached 404 on cancel_order must not block a later legitimate retry, and a
 # failed place must never be answered with a stale error.
 MUTATING_PREFIXES = ("place_", "cancel_", "replace_", "modify_", "submit_", "close_")
+
+
+NEGATIVE_CACHE_MAX = 512
+_NOT_FOUND_RX = re.compile(r"\bHTTP 404\b|\b404 Not Found\b|\bNot Found\b")
 
 
 def is_mutating_tool(name: str) -> bool:
@@ -314,7 +319,9 @@ class McpTransport:
                         await self._rate_limit_wait(name, attempt, text)
                         continue
                     log.error(f"Rate limit exceeded for {name} after {self._rate_limit_max_retries + 1} attempts")
-                if cacheable and ("404" in text or "Not Found" in text):
+                if cacheable and _NOT_FOUND_RX.search(text):
+                    while len(self._negative_cache) >= NEGATIVE_CACHE_MAX:
+                        self._negative_cache.pop(next(iter(self._negative_cache)))  # oldest first
                     self._negative_cache[cache_key] = time.time() + self._negative_cache_ttl
                 raise BrokerError(f"{name}: {text}")
             return text

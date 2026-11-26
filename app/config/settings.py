@@ -459,6 +459,26 @@ class Settings:
         return BacktestSettings.from_settings(self)
 
     @property
+    def sleeves(self):
+        from .groups import SleevesSettings
+        return SleevesSettings.from_settings(self)
+
+    @property
+    def news(self):
+        from .groups import NewsSettings
+        return NewsSettings.from_settings(self)
+
+    @property
+    def broker(self):
+        from .groups import BrokerSettings
+        return BrokerSettings.from_settings(self)
+
+    @property
+    def orders(self):
+        from .groups import OrderSettings
+        return OrderSettings.from_settings(self)
+
+    @property
     def llm(self):
         from .groups import LLMSettings
         return LLMSettings.from_settings(self)

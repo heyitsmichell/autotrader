@@ -88,7 +88,7 @@ async def test_many_symbols_make_one_snapshot_request(monkeypatch):
     b = _broker(sess)
     syms = [f"S{i}" for i in range(17)]
     monkeypatch.setattr("app.broker.market_data.parse_snapshot",
-                        lambda text: {s: {"price": 10.0 + i} for i, s in enumerate(syms)})
+                        lambda text, *a, **k: {s: {"price": 10.0 + i} for i, s in enumerate(syms)})
     prices = await asyncio.gather(*(b.last_price(s) for s in syms))
     assert sess.calls == 1
     assert all(p is not None for p in prices)

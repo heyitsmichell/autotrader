@@ -292,6 +292,11 @@ class Portfolio:
     trades: list[BacktestTrade] = field(default_factory=list)
     current_day: date | None = None
     cost_model: CostModel | None = None   # when set, sells also pay SEC fee + FINRA TAF
+    bar_idx: int = 0                      # trading bars seen (one per on_bar_start); time stop counts these
+
+    def bars_held(self, pos: dict) -> int:
+        """Trading bars since entry (live counts trading days, not calendar days)."""
+        return self.bar_idx - pos.get("entry_bar", self.bar_idx)
 
     @property
     def equity(self) -> float:
@@ -359,6 +364,7 @@ class Portfolio:
     def on_bar_start(self, day: date, prices: dict[str, float]) -> None:
         """Update position marks at the start of a new bar (after overnight gap)."""
         self.current_day = day
+        self.bar_idx += 1
         for sym, pos in self.positions.items():
             if sym in prices:
                 pos["current_price"] = prices[sym]
@@ -379,6 +385,7 @@ class Portfolio:
             "sl": sl,
             "tp": tp,
             "entry_day": day,
+            "entry_bar": self.bar_idx,
             "entry_atr": atr,
             "entry_trend": trend,
             "entry_ta_score": ta_score,
@@ -426,8 +433,7 @@ class Portfolio:
 
         # Time exit
         if self.settings.backtest_max_hold_days > 0:
-            hold_days = (day - pos["entry_day"]).days
-            if hold_days >= self.settings.backtest_max_hold_days:
+            if self.bars_held(pos) >= self.settings.backtest_max_hold_days:
                 fill = sell_fill(bar, bar["open"], cost_model, atr=atr, quantity=qty,
                                  dollar_volume=dollar_volume)
                 return True, fill, "time"
@@ -589,7 +595,7 @@ class Portfolio:
             exit_all(o, pend)
             return
         max_hold = s.backtest_max_hold_days
-        if max_hold > 0 and (day - pos["entry_day"]).days >= max_hold:
+        if max_hold > 0 and self.bars_held(pos) >= max_hold:
             exit_all(o, "time")
             return
         prev_close = pos.get("prev_close")
@@ -704,7 +710,9 @@ def run_backtest(settings: Settings, *,
                  sec_fee_rate: float = 0.0,
                  taf_per_share: float = 0.0,
                  taf_max: float = 8.30,
-                 entry_allowed=None) -> BacktestResult:
+                 entry_allowed=None,
+                 signal_fn=None,
+                 portfolio_factory=None) -> BacktestResult:
     """Run a full backtest on the given universe.
 
     Args:
@@ -719,6 +727,10 @@ def run_backtest(settings: Settings, *,
         reentry_cooldown_days: after a symbol is closed, no new entry for this many trading days
             (the same-day re-entry is always blocked: the entry would fill at the open, before the exit).
         sec_fee_rate, taf_per_share, taf_max: SEC fee / FINRA TAF charged on sells (default off).
+        signal_fn: Optional hook ``(symbol, bars, features, index, settings, **kw) -> dict`` replacing
+            ``signal_at`` (same result dict). None = ``signal_at``.
+        portfolio_factory: Optional ``(settings, cash) -> Portfolio`` (e.g. a Portfolio subclass or a
+            capturing wrapper). None = ``Portfolio(settings, cash=cash)``.
         auto_ml: When True, settings.backtest_ml_enabled is on and no ml_predictor is given,
             build a walk-forward predictor from the loaded bars (live parity). Falls back to
             rules-only with a message if PyTorch is missing. Default False keeps old callers.
@@ -828,7 +840,8 @@ def run_backtest(settings: Settings, *,
     bench_price_map = {bar["time"].date(): bar for bar in bench_bars}
 
     # Initialize portfolio
-    portfolio = Portfolio(settings, cash=settings.backtest_initial_cash)
+    portfolio = (portfolio_factory(settings, settings.backtest_initial_cash) if portfolio_factory
+                 else Portfolio(settings, cash=settings.backtest_initial_cash))
     live_mode = bool(getattr(settings, "backtest_live_exits", False))
     idx_maps = {sym: {b["time"].date(): i for i, b in enumerate(bars)} for sym, bars in valid_symbols.items()}
     exposure_curve: list[float] = []
@@ -920,12 +933,13 @@ def run_backtest(settings: Settings, *,
                     bar_list, valid_symbols.get(benchmark_symbol), all_features.get(benchmark_symbol))
             b_bars, b_feats, b_first = aligned
             use_bench = prev_idx >= b_first + max(0, int(getattr(settings, "relative_strength_lookback", 20)))
-            sig_result = signal_at(
-                bar_list, features, prev_idx, settings,
-                ml_predictor=ml_predictor,
-                benchmark_bars=b_bars if use_bench else None,
-                benchmark_features=b_feats if use_bench else None
-            )
+            sig_kw = dict(ml_predictor=ml_predictor,
+                          benchmark_bars=b_bars if use_bench else None,
+                          benchmark_features=b_feats if use_bench else None)
+            if signal_fn is not None:
+                sig_result = signal_fn(symbol, bar_list, features, prev_idx, settings, **sig_kw)
+            else:
+                sig_result = signal_at(bar_list, features, prev_idx, settings, **sig_kw)
             if not sig_result.get("ok"):
                 continue
             candidates.append((sig_result["signal"].get("ta_score") or 0.0, symbol, sig_result, prev_bar))
@@ -981,6 +995,12 @@ def run_backtest(settings: Settings, *,
                 continue  # didn't fill
 
             commission = cost_model.commission()
+            # Sizing used limit_price, but the fill can be higher (marketable band, slippage):
+            # clamp qty on the actual fill so cash never goes negative.
+            if qty * fill_price + commission > portfolio.cash:
+                qty = int(max(0.0, portfolio.cash - commission) // fill_price)
+                if qty <= 0:
+                    continue
             slippage = cost_model.slippage_per_share(fill_price, atr=atr, order_notional=qty * fill_price, dollar_volume=dollar_volume)
 
             portfolio.fill_buy(symbol, qty, fill_price, day, atr, sl, tp,
@@ -1113,82 +1133,49 @@ def _synthetic_bars(n: int, start_price: float = 100.0, trend: float = 0.0,
 
 
 def validate_backtester() -> dict:
-    """Hand-computed validation on a tiny synthetic example.
+    """Hand-computed end-to-end check on a 5-bar synthetic series (no os.environ mutation).
 
-    Scenario: 3 bars, uptrend, signal on bar 1, fill on bar 2 open, exit on bar 2 target.
-    Verifies: no look-ahead, correct fill prices, correct P&L.
+    Signal on bar 1 (via ``signal_fn``) must fill at bar 2's OPEN (no look-ahead); the stop at 99 is
+    breached on bar 3 (low 98, open above the stop) so the exit fills at 99. With zero costs the P&L is
+    exactly qty * (99 - 100.5). Raises AssertionError on any mismatch.
     """
-    # Create a simple 3-bar uptrend
-    bars = [
-        {"time": datetime(2020, 1, 1), "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1_000_000},
-        {"time": datetime(2020, 1, 2), "open": 102, "high": 105, "low": 101, "close": 104, "volume": 1_000_000},
-        {"time": datetime(2020, 1, 3), "open": 106, "high": 108, "low": 105, "close": 107, "volume": 1_000_000},
-    ]
+    import dataclasses
+    import tempfile
+    from datetime import timezone
+    from ..config import load_settings
 
-    # Settings for validation using load_settings with env overrides
-    import os
-    # Save original values for all env vars we modify
-    keys_to_save = [
-        "WATCHLIST", "MAX_ORDER_QTY", "MAX_ORDER_USD", "MAX_POSITION_USD",
-        "MAX_RISK_PER_TRADE_USD", "MAX_DAILY_LOSS_USD", "ELIGIBILITY_ENABLED",
-        "CONSENSUS_TA_MIN", "CONSENSUS_SENT_MIN", "ML_ENABLED",
-        "SL_ATR_MULT", "TP_ATR_MULT", "MIN_SL_PCT", "MAX_SL_PCT",
-        "BACKTEST_COMMISSION_PER_ORDER", "BACKTEST_SLIPPAGE_BPS",
-        "BACKTEST_ATR_SLIPPAGE_MULT", "BACKTEST_IMPACT_BPS",
-        "BACKTEST_MAX_IMPACT_BPS", "BACKTEST_MAX_GROSS_EXPOSURE_PCT",
-        "BACKTEST_MAX_HOLD_DAYS", "BACKTEST_EXIT_ON_TREND_BREAK",
-        "BACKTEST_ML_ENABLED", "BACKTEST_MIN_BARS", "BACKTEST_FETCH_COUNT",
-        "BACKTEST_FETCH_DELAY_SECONDS", "BACKTEST_DATA_DIR", "BACKTEST_RESULTS_DIR",
-        "BACKTEST_INITIAL_CASH", "BACKTEST_UNIVERSE", "BACKTEST_BENCHMARK_SYMBOL",
-        "PERFORMANCE_RISK_FREE_RATE", "PERFORMANCE_MIN_DAYS",
-    ]
-    original_values = {k: os.environ.get(k) for k in keys_to_save}
-    try:
-        os.environ["MAX_ORDER_QTY"] = "1000"
-        os.environ["MAX_ORDER_USD"] = "50000"
-        os.environ["MAX_POSITION_USD"] = "50000"
-        os.environ["MAX_RISK_PER_TRADE_USD"] = "500"
-        os.environ["MAX_DAILY_LOSS_USD"] = "0"
-        os.environ["ELIGIBILITY_ENABLED"] = "false"
-        os.environ["CONSENSUS_TA_MIN"] = "-1.0"
-        os.environ["CONSENSUS_SENT_MIN"] = "-1.0"
-        os.environ["ML_ENABLED"] = "false"
-        os.environ["SL_ATR_MULT"] = "2.0"
-        os.environ["TP_ATR_MULT"] = "3.0"
-        os.environ["MIN_SL_PCT"] = "0.5"
-        os.environ["MAX_SL_PCT"] = "5.0"
-        os.environ["BACKTEST_COMMISSION_PER_ORDER"] = "0.0"
-        os.environ["BACKTEST_SLIPPAGE_BPS"] = "0.0"
-        os.environ["BACKTEST_ATR_SLIPPAGE_MULT"] = "0.0"
-        os.environ["BACKTEST_IMPACT_BPS"] = "0.0"
-        os.environ["BACKTEST_MAX_IMPACT_BPS"] = "0.0"
-        os.environ["BACKTEST_MAX_GROSS_EXPOSURE_PCT"] = "100.0"
-        os.environ["BACKTEST_MAX_HOLD_DAYS"] = "0"
-        os.environ["BACKTEST_EXIT_ON_TREND_BREAK"] = "false"
-        os.environ["BACKTEST_ML_ENABLED"] = "false"
-        os.environ["BACKTEST_MIN_BARS"] = "3"
-        os.environ["BACKTEST_FETCH_COUNT"] = "100"
-        os.environ["BACKTEST_FETCH_DELAY_SECONDS"] = "0.0"
-        os.environ["BACKTEST_DATA_DIR"] = "/tmp"
-        os.environ["BACKTEST_RESULTS_DIR"] = "/tmp"
-        os.environ["BACKTEST_INITIAL_CASH"] = "10000.0"
-        os.environ["BACKTEST_UNIVERSE"] = ""
-        os.environ["BACKTEST_BENCHMARK_SYMBOL"] = "SPY"
-        os.environ["PERFORMANCE_RISK_FREE_RATE"] = "0.0"
-        os.environ["PERFORMANCE_MIN_DAYS"] = "2"
-        os.environ["WATCHLIST"] = "TEST"
-        from ..config import load_settings
-        test_settings = load_settings()
+    def bar(d: int, o, h, l, c) -> dict:
+        return {"time": datetime(2020, 1, d, tzinfo=timezone.utc), "open": o, "high": h, "low": l,
+                "close": c, "volume": 1_000_000}
 
-        # Manually run a minimal backtest-like sequence
-        features = build_features(bars)
-        sig_result = signal_at(bars, features, 1, test_settings)  # signal at bar 1 close
-        # ... this validates the signal generation doesn't look ahead
+    bars = [bar(1, 100, 101, 99, 100), bar(2, 100, 102, 99.5, 101), bar(3, 100.5, 101.5, 100, 101),
+            bar(4, 100.5, 101, 98, 99), bar(5, 99, 100, 98.5, 99.5)]
+    s = dataclasses.replace(
+        load_settings(), backtest_commission_per_order=0.0, backtest_slippage_bps=0.0,
+        backtest_atr_slippage_mult=0.0, backtest_impact_bps=0.0, backtest_max_impact_bps=0.0,
+        backtest_max_gross_exposure_pct=100.0, backtest_max_hold_days=0, backtest_exit_on_trend_break=False,
+        exit_on_trend_break_enabled=False, backtest_ml_enabled=False, backtest_live_exits=False,
+        backtest_min_bars=3, backtest_initial_cash=10_000.0, max_order_qty=1000, max_order_usd=50_000.0,
+        max_position_usd=50_000.0, max_risk_per_trade_usd=500.0, max_daily_loss_usd=0.0)
+    seen: list[int] = []
 
-        return {"validation": "synthetic test structure ready", "bars": len(bars), "features": len(features)}
-    finally:
-        for k, v in original_values.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
+    def fire_on_bar1(symbol, blist, feats, index, settings, **kw):
+        seen.append(index)
+        if index != 1:
+            return {"ok": False, "reason": "test"}
+        return {"ok": True, "sl": 99.0, "tp": None,
+                "signal": {"close": blist[index]["close"], "atr": 1.0, "ta_score": 1.0, "trend": "up", "ml_p": None}}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        from .data import BarStore
+        BarStore(Path(tmp)).save("TEST", bars)
+        res = run_backtest(s, universe=["TEST"], benchmark_symbol="TEST", csv_dir=Path(tmp),
+                           signal_fn=fire_on_bar1)
+    assert len(res.trades) == 1, f"expected 1 trade, got {len(res.trades)}"
+    t = res.trades[0]
+    assert t.entry_day == date(2020, 1, 3), f"entry must be bar 2 (signal bar 1 + 1), got {t.entry_day}"
+    assert abs(t.entry_fill_price - 100.5) < 1e-9, f"entry must fill at bar-2 open 100.5, got {t.entry_fill_price}"
+    assert t.exit_reason == "stop" and t.exit_day == date(2020, 1, 4), (t.exit_reason, t.exit_day)
+    assert abs(t.exit_fill_price - 99.0) < 1e-9, f"stop fill 99, got {t.exit_fill_price}"
+    assert abs(t.pnl - t.quantity * (99.0 - 100.5)) < 1e-6, f"pnl {t.pnl} != {t.quantity} * -1.5"
+    return {"validation": "ok", "bars": len(bars), "trades": 1, "pnl": t.pnl, "signal_indices": seen}

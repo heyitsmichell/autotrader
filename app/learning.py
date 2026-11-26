@@ -31,7 +31,7 @@ from .config import LESSONS_FILE, STRATEGY_FILE, Settings, estimate_cost
 from .db import DB
 from .engine import Engine
 from .llm import chat_completion, parse_json_response, provider_model, usage_counts
-from .market import ET, market_is_open, now_utc
+from .market import ET, market_is_open, now_et, now_utc, session_close
 from .ml import MLFilter
 from .lessons import propose_lessons_from_autopsies, validate_learnable_param
 from .sentiment import sanitize_headline
@@ -221,9 +221,18 @@ class Learner:
                 log.warning("bars for %s failed: %s", sym, e)
                 bars[sym] = []
 
+        # Reference (documented): both legs are close-to-close on completed DAILY bars. The
+        # stock leg is entry price (ref_price/limit) -> later daily closes; SPY is the last daily
+        # close on/before the entry day -> later daily closes. A bar dated today is ignored
+        # until the session has closed (it is a partial, intraday value).
+        _today = now_et().date()
+        _close = session_close(_today)
+        _done = _close is not None and now_et().time() >= _close
+        today_cut = _today + timedelta(days=1) if (_done or _close is None) else _today
+
         def outcome(row: dict, entry: float | None, sign: int) -> dict:
             day = _entry_day(row["created_at"])
-            after = [b for b in bars.get(row["symbol"], []) if bar_day(b["time"]) > day]
+            after = [b for b in bars.get(row["symbol"], []) if day < bar_day(b["time"]) < today_cut]
             if not after or not entry:
                 return {}
             fields: dict = {}
@@ -233,7 +242,7 @@ class Learner:
                 fields["ret_5d"] = round(sign * (after[4]["close"] / entry - 1) * 100, 3)
                 spy = bars.get(BENCHMARK, [])
                 base = [b for b in spy if bar_day(b["time"]) <= day]
-                fwd = [b for b in spy if bar_day(b["time"]) > day]
+                fwd = [b for b in spy if day < bar_day(b["time"]) < today_cut]
                 if base and len(fwd) >= 5:
                     fields["spy_5d"] = round((fwd[4]["close"] / base[-1]["close"] - 1) * 100, 3)
             if fields:

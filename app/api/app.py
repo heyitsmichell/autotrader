@@ -6,7 +6,7 @@ import asyncio
 import html
 import logging
 import re
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -54,8 +54,7 @@ async def _safe(db, what: str, aw) -> None:
             pass
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+async def _startup(app: FastAPI, stack: AsyncExitStack) -> None:
     _file_logging()
     settings = load_settings()
     if settings.host not in ("127.0.0.1", "localhost", "::1"):
@@ -63,6 +62,24 @@ async def lifespan(app: FastAPI):
                     "(run() refuses to start with it).", settings.host)
     write_token_file(settings.api_token_file, app.state.api_token)
     db = DB(DATA_DIR / "trader.db", settings.broker_mode, settings.webull_environment, settings.webull_account_id)
+
+    async def _close_db():
+        try:
+            db.close()
+        except Exception as e:  # noqa: BLE001
+            log.warning("shutdown: db.close failed: %s", e)
+
+    done: set[str] = set()
+
+    def reg(what, fn):
+        async def _step():
+            if what in done:        # registered twice (early failsafe + ordered); run once
+                return
+            done.add(what)
+            await _safe(db, what, fn())
+        stack.push_async_callback(_step)
+
+    stack.push_async_callback(_close_db)
     orphaned = db.close_orphan_runs()
     if orphaned:
         db.log("warn", f"Closed {orphaned} run(s) left 'running' by a previous crash")
@@ -89,6 +106,13 @@ async def lifespan(app: FastAPI):
     st.research = research_svc
     st.fastloop = fastloop
     st.tasks = set()
+    reg("broker", broker.stop)
+    reg("sentiment", sentiment.aclose)
+
+    async def _cancel_tasks():
+        for task in list(st.tasks):
+            task.cancel()
+    reg("tasks", _cancel_tasks)
     db.log("info", f"App started. Broker: {settings.broker_label}. Alerts: "
                    f"{', '.join(alerts.channels) or 'none configured'}", alert=True)
     if engine.kill_switch:
@@ -105,7 +129,9 @@ async def lifespan(app: FastAPI):
             portfolio_svc.invalidate()
     except Exception as e:  # noqa: BLE001 - never block startup; the risk loop still protects positions
         db.log("error", f"Startup reconcile failed: {e}")
+    reg("workers", engine.stop_workers)
     await engine.start_workers()
+    reg("risk loop", engine.stop_risk_loop)
     await engine.start_risk_loop()
     if broker.connected:
         # Throttle startup research scan: skip if last scan was recent (within 10 minutes)
@@ -132,45 +158,48 @@ async def lifespan(app: FastAPI):
         except BrokerError as e:
             db.log("error", str(e))
     supervisor.check_token(force=True)
+    reg("feed", feed.stop)
     await feed.start()
     db.log("warn" if feed.error else "info",
            feed.error or f"Live prices: {feed.mode} "
                          f"({'push' if feed.mode == 'stream' else f'every {settings.poll_seconds:g}s'})")
     if ml_filter.last_error:
         db.log("warn", ml_filter.last_error)
+    reg("learner", learner.stop)
     learner.start()
+    reg("portfolio", portfolio_svc.stop)
     portfolio_svc.start()
+    reg("signals", signals.stop)
     signals.start()
+    reg("fastloop", fastloop.stop)
     fastloop.start()
+    reg("research", research_svc.stop)
     research_svc.start()
+    reg("scheduler", engine.stop_scheduler)
     if settings.auto_start_scheduler and broker.connected and not engine.kill_switch:
         engine.start_scheduler()
+    reg("supervisor", supervisor.stop)
     supervisor.start()
+    # Re-register so a normal shutdown stops the risk loop/workers first (original order);
+    # the early registrations above remain as failsafes and are skipped once run.
+    reg("workers", engine.stop_workers)
+    reg("risk loop", engine.stop_risk_loop)
     publisher = asyncio.create_task(stream.publisher_loop(app))
-    try:
+    reg("publisher", lambda: _cancel_and_wait(publisher))
+
+
+async def _cancel_and_wait(task):
+    task.cancel()
+    await _await_cancelled(task)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup steps register their own teardown on an AsyncExitStack (LIFO), so a failure
+    mid-startup still shuts down everything that already started."""
+    async with AsyncExitStack() as stack:
+        await _startup(app, stack)
         yield
-    finally:
-        db.log("info", "App stopping")
-        publisher.cancel()
-        await _safe(db, "publisher", _await_cancelled(publisher))
-        await _safe(db, "risk loop", engine.stop_risk_loop())
-        await _safe(db, "workers", engine.stop_workers())
-        await _safe(db, "supervisor", supervisor.stop())
-        await _safe(db, "scheduler", engine.stop_scheduler())
-        await _safe(db, "research", research_svc.stop())
-        await _safe(db, "fastloop", fastloop.stop())
-        await _safe(db, "signals", signals.stop())
-        await _safe(db, "portfolio", portfolio_svc.stop())
-        await _safe(db, "learner", learner.stop())
-        await _safe(db, "feed", feed.stop())
-        for task in list(st.tasks):
-            task.cancel()
-        await _safe(db, "sentiment", sentiment.aclose())
-        await _safe(db, "broker", broker.stop())
-        try:
-            db.close()
-        except Exception as e:  # noqa: BLE001
-            log.warning("shutdown: db.close failed: %s", e)
 
 
 async def _await_cancelled(task: asyncio.Task) -> None:

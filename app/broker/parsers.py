@@ -206,7 +206,7 @@ def parse_day_pnl(text: str) -> float | None:
     return _num(m.group(1)) if m else None
 
 
-def parse_snapshot(text: str) -> dict[str, dict]:
+def parse_snapshot(text: str, symbols=None) -> dict[str, dict]:
     """{symbol: {...}} from get_stock_snapshot output.
 
     Format (webull_openapi_mcp.formatters.format_stock_snapshot): a header line
@@ -243,7 +243,10 @@ def parse_snapshot(text: str) -> dict[str, dict]:
                 break
         else:
             m = re.match(r"\s*([A-Za-z0-9.\-]+)\s+Price:\s*(\S+)", line)
-            if m:
+            # a header carries PreClose:, or names a requested symbol; any other
+            # "<word> Price:" line is not a new symbol
+            if m and ("PreClose:" in line or (symbols is not None
+                                              and m.group(1).upper() in {x.upper() for x in symbols})):
                 current = m.group(1).upper()
                 pre_m = re.search(r"PreClose:\s*(\S+)", line)
                 prev_close = _num(pre_m.group(1)) if pre_m else None

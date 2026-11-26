@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import time
+from datetime import datetime
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Request
 
 from ..broker import BrokerError
@@ -11,6 +17,7 @@ from .deps import background
 from .models import LessonOut, LessonRollbackIn, LessonStatusIn, TextIn
 
 router = APIRouter()
+ACTOR = "dashboard"
 
 
 @router.get("/api/lessons", response_model=list[LessonOut])
@@ -33,9 +40,8 @@ async def lesson_status(request: Request, lesson_id: int, body: LessonStatusIn):
     }
     if body.status not in valid_transitions.get(lesson["status"], []):
         raise HTTPException(400, f"Invalid transition from {lesson['status']} to {body.status}")
-    if body.status == "approved" and not body.approved_by:
-        raise HTTPException(400, "approved_by required for approval")
-    db.set_lesson_status(lesson_id, body.status, approved_by=body.approved_by)
+    # Actor is derived server-side; the client-supplied approved_by is accepted but ignored.
+    db.set_lesson_status(lesson_id, body.status, approved_by=ACTOR)
     return {"ok": True, "status": body.status}
 
 
@@ -44,7 +50,7 @@ async def lesson_rollback(request: Request, lesson_id: int, body: LessonRollback
     """Rollback lesson to previous version."""
     db = request.app.state.db
     try:
-        new_id = db.rollback_lesson(lesson_id, body.rolled_back_by)
+        new_id = db.rollback_lesson(lesson_id, ACTOR)
     except ValueError as e:
         raise HTTPException(409, f"Cannot rollback: {e}") from e
     if new_id is None:
@@ -64,10 +70,40 @@ def _nonempty(text: str, what: str) -> str:
     return clean
 
 
+MAX_TEXT_BYTES = 200 * 1024
+BACKUPS_KEPT = 10
+
+
+def _safe_write(path: Path, text: str) -> None:
+    """Size-capped, atomic write with a timestamped backup of the previous file (last 10 kept)."""
+    data = text + "\n"
+    if len(data.encode("utf-8")) > MAX_TEXT_BYTES:
+        raise HTTPException(413, f"text too large (max {MAX_TEXT_BYTES // 1024} KB)")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        bdir = path.parent / "backups"
+        bdir.mkdir(parents=True, exist_ok=True)
+        ts = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}"
+        dest, n = bdir / f"{path.name}.{ts}", 0
+        while dest.exists():
+            n += 1
+            dest = bdir / f"{path.name}.{ts}-{n}"
+        shutil.copy2(path, dest)
+        for old in sorted(bdir.glob(f"{path.name}.*"))[:-BACKUPS_KEPT]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(data, encoding="utf-8")
+    os.replace(tmp, path)
+
+
 @router.put("/api/strategy")
 async def put_strategy(request: Request, body: TextIn):
     clean = _nonempty(body.text, "strategy")
-    STRATEGY_FILE.write_text(clean + "\n", encoding="utf-8")
+    _safe_write(STRATEGY_FILE, clean)
     request.app.state.db.log("info", "Strategy updated")
     return {"ok": True}
 
@@ -75,7 +111,7 @@ async def put_strategy(request: Request, body: TextIn):
 @router.put("/api/lessons")
 async def put_lessons(request: Request, body: TextIn):
     clean = _nonempty(body.text, "lessons")
-    LESSONS_FILE.write_text(clean + "\n", encoding="utf-8")
+    _safe_write(LESSONS_FILE, clean)
     request.app.state.db.log("info", "Lessons edited by you")
     return {"ok": True}
 

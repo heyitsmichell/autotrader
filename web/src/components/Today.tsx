@@ -155,7 +155,8 @@ export default function Today({ status, portfolio, performance, events, pendingC
     ? ` (${performance?.days ?? 0}${minDays != null ? `/${minDays}` : ""} days, not significant yet)` : "";
   const bench = performance?.benchmark_symbol || "SPY";
 
-  const gate = useMemo(() => summarizeGate(signals || []), [signals]);
+  const gate = useMemo(() => summarizeGate(signals || [], positions.map(p => p.symbol)), [signals, positions]);
+  const passText = gate.passHeld > 0 ? `${gate.pass} pass (${gate.passHeld} already held)` : `${gate.pass} pass`;
 
   const finding: Finding = useMemo(() => {
     const noStop = rows.filter(r => r.stopKnown && (r.state ? r.state === "missing" : r.stop == null)).map(r => r.symbol);
@@ -203,7 +204,7 @@ export default function Today({ status, portfolio, performance, events, pendingC
     <div className={css["pos"]}>
       <Section title="Positions" meta={positions.length ? `${positions.length} swing open` : undefined}>
         <Ladder rows={rows} onSymbol={onSymbol}
-          emptyNote={`No open positions. The bot buys when a symbol passes the gate; ${gate.pass} pass right now.`}/>
+          emptyNote={`No open positions. The bot buys when a symbol passes the gate; ${passText} right now.`}/>
       </Section>
       {status?.settings?.options_enabled && <OptionPositions positions={optionPositions}
         proposals={proposalsProp} autoEntry={status.settings.options_auto_entry}
@@ -222,7 +223,7 @@ export default function Today({ status, portfolio, performance, events, pendingC
       <div className={css["gate"]}>
         <Section title="Gate today">
           {gate.watched ? <>
-            <p className={`${css["funnel"]} mono`}>{gate.watched} watched → {gate.eligible} eligible → {gate.pass} pass</p>
+            <p className={`${css["funnel"]} mono`}>{gate.watched} watched → {gate.eligible} eligible → {passText}</p>
             {gate.reasons.length > 0 && <ul className={css["reasons"]}>
               {gate.reasons.slice(0, 3).map(r => <li key={r.name}><span>{r.name}</span><span className="mono">{r.count}</span></li>)}
             </ul>}

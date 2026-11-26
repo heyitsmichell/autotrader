@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from datetime import date, datetime, time as dtime, timezone
 
@@ -98,7 +99,24 @@ def select_armed(rows: list[dict], held: set[str], pending_buys: set[str], coold
 
 
 class FastLoop:
+    _REJECT_LOG_EVERY_S = 30 * 60
+
+    def _should_log_result(self, sym: str, result: str, now: float | None = None) -> bool:
+        """Log a repeated REJECTED result (same symbol + same reason) at most once per 30 min.
+
+        Numbers are normalised out of the reason so a drifting price does not look like a new reason."""
+        if not result.startswith("REJECTED"):
+            return True
+        now = time.time() if now is None else now
+        key = (sym, re.sub(r"[\d.$%+-]+", "#", result))
+        last = self._reject_logged.get(key)
+        if last is not None and now - last < self._REJECT_LOG_EVERY_S:
+            return False
+        self._reject_logged[key] = now
+        return True
+
     def __init__(self, settings: Settings, broker, db, engine, signals, feed=None) -> None:
+        self._reject_logged: dict[tuple[str, str], float] = {}
         self.s, self.broker, self.db = settings, broker, db
         self.engine, self.signals, self.feed = engine, signals, feed
         self._task: asyncio.Task | None = None
@@ -301,7 +319,8 @@ class FastLoop:
         self.triggers += 1
         await self.engine._auto_execute_run(run_id)   # no-op unless TRADING_MODE=auto
         self.db.finish_run(run_id, "ok", summary=f"fast loop {sym} @ {price:.2f}: {result[:200]}")
-        self.db.log("info", f"Fast loop {sym} @ {price:.2f}: {result[:200]}")
+        if self._should_log_result(sym, result):
+            self.db.log("info", f"Fast loop {sym} @ {price:.2f}: {result[:200]}")
         return {"symbol": sym, "price": price, "run_id": run_id, "result": result}
 
     async def _check_exit(self, sym: str, price: float, qty: float, row: dict) -> dict | None:

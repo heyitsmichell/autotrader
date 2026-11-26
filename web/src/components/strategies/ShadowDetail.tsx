@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { usePoll } from "@/lib/usePoll";
 import type { Api } from "@/lib/api";
 import type { ConfirmRequest } from "@/components/ConfirmModal";
 import { dateTime, money, num, pct } from "@/lib/format";
@@ -14,22 +14,15 @@ export default function ShadowDetail({ api, shadow, onConfirm, onAction, onReset
   onReset?: () => void;
 }) {
   const id = shadow.id;
-  const [data, setData] = useState<Detail | null>(null);
-  const [err, setErr] = useState("");
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    let live = true;
-    api<Detail>(`/api/shadows/${encodeURIComponent(id)}`)
-      .then(d => { if (live) { setData(d); setErr(""); } })
-      .catch(e => { if (live) setErr(e instanceof Error ? e.message : "Could not load this shadow strategy."); });
-    return () => { live = false; };
-  }, [api, id, tick]);
+  // No background polling (one-shot load); reload() after a reset.
+  const poll = usePoll<Detail>(api, `/api/shadows/${encodeURIComponent(id)}`, 3_600_000);
+  const data = poll.data;
+  const err = poll.error ? (poll.error.message || "Could not load this shadow strategy.") : "";
 
   const run = async () => {
     const wrapped = async () => {
       await api(`/api/shadows/${encodeURIComponent(id)}/reset`, "POST");
-      setTick(t => t + 1);
+      poll.reload();
       onReset?.();
     };
     if (onAction) await onAction(`${shadow.name} reset`, wrapped); else await wrapped();

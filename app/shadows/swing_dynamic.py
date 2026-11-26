@@ -112,19 +112,13 @@ def replay(settings, start: date, today: date, cap: float, *, top_n: int | None 
             max_position_usd=cap * POSITION_FRACTION, max_order_usd=cap * POSITION_FRACTION,
             max_order_qty=1_000_000, backtest_commission_per_order=0.0, **VARIANT_D)
         grabbed: list = []
-        with _LOCK:                       # capture the Portfolio (open positions are not in the result)
-            orig = engine.Portfolio
-
-            class _Cap(orig):             # type: ignore[misc, valid-type]
-                def __init__(self, *a, **k):
-                    super().__init__(*a, **k)
-                    grabbed.append(self)
-            engine.Portfolio = _Cap
-            try:
-                res = engine.run_backtest(s, universe=uni, benchmark_symbol="SPY", csv_dir=tmp,
-                                          sec_fee_rate=2.78e-05, taf_per_share=0.000166, entry_allowed=hook)
-            finally:
-                engine.Portfolio = orig
+        def _capture(settings_, cash):    # capture the Portfolio (open positions are not in the result)
+            p = engine.Portfolio(settings_, cash=cash)
+            grabbed.append(p)
+            return p
+        res = engine.run_backtest(s, universe=uni, benchmark_symbol="SPY", csv_dir=tmp,
+                                  sec_fee_rate=2.78e-05, taf_per_share=0.000166, entry_allowed=hook,
+                                  portfolio_factory=_capture)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     n = min(len(res.equity_dates), len(res.equity_curve))

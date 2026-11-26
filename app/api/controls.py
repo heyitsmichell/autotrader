@@ -20,7 +20,23 @@ async def run_now(request: Request):
         raise HTTPException(409, "Kill switch is on")
     if eng.running:
         raise HTTPException(409, "A run is already in progress")
-    background(request, eng.run_cycle("manual"))
+    # synchronous guard: set before anything awaits, so two quick calls cannot both start a cycle
+    if getattr(request.app.state, "run_requested", False):
+        raise HTTPException(409, "A run is already starting")
+    request.app.state.run_requested = True
+    try:
+        coro = eng.run_cycle("manual")
+
+        async def _guarded():
+            try:
+                await coro
+            finally:
+                request.app.state.run_requested = False
+
+        background(request, _guarded())
+    except BaseException:
+        request.app.state.run_requested = False
+        raise
     return {"started": True}
 
 

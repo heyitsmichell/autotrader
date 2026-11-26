@@ -2,8 +2,8 @@
 fill; Webull filled its stop at 308.24). Works on a COPY of the DB by default; --apply edits
 the given DB in place.
 
-    python scripts/fix_ledger_exit_2026-11-24.py data/trader.db            # copy, prints before/after
-    python scripts/fix_ledger_exit_2026-11-24.py data/trader.db --apply    # in place
+    python scripts/archive/fix_ledger_exit_2026-11-24.py data/trader.db            # copy, prints before/after
+    python scripts/archive/fix_ledger_exit_2026-11-24.py data/trader.db --apply    # in place
 """
 from __future__ import annotations
 

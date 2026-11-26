@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from typing import Any
 
 from .schema import ADDED_COLUMNS, add_column, sync_schema_columns, table_columns
+
+
+_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+log = logging.getLogger(__name__)
+
+
+def _check_idents(table: str, cols) -> None:
+    for name in (table, *cols):
+        if not _IDENT.match(str(name)):
+            raise ValueError(f"invalid SQL identifier: {name!r}")
 
 
 class BaseRepo:
@@ -27,8 +38,12 @@ class BaseRepo:
         if not m:
             return False
         col = m.group(1)
+        if not _IDENT.match(table) or not _IDENT.match(col):
+            return False
         if col in table_columns(self.conn, table):
             return True  # another process already added it; just retry
+        # TODO: replace this runtime ALTER with proper schema migrations (app/db/schema.py).
+        log.warning("runtime ALTER TABLE: %s.%s missing; self-healing", table, col)
         sync_schema_columns(self.conn)
         for tbl, cols in ADDED_COLUMNS.items():
             if tbl == table and col in cols:
@@ -57,6 +72,7 @@ class BaseRepo:
 
     def _insert(self, table: str, fields: dict) -> int:
         cols = list(fields)
+        _check_idents(table, cols)
         sql = f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})"
         try:
             cur = self.conn.execute(sql, tuple(fields.values()))
@@ -69,5 +85,6 @@ class BaseRepo:
 
     def _update(self, table: str, row_id: int, fields: dict) -> None:
         if fields:
+            _check_idents(table, fields)
             cols = ", ".join(f"{k}=?" for k in fields)
             self.conn.execute(f"UPDATE {table} SET {cols} WHERE id=?", (*fields.values(), row_id))
