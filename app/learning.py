@@ -30,6 +30,7 @@ from .broker import Broker, BrokerError, bar_day, parse_bars
 from .config import LESSONS_FILE, STRATEGY_FILE, Settings, estimate_cost
 from .db import DB
 from .engine import Engine
+from .engine.util import parse_occ
 from .llm import chat_completion, parse_json_response, provider_model, usage_counts
 from .market import ET, market_is_open, now_et, now_utc, session_close
 from .ml import MLFilter
@@ -208,8 +209,10 @@ class Learner:
         now = now_utc()
         window = dict(older_than=(now - timedelta(hours=16)).isoformat(timespec="seconds"),
                       newer_than=(now - timedelta(days=45)).isoformat(timespec="seconds"))
-        todo = self.db.proposals_needing_outcomes(**window)
-        sig_todo = self.db.signals_needing_outcomes(**window)
+        # Stock-bar scoring only: an option's entry is its premium, so daily stock bars can't
+        # score it (and Webull rejects OCC symbols for get_stock_bars). Options learn via options_ml.
+        todo = [p for p in self.db.proposals_needing_outcomes(**window) if parse_occ(p["symbol"]) is None]
+        sig_todo = [s for s in self.db.signals_needing_outcomes(**window) if parse_occ(s["symbol"]) is None]
         if not todo and not sig_todo:
             return 0
         bars: dict[str, list[dict]] = {}

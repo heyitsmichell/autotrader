@@ -8,6 +8,38 @@ You can approve each trade by hand (`TRADING_MODE=approve`, the default) or let 
 its own (`TRADING_MODE=auto`). It runs against a mock broker, the Webull paper account (UAT)
 or a live account.
 
+## Strategies
+
+With `SLEEVES_ENABLED=true` one broker account runs four strategies ("sleeves"), each with
+`SLEEVE_START_CAPITAL` (500k) of its own. Contract: `docs/SLEEVES_ARCHITECTURE.md`.
+
+| Sleeve | Rule | Rebalance |
+|---|---|---|
+| Swing | The rule-and-LLM engine described below (2-ATR stop, 20-day time stop) | Every cycle |
+| Momentum | Top 10 S&P 500 stocks by 12-1 month return, equal weight | Monthly |
+| Put-write | Sells a cash-secured 30-delta QQQ put, about 30 DTE, held to expiry | About monthly |
+| VAA | Keller VAA-G12: offensive ETFs, or bonds when momentum turns bad | Monthly |
+
+A sleeve pauses at `SLEEVE_PAUSE_DD_PCT` drawdown (-25%). The kill switch freezes all sleeves.
+
+**Shadows** (`SHADOWS_ENABLED`) are virtual-money strategies that trade on paper inside the app
+only, to compare ideas before risking capital: `mom_skip1w`, `overnight_mom`, `vaa_g4`,
+`swing_dynamic`, `amihud_quality`, `crypto_trend` (IBIT/ETHA), and the one-leg option shadows
+`ibit_put_trend` and `ibit_put_always`. A new option shadow is a registry entry, no new code
+(`docs/SHADOWS.md`).
+
+## Dashboard tabs
+
+| Tab | Shows |
+|---|---|
+| Today | Account, performance, positions, what needs you (pending proposals), recent activity |
+| Strategies | The sleeves side by side, their holdings, and the shadows |
+| Risk | Whole-account and per-strategy risk: one-day VaR and expected shortfall (historical simulation on today's holdings), each strategy's share of the risk, beta stress tests and the worst SPY days replayed, plus an options what-if grid (price × volatility) with dollar Greeks. Options are repriced with Black-Scholes. Read-only (`/api/risk`, `/api/risk/options`) |
+| Research | Per strategy: for Swing the price chart, signals and recent proposals |
+| Results | P&L by strategy, trade stats, all trades, swing round trips, options model, autopsies, ML scorecard, lessons |
+| Backtests | Backtest evidence cards, each with an "as of" date |
+| Settings | Engine controls (mode, run, kill switch), health and alerts, grouped settings |
+
 ## How a trade happens
 
 1. A run starts from the scheduler (every `CYCLE_MINUTES`) or from **Run analysis now**.
@@ -101,9 +133,8 @@ Launchers: `Start_Trader.bat`, `Start_Trader.command`, `start.sh`, `Stop_Trader.
 **`PC_BOT_DISABLED`.** If this marker file exists in the project root, the launchers
 (`Start_Trader.bat`, `Start_Trader.command`, `start.sh`, `install_autostart.sh`) refuse to start.
 It is there so a hosted bot and a PC bot never trade the same account. `push_to_server.ps1`
-does not copy it. To run on the PC, stop the server bot first, then delete the file.
-The launchers and `python scripts/trader.py run` / `install` all check it and refuse to start
-(`--override` skips the check). The marker is never copied to the server.
+does not copy it. `python scripts/trader.py run` / `install` check it too (`--override` skips
+the check). To run on the PC, stop the server bot first, then delete the file.
 
 ## Safety design
 
@@ -169,9 +200,11 @@ app/broker/             Webull MCP client      app/mock/, app/mock_mcp_server.py
 app/config/             settings.py (defaults), loader.py (.env), groups.py (grouped read-only views)
 app/portfolio.py        positions, fills and the trade ledger (+ portfolio_parsing.py, portfolio_analytics.py)
 app/sleeves/            the four strategies: manager.py + valuation, orders, rebalance_ops, putwrite_ops, views
-app/shadows/            virtual-money shadow strategies
+app/shadows/            virtual-money shadow strategies (registry.py; options.py = one-leg option shadows)
+app/risk_report/        Risk tab maths: Black-Scholes pricing, VaR/ES, stress scenarios (read-only)
 app/db/                 SQLite repositories, migrations, db.transaction()
-app/risk.py, eligibility.py, consensus.py, exits.py   limits, entry gates, exit logic
+app/risk.py, eligibility.py, consensus.py, exits.py   pre-trade limits, entry gates, exit logic
+app/learning.py         scores past proposals/signals on stock bars (options learn via options ML)
 app/supervisor.py       unattended operation: reconnect, unknown orders, auto kill switch
 app/market.py, llm.py, alerts.py   market clock, LLM client, alert channels
 app/backtest/, strategy_lab/, ml_lab/, rotation_lab/   research code
@@ -179,7 +212,7 @@ web/                    dashboard (Next.js, built to web/out)
 scripts/trader.py       launcher: run, setup, auth, stop, install, status
 scripts/                research and maintenance (experiments.py, gen_env_example.py, smoke_test.py ...)
 scripts/archive/        one-off migrations and fixes that were already run; do not re-run
-deploy/oracle/          README.md, server_setup.sh, push_to_server.ps1
+deploy/oracle/          README.md, server_setup.sh, push_to_server.ps1, apply_sleeves_env.sh
 Start_Trader.bat/.command, start.sh, stop.sh, auth.sh, setup.sh, install_autostart.sh   launchers
 strategy.md             your trading rules (the analyst reads it each run)
 docs/  data/  logs/  conf/   catalogs and notes; SQLite and experiments; logs; Webull token
@@ -194,7 +227,7 @@ for the ML tests). Tests freeze the clock at 2026-11-20 and never read your `.en
 | Command | What it does |
 |---|---|
 | `python -m pytest` | Full suite, serial by default; use `-n 2` for parallel (`pytest-xdist`, memory-limited) |
-| `python -m pytest -m "not slow"` | Skips the 13 tests marked `slow`; a slightly quicker pre-check |
+| `python -m pytest -m "not slow"` | Skips the 15 tests marked `slow`; a slightly quicker pre-check |
 | `python -m pytest -p no:xdist` | Strictly serial, to rule out order-dependent bugs |
 
 Parser tests also run against real Webull output saved in `tests/fixtures/webull/`. `MOCK_REALISM=1`
@@ -205,12 +238,14 @@ Frontend: `cd web && npx tsc --noEmit && npm run lint`.
 
 ## Research
 
-Reports in `data/experiments/` cover a
-strategy sweep, the rotation lab (`rotation/REPORT.md`, `REPORT_CATALOG.md`), ML (`ml/REPORT.md`),
-options (`options_entry/REPORT.md`, `options_research/REPORT.md`), momentum variants and
-5-minute entry timing. Catalogs are in `docs/`: `STRATEGY_CATALOG.md`,
-`OPTIONS_STRATEGY_CATALOG.md`, `SOCIAL_STRATEGIES.md`, `MOMENTUM_VARIANTS.md`. Most
-active strategies lose to the index after costs; nothing here promises otherwise.
+Reports in `data/experiments/` cover a strategy sweep, the rotation lab (`rotation/REPORT.md`,
+`REPORT_CATALOG.md`), ML (`ml/REPORT.md`), options (`options_entry/`, `options_research/`,
+`putwrite_mgmt/`), momentum variants, overnight momentum, TA v3, social strategies, 5-minute
+entry timing (`intraday_breakout/`) and crypto trend (`crypto_trend/REPORT.md`). Catalogs and
+design notes are in `docs/`: `STRATEGY_CATALOG.md`, `OPTIONS_STRATEGY_CATALOG.md`,
+`SOCIAL_STRATEGIES.md`, `MOMENTUM_VARIANTS.md`, `SLEEVES_ARCHITECTURE.md`, `SHADOWS.md`,
+`RISK_TAB_PLAN.md`. Most active strategies lose to the index after costs; nothing here
+promises otherwise.
 
 ## Troubleshooting
 
