@@ -1,13 +1,13 @@
 /* TradeLedgerView styles (CSS Module). Shared primitives are global, in src/styles/. */
 
 .trades-table {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .trades-table th {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .trades-table td {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 8px 9px;
 }
 .trade-detail {
@@ -32,7 +32,7 @@
   font: 700 16px var(--display);
   margin: 0;
 }
-@media (max-width: 580px) {
+@media (max-width: 720px) {
   .trade-detail {
     padding: 14px;
   }

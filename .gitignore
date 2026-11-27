@@ -73,3 +73,6 @@ docs/
 CLAUDE.md
 CLAUDE.local.md
 HANDOFF.md
+
+# written by `next dev` (Next.js agent hints); not part of the project
+web/AGENTS.md

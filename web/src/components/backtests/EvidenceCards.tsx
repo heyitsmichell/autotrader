@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Api } from "@/lib/api";
-import { num, pct } from "@/lib/format";
+import { num, pct, shortDate } from "@/lib/format";
 import type { BtCard, BtEvidence } from "@/lib/types";
 import Empty from "@/components/ui/Empty";
 import Mark from "@/components/ui/Mark";
@@ -61,7 +61,8 @@ export default function EvidenceCards({ api }: { api: Api }) {
         {b ? <div className={css["stats"]}>
           <span><b>CAGR</b>{P(b.cagr, true)}</span><span><b>Sharpe</b>{num(b.sharpe)}</span>
           <span><b>Max DD</b>{P(b.max_dd)}</span>{b.window && <span><b>Window</b>{b.window}</span>}
-        </div> : <span className={css["muted"]}>No backtest on file{c.note ? `: ${c.note}` : "."}</span>}
+          {b.as_of && <span title="When this backtest result was last written"><b>As of</b>{shortDate(b.as_of, true)}</span>}
+        </div> : <span className={css["muted"]} title={c.note ?? undefined}>No backtest yet</span>}
         <div className={css["stats"]}>
           {short ? <span className={css["muted"]}>Live: —, needs 20 days{l?.days != null ? ` (${l.days} so far)` : ""}</span> : <>
             <span><b>Live days</b>{l?.days}</span>

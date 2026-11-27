@@ -3,7 +3,7 @@ import { pct } from "@/lib/format";
 import Plot from "./Plot";
 
 export default function Underwater({ data }: { data: { day: string; dd: number }[] }) {
-  if (data.length < 2) return <p style={{ color: "var(--ink-2)" }}>Not enough history for a drawdown chart.</p>;
+  if (data.length < 2) return <p className="muted">Not enough history for a drawdown chart.</p>;
   const lo = Math.min(...data.map(d => d.dd), -0.01);
   return <Plot days={data.map(d => d.day)} yMin={lo * 1.05} yMax={0} height={160}
     label="Drawdown from the previous peak over time"

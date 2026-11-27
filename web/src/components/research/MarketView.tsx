@@ -17,7 +17,7 @@ export default function MarketView({ api }: { api: Api }) {
   return <Section title="Market">
     <div className={css["view"]}>
       <FigureRow>
-        <Figure label="SPY vs 200-day" value={spy ? <>{num(spy.last)} <Mark tone={spy.above_200 ? "gain" : "loss"}>{spy.above_200 ? "above" : "below"}</Mark></> : "—"}
+        <Figure label="SPY vs 200-day" value={spy ? <>{num(spy.last)} <Mark tone="neutral">{spy.above_200 ? "above" : "below"}</Mark></> : "—"}
           title={spy ? `200-day ${num(spy.sma200)}` : undefined}/>
         <Figure label="VIX" value={vix ? num(vix.last, 1) : "—"}/>
         <Figure label="VIX, 1y percentile" value={vix ? pct(vix.pct_rank_1y * 100, { sign: false, digits: 0 }) : "—"}/>

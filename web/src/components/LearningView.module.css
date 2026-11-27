@@ -1,13 +1,13 @@
 /* LearningView styles (CSS Module). Shared primitives are global, in src/styles/. */
 
 .lessons-table {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .lessons-table th {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .lessons-table td {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 8px 9px;
 }
 
@@ -16,7 +16,7 @@
   border: 1px solid var(--line2);
   border-radius: 4px;
   padding: 10px;
-  font: 11px var(--mono);
+  font: var(--fs-xs) var(--mono);
   color: #b8c5cc;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -27,7 +27,7 @@
 .autopsy-list {
   display: grid;
   gap: 4px;
-  font: 11px var(--mono);
+  font: var(--fs-xs) var(--mono);
   color: var(--muted);
 }
 .lesson-detail {
@@ -52,7 +52,7 @@
   font: 700 16px var(--display);
   margin: 0;
 }
-@media (max-width: 580px) {
+@media (max-width: 720px) {
   .lesson-detail {
     padding: 14px;
   }

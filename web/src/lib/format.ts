@@ -133,14 +133,14 @@ export const countdown = (expiresAt: number, now: number) => {
 const OCC = /^([A-Z.]{1,6})(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** OCC option symbol in words: "XLF260102C00052000" becomes "XLF Jan 2 $52 call". Raw symbol when it does not parse. */
+/** OCC option symbol in words: "QQQ261218P00580000" becomes "QQQ $580 put, Dec 18". Raw symbol when it does not parse. */
 export const occLabel = (symbol: unknown): string => {
   const raw = String(symbol ?? "").trim().toUpperCase();
   const m = OCC.exec(raw);
   const month = m ? MONTHS[Number(m[3]) - 1] : undefined;
   if (!m || !month) return String(symbol ?? "—");
   const strike = Number(m[6]) / 1000;
-  return `${m[1]} ${month} ${Number(m[4])} $${Number.isInteger(strike) ? strike : strike.toFixed(2)} ${m[5] === "C" ? "call" : "put"}`;
+  return `${m[1]} $${Number.isInteger(strike) ? strike : strike.toFixed(2)} ${m[5] === "C" ? "call" : "put"}, ${month} ${Number(m[4])}${2000 + Number(m[2]) === new Date().getFullYear() ? "" : ` ${2000 + Number(m[2])}`}`;
 };
 
 /** True for an OCC option symbol. */
@@ -166,4 +166,11 @@ export const occShort = (symbol: unknown): string | null => {
   if (!m || !month) return null;
   const strike = Number(m[6]) / 1000;
   return `${m[1]} ${Number.isInteger(strike) ? strike : strike.toFixed(2)}${m[5]} ${month} ${Number(m[4])}`;
+};
+
+const SHORT_MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2025-11-26" -> "Nov 26"; input returned unchanged when it does not parse. */
+export const shortDate = (d: string | null | undefined, year = false): string => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d ?? "");
+  return m ? `${SHORT_MON[Number(m[2]) - 1]} ${Number(m[3])}${year ? `, ${m[1]}` : ""}` : d ?? "—";
 };

@@ -4,7 +4,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 :global(.controls-row) .input-group label {
   white-space: nowrap;
@@ -21,7 +21,7 @@
   background: var(--panel2);
   border: 1px solid var(--line);
   color: var(--text);
-  font: 500 11px var(--mono);
+  font: 500 var(--fs-xs) var(--mono);
   padding: 5px 10px;
   border-radius: 4px;
   cursor: pointer;
@@ -42,7 +42,7 @@
   display: inline-block;
   padding: 2px 6px;
   border-radius: 3px;
-  font: 500 12px var(--mono);
+  font: 500 var(--fs-sm) var(--mono);
   background: var(--gain-bg);
   color: var(--green);
   border: 0;
@@ -52,14 +52,14 @@
   display: inline-block;
   padding: 2px 6px;
   border-radius: 3px;
-  font: 500 12px var(--mono);
+  font: 500 var(--fs-sm) var(--mono);
   background: var(--loss-bg);
   color: var(--red);
   border: 0;
   
 }
 .sort-indicator {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   margin-left: 4px;
   display: inline-block;
 }
@@ -71,3 +71,10 @@
   color: var(--blue);
   font-weight: bold;
 }
+
+.w-80 { width: 80px; }
+.w-120 { width: 120px; }
+.grow { flex: 1; }
+.push { margin-left: auto; }
+.gap-y { margin: var(--sp-3) 0; }
+.row-link { cursor: pointer; }

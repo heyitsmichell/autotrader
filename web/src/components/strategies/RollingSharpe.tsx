@@ -3,7 +3,7 @@ import Plot from "./Plot";
 
 export default function RollingSharpe({ data, color }: { data: { day: string; value: number | null }[]; color: string }) {
   const d = data.filter(r => r.value != null && Number.isFinite(r.value)) as { day: string; value: number }[];
-  if (d.length < 2) return <p style={{ color: "var(--ink-2)" }}>Not enough history for a rolling Sharpe line.</p>;
+  if (d.length < 2) return <p className="muted">Not enough history for a rolling Sharpe line.</p>;
   const vs = d.map(r => r.value);
   const lo = Math.min(...vs, 0), hi = Math.max(...vs, 1);
   const pad = (hi - lo) * 0.05;

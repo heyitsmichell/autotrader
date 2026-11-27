@@ -42,13 +42,35 @@
   --color-good-process: #1f5a45;
   --color-outcome: #453a68;
 
-  /* type scale, ratio 1.2 */
-  --fs-xs: 12px;
+  /* type scale (one source of truth; base.css no longer redefines it) */
+  --fs-xs: 11px;
   --fs-sm: 12px;
-  --fs-md: 14px;
+  --fs-md: 13px;
   --fs-body: 14px;
   --fs-lg: 17px;
   --fs-xl: 20px;
   --fs-2xl: 24px;
   --radius: 6px;
+
+  /* spacing scale */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* interaction */
+  --focus: #7ba9e6;
+  --row-hover: #1f2226;
+
+  /* diverging heatmap, loss to gain; --ink text is >= 4.5:1 on each */
+  --heat-neg-3: #8c2e45;
+  --heat-neg-2: #6a2838;
+  --heat-neg-1: #47252f;
+  --heat-zero: #23252a;
+  --heat-pos-1: #1f3b32;
+  --heat-pos-2: #27594a;
+  --heat-pos-3: #2a7059;
 }

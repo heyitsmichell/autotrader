@@ -1,9 +1,10 @@
-export type Tab = "today" | "strategies" | "options" | "research" | "learning" | "backtests" | "settings";
+export type Tab = "today" | "strategies" | "risk" | "options" | "research" | "learning" | "backtests" | "settings";
 
 /** Single source of truth for tabs. `hidden` tabs stay routable via #hash but are not shown in the bar. */
 export const TABS: { id: Tab; label: string; hidden?: boolean }[] = [
   { id: "today", label: "Today" },
   { id: "strategies", label: "Strategies" },
+  { id: "risk", label: "Risk" },
   { id: "research", label: "Research" },
   { id: "options", label: "Options", hidden: true },
   { id: "learning", label: "Results" },

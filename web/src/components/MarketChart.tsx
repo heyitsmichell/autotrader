@@ -131,7 +131,7 @@ export default function MarketChart({ symbols, api, signals = [], status = null 
         if (!active) return;
         bars = (data.bars || []).map(b => ({ ...b, time: (frame === "1D" ? b.time : Math.floor(Number(b.time) / span) * span) as Time }));
         bars = bars.filter((b: Bar, i: number) => i === 0 || (frame === "1D" ? String(b.time) > String(bars[i - 1].time) : Number(b.time) > Number(bars[i - 1].time)));
-        draw(); showing(); c.timeScale().fitContent();
+        draw(); showing(); if (bars.length > 1) c.timeScale().setVisibleLogicalRange({ from: -8, to: bars.length }); else c.timeScale().fitContent();
         if (bars.length) setPrice(bars[bars.length - 1].close);
         setNote(`${bars.length} bars · US Eastern${extended && frame !== "1D" ? " · extended hours" : ""}`);
         void drawOverlays();

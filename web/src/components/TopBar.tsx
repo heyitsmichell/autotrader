@@ -5,7 +5,7 @@
  * (mode, pause, kill (Shift+K), flatten). It sits outside every error boundary.
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { Status } from "@/lib/types";
 import { TABS, type Tab } from "@/lib/tabs";
 import css from "./TopBar.module.css";
@@ -41,6 +41,10 @@ export default function TopBar({ status, busy, tab, onTab, onMode, onFlatten, on
   const tabs: [Tab, string][] = TABS.filter(t => !t.hidden).map(t => [t.id, t.label]);
 
   // Shift+K opens the kill-switch dialog from anywhere (not while typing in a field).
+  const tabsRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    tabsRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ inline: "nearest", block: "nearest" });
+  }, [tab]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.shiftKey || e.key.toLowerCase() !== "k" || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -69,7 +73,7 @@ export default function TopBar({ status, busy, tab, onTab, onMode, onFlatten, on
       </svg>
       <b className={css["wordmark"]}>Trader</b>
     </div>
-    <nav className={css["tabs"]} role="tablist" aria-label="Views">
+    <nav ref={tabsRef} className={css["tabs"]} role="tablist" aria-label="Views">
       {tabs.map(([t, label]) => <button
         key={t}
         role="tab"

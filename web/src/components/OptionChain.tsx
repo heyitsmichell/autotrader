@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { money, num, pct } from "@/lib/format";
+import { etClock, money, num, occLabel, pct } from "@/lib/format";
 import type { Api } from "@/lib/api";
 import type { Status } from "@/lib/types";
 import css from "./OptionChain.module.css";
@@ -37,7 +37,7 @@ export default function OptionChain({ status, api, onSymbolSelect }: {
   const [underlying, setUnderlying] = useState("");
   const [minDte, setMinDte] = useState(7);
   const [maxDte, setMaxDte] = useState(45);
-  const [data, setData] = useState<OptionChainResponse | null>(null);
+  const [data, setData] = useState<OptionChainResponse | null>(null); const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
@@ -78,7 +78,7 @@ export default function OptionChain({ status, api, onSymbolSelect }: {
         `/api/options/chain?underlying=${encodeURIComponent(underlying)}&min_dte=${minDte}&max_dte=${maxDte}`
       );
       if (id !== reqId.current || ac.signal.aborted) return;
-      setData(res);
+      setData(res); setFetchedAt(new Date());
     } catch (e) {
       if (id !== reqId.current || ac.signal.aborted) return;
       setError(e instanceof Error ? e.message : "Failed to fetch option chain");
@@ -159,20 +159,21 @@ export default function OptionChain({ status, api, onSymbolSelect }: {
       </select>
       <div className={`${css["input-group"]}`}>
         <label className="muted">Min DTE</label>
-        <input type="number" min="0" max={maxDte} value={minDte} onChange={e => setMinDte(Math.max(0, Math.min(parseInt(e.target.value) || 0, maxDte)))} className="input" style={{ width: "80px" }} />
+        <input type="number" min="0" max={maxDte} value={minDte} onChange={e => setMinDte(Math.max(0, Math.min(parseInt(e.target.value) || 0, maxDte)))} className={`input ${css["w-80"]}`} />
       </div>
       <div className={`${css["input-group"]}`}>
         <label className="muted">Max DTE</label>
-        <input type="number" min={minDte} value={maxDte} onChange={e => setMaxDte(Math.max(minDte, parseInt(e.target.value) || minDte))} className="input" style={{ width: "80px" }} />
+        <input type="number" min={minDte} value={maxDte} onChange={e => setMaxDte(Math.max(minDte, parseInt(e.target.value) || minDte))} className={`input ${css["w-80"]}`} />
       </div>
-      <select value={typeFilter} onChange={e => setTypeFilter(e.target.value as "ALL" | "CALL" | "PUT")} className="input" style={{ width: "120px" }}>
+      <select value={typeFilter} onChange={e => setTypeFilter(e.target.value as "ALL" | "CALL" | "PUT")} className={`input ${css["w-120"]}`}>
         <option value="ALL">All types</option>
         <option value="CALL">Calls only</option>
         <option value="PUT">Puts only</option>
       </select>
-      <input type="text" placeholder="Filter (symbol, strike, exp…)" value={filter} onChange={e => setFilter(e.target.value)} className="input" style={{ flex: 1 }} />
+      <input type="text" placeholder="Filter (symbol, strike, exp…)" value={filter} onChange={e => setFilter(e.target.value)} className={`input ${css["grow"]}`} />
       {loading && <span className="spinner" aria-label="Loading"/>}
-      {error && <span className="inline-warning" style={{ marginLeft: "auto" }}>{error}</span>}
+      {fetchedAt && !loading && <span className="muted small">Quotes as of {etClock(fetchedAt)} ET</span>}
+      {error && <span className={`inline-warning ${css["push"]}`}>{error}</span>}
     </div>
 
     {data && (
@@ -196,7 +197,7 @@ export default function OptionChain({ status, api, onSymbolSelect }: {
     )}
 
     {error && (
-      <div className="inline-warning" style={{ margin: "12px 0" }} role="alert">
+      <div className={`inline-warning ${css["gap-y"]}`} role="alert">
         {error}
       </div>
     )}
@@ -232,8 +233,8 @@ export default function OptionChain({ status, api, onSymbolSelect }: {
           </thead>
           <tbody>
             {filteredContracts.map(c => (
-              <tr key={c.symbol} onClick={() => onSymbolSelect?.(c.symbol)} style={{ cursor: "pointer" }}>
-                <td><code>{c.symbol}</code></td>
+              <tr key={c.symbol} onClick={() => onSymbolSelect?.(c.symbol)} className={css["row-link"]}>
+                <td title={c.symbol}>{occLabel(c.symbol)}</td>
                 <td>{c.expiration}</td>
                 <td><span className={c.type === "CALL" ? `${css["call-badge"]}` : `${css["put-badge"]}`}>{c.type === "CALL" ? "Call" : "Put"}</span></td>
                 <td>{money(c.strike)}</td>

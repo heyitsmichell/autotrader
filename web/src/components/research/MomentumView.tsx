@@ -29,7 +29,7 @@ export default function MomentumView({ api }: { api: Api }) {
           <td className="num">{r.rank}</td>
           <th scope="row">{r.symbol}</th>
           <td className="num">{pct(r.score * 100)}</td>
-          <td className={`num ${r.gap_to_cutoff > 0 ? css["gain"] : r.gap_to_cutoff < 0 ? css["loss"] : ""}`}>{pct(r.gap_to_cutoff * 100)}</td>
+          <td className="num">{pct(r.gap_to_cutoff * 100)}</td>
           <td>{r.held ? <Mark>held{r.held_qty ? ` ${r.held_qty}` : ""}</Mark> : ""}</td>
           <td>{r.in_target ? "yes" : ""}</td>
         </tr>)}</tbody>

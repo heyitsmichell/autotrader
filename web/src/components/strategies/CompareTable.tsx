@@ -58,7 +58,7 @@ const ROWS: Row[] = [
   { label: "Backtest max DD", cell: s => fr(s.expected?.max_dd) },
   { label: "Last rebalance", cell: s => when(s.last_rebalance) },
   { label: "Next rebalance", cell: s => when(s.next_rebalance) },
-  { label: "Status reason", cell: s => s.status_reason || "—" },
+  { label: "Status reason", cell: s => <span className={css["reason"]}>{s.status_reason || "—"}</span> },
 ];
 
 const Head = ({ s }: { s: Sleeve }) => <>
@@ -66,12 +66,16 @@ const Head = ({ s }: { s: Sleeve }) => <>
 </>;
 
 export default function CompareTable({ sleeves }: { sleeves: Sleeve[] }) {
+  const reasons = new Set(sleeves.map(s => s.status_reason || ""));
+  const sameReason = sleeves.length > 1 && reasons.size === 1;
+  const rows = sameReason ? ROWS.filter(r => r.label !== "Status reason") : ROWS;
   const win = sleeves.find(s => s.expected?.window)?.expected?.window;
   return <div className={css["tableWrap"]}>
+    {sameReason && [...reasons][0] && <p className={css["muted"]}>Status: {[...reasons][0]}</p>}
     <table className={`${css["tbl"]} ${css["wide"]}`}>
       <thead><tr><th scope="col">Metric</th>
         {sleeves.map(s => <th key={s.id} scope="col"><Head s={s}/></th>)}</tr></thead>
-      <tbody>{ROWS.map(r => r.group
+      <tbody>{rows.map(r => r.group
         ? <tr key={r.label} className={css["sub"]} title={win}><td colSpan={sleeves.length + 1}>{r.label}</td></tr>
         : <tr key={r.label} title={r.title === "cagr" ? win : undefined}>
           <th scope="row">{r.label}</th>{sleeves.map(s => <td key={s.id}
@@ -81,7 +85,7 @@ export default function CompareTable({ sleeves }: { sleeves: Sleeve[] }) {
     <div className={css["blocks"]}>
       {sleeves.map(s => <div key={s.id} className={css["block"]}>
         <h3><Head s={s}/></h3>
-        {ROWS.filter(r => !r.group).map(r => <div key={r.label} className={css["kv"]}>
+        {rows.filter(r => !r.group).map(r => <div key={r.label} className={css["kv"]}>
           <span>{r.label}</span><span>{r.cell?.(s)}</span></div>)}
       </div>)}
     </div>

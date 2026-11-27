@@ -1,5 +1,5 @@
-.run { margin: 0 0 8px; font-size: 13px; }
-.muted { color: var(--ink-2); font-size: 12px; }
+.run { margin: 0 0 8px; font-size: var(--fs-md); }
+.muted { color: var(--ink-2); font-size: var(--fs-sm); }
 .clickable { cursor: pointer; }
 .clickable:hover td { background: var(--raise); }
 .detail { color: var(--ink-2); max-width: 48ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

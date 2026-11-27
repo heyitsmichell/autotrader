@@ -1,8 +1,8 @@
 .statsWrap { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 32px; align-items: start; }
 .statsMain { min-width: 0; }
 .statsHist { min-width: 0; }
-.exits { margin: 12px 0 0; font-size: 13px; color: var(--ink-2); }
-.muted { color: var(--ink-2); font-size: 13px; margin: 0; }
+.exits { margin: 12px 0 0; font-size: var(--fs-md); color: var(--ink-2); }
+.muted { color: var(--ink-2); font-size: var(--fs-md); margin: 0; }
 .hist { margin: 0; }
 .hist svg { width: 100%; height: auto; display: block; margin-top: 6px; }
 .filters { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 0 0 8px; }
@@ -13,12 +13,12 @@
 .gain { color: var(--gain); }
 .loss { color: var(--loss); }
 .dim { color: var(--ink-2); }
-.sub { font-size: 13px; font-weight: 500; color: var(--ink-2); margin: 24px 0 4px; }
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 32px; margin: 8px 0 0; font-size: 13px; }
+.sub { font-size: var(--fs-md); font-weight: 500; color: var(--ink-2); margin: 24px 0 4px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 32px; margin: 8px 0 0; font-size: var(--fs-md); }
 .kv dt { color: var(--ink-2); }
 .kv dd { margin: 0; }
 /* Trade stats (strategy table + distribution) */
-.note { color: var(--ink-2); font-size: 13px; margin: 8px 0 0; }
+.note { color: var(--ink-2); font-size: var(--fs-md); margin: 8px 0 0; }
 .pick { cursor: pointer; }
 .pick:hover td { background: var(--raise); }
 .pick.on td { background: var(--raise); }
@@ -34,9 +34,9 @@
 .histBox svg { width: 100%; height: auto; display: block; }
 .histBox rect:focus { outline: none; }
 .htip { position: absolute; top: 4px; z-index: 5; min-width: 150px; background: var(--raise); border: 1px solid var(--rule);
-  border-radius: 4px; padding: 6px 8px; font-size: 12px; pointer-events: none; }
+  border-radius: 4px; padding: 6px 8px; font-size: var(--fs-sm); pointer-events: none; }
 .htip div { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
 .htipHead { color: var(--ink-2); margin-bottom: 2px; }
-.asTable { margin-top: 8px; font-size: 13px; color: var(--ink-2); max-width: 420px; }
+.asTable { margin-top: 8px; font-size: var(--fs-md); color: var(--ink-2); max-width: 420px; }
 .asTable summary { cursor: pointer; }
 .asTable table { margin-top: 6px; }

@@ -1,10 +1,10 @@
 .view { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .picker { margin-bottom: 16px; overflow-x: auto; max-width: 100%; }
-.muted { color: var(--ink-2); font-size: 13px; margin: 0; }
-.sentence { margin: 0; font-size: 14px; color: var(--ink); }
+.muted { color: var(--ink-2); font-size: var(--fs-md); margin: 0; }
+.sentence { margin: 0; font-size: var(--fs-body); color: var(--ink); }
 .cut td, .cut th { border-bottom: 1px solid var(--ink-2); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px 12px; }
-.chip { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--ink); white-space: nowrap; }
+.chip { display: inline-flex; gap: 6px; align-items: center; font-size: var(--fs-sm); color: var(--ink); white-space: nowrap; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .meter { display: flex; flex-direction: column; gap: 6px; }
 .meterbar { display: flex; gap: 2px; max-width: 360px; }
@@ -13,10 +13,10 @@
 .put { border-top: 1px solid var(--rule); padding-top: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .puthead { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-family: var(--mono); }
 .track { width: 100%; max-width: 520px; display: block; }
-.facts { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 13px; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: var(--fs-md); }
 .facts span { display: flex; flex-direction: column; gap: 2px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.facts small { font: 12px var(--sans); color: var(--ink-2); }
+.facts small { font: var(--fs-sm) var(--sans); color: var(--ink-2); }
 .gain { color: var(--gain); }
 .loss { color: var(--loss); }
-.details summary { cursor: pointer; font-size: 13px; color: var(--ink-2); margin-bottom: 8px; }
+.details summary { cursor: pointer; font-size: var(--fs-md); color: var(--ink-2); margin-bottom: 8px; }
 .wrap { overflow-x: auto; max-width: 100%; }

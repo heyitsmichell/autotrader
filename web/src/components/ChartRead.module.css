@@ -1,13 +1,13 @@
-.read { display: grid; gap: 20px; font-size: 13px; line-height: 1.5; min-width: 0; }
-.read h3 { font-size: 14px; font-weight: 600; margin: 0 0 6px; color: var(--ink); }
+.read { display: grid; gap: 20px; font-size: var(--fs-md); line-height: 1.5; min-width: 0; }
+.read h3 { font-size: var(--fs-body); font-weight: 600; margin: 0 0 6px; color: var(--ink); }
 .read p { margin: 0 0 4px; }
 .muted { color: var(--ink-2); }
 .mono { font-family: var(--mono); }
 .list { list-style: none; margin: 8px 0 0; padding: 0; }
 .comp { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border-bottom: 1px solid var(--rule); padding: 6px 0; }
 .compText { display: grid; min-width: 0; }
-.sub { color: var(--ink-2); font-size: 12px; }
-.comp > .mono { font-size: 13px; white-space: nowrap; }
+.sub { color: var(--ink-2); font-size: var(--fs-sm); }
+.comp > .mono { font-size: var(--fs-md); white-space: nowrap; }
 .decision { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .kvs { display: grid; grid-template-columns: 1fr auto; margin-top: 6px; }
 .kv { display: contents; }

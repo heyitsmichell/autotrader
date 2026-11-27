@@ -1,13 +1,13 @@
 /* AutopsyView styles (CSS Module). Shared primitives are global, in src/styles/. */
 
 .autopsy-table {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .autopsy-table th {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .autopsy-table td {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 8px 9px;
 }
 
@@ -15,14 +15,14 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font: 11px var(--mono);
+  font: var(--fs-xs) var(--mono);
 }
 
 .causes-table {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .causes-table th {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .causes-table td {
   padding: 8px 9px;
@@ -41,14 +41,14 @@
   transition: width 0.3s;
 }
 .strength-value {
-  font: 11px var(--mono);
+  font: var(--fs-xs) var(--mono);
   color: var(--muted);
 }
 
 /* box styles come from the global .detail-section this element also carries */
 .narration pre {
   margin: 0;
-  font: 11px var(--mono);
+  font: var(--fs-xs) var(--mono);
   color: #b8c5cc;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -75,7 +75,7 @@
   font: 700 16px var(--display);
   margin: 0;
 }
-@media (max-width: 580px) {
+@media (max-width: 720px) {
   .autopsy-detail {
     padding: 14px;
   }

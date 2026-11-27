@@ -7,6 +7,7 @@ import BannerRail from "./BannerRail";
 import CommandBar from "./CommandBar";
 import Today from "./Today";
 import Strategies from "./strategies/Strategies";
+import Risk from "./risk/Risk";
 import BacktestsHub from "./backtests/BacktestsHub";
 import ConfirmModal, { ConfirmProvider, type ConfirmRequest } from "./ConfirmModal";
 import DecisionModal from "./DecisionModal";
@@ -210,6 +211,7 @@ export default function Dashboard() {
           </Panel>}
 
           {activeTab === "strategies" && <Panel name="Strategies"><Strategies api={api} status={status} onConfirm={setConfirm} onAction={perform}/></Panel>}
+          {activeTab === "risk" && <Panel name="Risk"><Risk api={api}/></Panel>}
 
           {activeTab === "research" && <ResearchPicker api={api} swing={<>
             <Panel name="Chart"><MarketChart symbols={status?.watchlist || []} api={api} signals={signals} status={status}/></Panel>
@@ -282,7 +284,7 @@ export default function Dashboard() {
       </div>
 
       <footer className={`${css["app-footer"]}`}>
-        <span>Times are in your local timezone. Shift+K opens the kill switch.</span>
+        <span>Times are US Eastern (ET). Shift+K opens the kill switch.</span>
       </footer>
 
       {selected && <DecisionModal

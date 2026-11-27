@@ -8,7 +8,7 @@
   margin: 0;
   padding: 9px 0;
   border-bottom: 1px solid var(--rule);
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 .kv dt { color: var(--ink-2); }
 .kv dd { text-align: right; color: var(--ink); }
@@ -19,7 +19,7 @@
   gap: 16px;
   padding: 9px 0;
   border-bottom: 1px solid var(--rule);
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 .health-row dt {
   display: flex;
@@ -47,13 +47,13 @@
 .info { background: var(--ink-2); }
 .subhead {
   margin: 20px 0 4px;
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 500;
 }
 .note {
   margin: 8px 0 0;
   color: var(--ink-2);
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.5;
 }
 .alert {
@@ -62,7 +62,7 @@
   border: 1px solid var(--rule);
   border-left: 2px solid var(--warn);
   background: var(--raise);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .activity-list { display: grid; max-height: 300px; overflow: auto; }
 .activity-row {
@@ -72,10 +72,10 @@
   align-items: start;
   padding: 8px 0;
   border-bottom: 1px solid var(--rule);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .activity-row .dot { margin-top: 7px; }
-.activity-row time { color: var(--ink-2); font-size: 12px; white-space: nowrap; }
+.activity-row time { color: var(--ink-2); font-size: var(--fs-sm); white-space: nowrap; }
 .sr-only {
   position: absolute;
   width: 1px;

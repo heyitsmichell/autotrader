@@ -30,7 +30,7 @@ from ..sentiment import SentimentEngine
 from ..signals import SignalService
 from ..supervisor import Supervisor
 from ..yfinance_service import YahooFinanceService
-from . import auth, backtests_view, chart, controls, experiments, learning, ml, options, portfolio, proposals, research, promotion, research_views, results, shadows, sleeves, status, stream
+from . import auth, backtests_view, chart, controls, experiments, learning, ml, options, portfolio, proposals, research, promotion, research_views, results, risk, shadows, sleeves, status, stream
 from .auth import install_auth, new_token, write_token_file
 
 setup_logging(files=False)          # console logging + redaction as early as import time
@@ -246,7 +246,7 @@ def create_app(lifespan=lifespan, web_dir: Path | None = None, token: str | None
     for r in (auth.router, status.router, portfolio.router, proposals.router, options.router,
               learning.router, ml.router, research.router, controls.router, chart.router,
               stream.router, experiments.router, sleeves.router, shadows.router, results.router,
-              research_views.router, backtests_view.router, promotion.router):
+              research_views.router, backtests_view.router, promotion.router, risk.router):
         app.include_router(r)
 
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE"], include_in_schema=False)

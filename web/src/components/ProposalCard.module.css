@@ -2,21 +2,21 @@
 .list { display: grid; gap: 8px; }
 .item { background: var(--raise); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; display: grid; gap: 6px; min-width: 0; }
 .item:global(.expired) { opacity: 0.75; }
-.line { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 14px; }
+.line { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: var(--fs-body); }
 .sym { background: none; border: 0; padding: 0; color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; }
 .sym:hover { text-decoration: underline; }
 .buy { color: var(--gain); }
 .sell { color: var(--loss); }
-.gate { margin: 0; font-size: 13px; color: var(--ink); }
-.sub { display: flex; gap: 12px; flex-wrap: wrap; color: var(--ink-2); font-size: 12px; }
-.expiry-chip { color: var(--ink-2); font-size: 12px; }
+.gate { margin: 0; font-size: var(--fs-md); color: var(--ink); }
+.sub { display: flex; gap: 12px; flex-wrap: wrap; color: var(--ink-2); font-size: var(--fs-sm); }
+.expiry-chip { color: var(--ink-2); font-size: var(--fs-sm); }
 .expiry-chip:global(.expired) { color: var(--loss); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
-.requote-box { border-top: 1px solid var(--rule); padding-top: 8px; font-size: 12px; }
+.requote-box { border-top: 1px solid var(--rule); padding-top: 8px; font-size: var(--fs-sm); }
 .requote-box:global(.failed) { border-top-color: var(--loss); }
 .requote-title { margin-bottom: 6px; color: var(--ink-2); }
 .requote-grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; }
 .requote-grid span { color: var(--ink-2); }
 .requote-grid b { font-family: var(--mono); font-weight: 400; }
 .requote-box > :global(.inline-warning) { margin: 7px 0 0; }
-@media (max-width: 640px) { .actions :global(.button) { min-height: 44px; } }
+@media (max-width: 720px) { .actions :global(.button) { min-height: 44px; } }

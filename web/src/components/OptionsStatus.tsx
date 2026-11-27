@@ -103,7 +103,7 @@ export default function OptionsStatus({ status, api }: {
             ? (data.allowed_strategies.length > 0 ? data.allowed_strategies.join(", ") : "None specified")
             : (data.allowed_strategies || "None specified")}
         </p>
-        <h4 style={{ marginTop: 12 }}>Allowed Underlyings</h4>
+        <h4 className="mt-3">Allowed Underlyings</h4>
         <p className="muted">
           {Array.isArray(data.allowed_underlyings)
             ? (data.allowed_underlyings.length > 0 ? data.allowed_underlyings.join(", ") : "None configured")

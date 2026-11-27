@@ -1,4 +1,5 @@
 "use client";
+import { shortDate } from "@/lib/format";
 import { useEffect, useState } from "react";
 import type { Api } from "@/lib/api";
 import { pct } from "@/lib/format";
@@ -64,8 +65,8 @@ export default function TearSheet({ api, sleeve }: { api: Api; sleeve: Sleeve })
       <h3 className={css["h3"]}>Worst drawdowns</h3>
       {cur.worst_drawdowns?.length ? <div className={css["scroll"]}><table className={css["dtbl"]}>
         <thead><tr><th>Start</th><th>Trough</th><th>Recovered</th><th>Depth</th><th>Days</th></tr></thead>
-        <tbody>{cur.worst_drawdowns.map((w, i) => <tr key={i}><td>{w.start}</td><td>{w.trough}</td>
-          <td>{w.end ?? "not yet"}</td><td>{p(w.depth)}</td><td>{w.days}</td></tr>)}</tbody>
+        <tbody>{cur.worst_drawdowns.map((w, i) => <tr key={i}><td>{shortDate(w.start, true)}</td><td>{shortDate(w.trough, true)}</td>
+          <td>{w.end ? shortDate(w.end, true) : "not yet"}</td><td>{p(w.depth)}</td><td>{w.days}</td></tr>)}</tbody>
       </table></div> : <p className={css["muted"]}>No drawdowns to list.</p>}
     </>}
   </Section>;

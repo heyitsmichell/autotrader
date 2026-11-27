@@ -11,14 +11,14 @@
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
   background: none; border: 0; padding: 0; margin: 0; min-height: 44px; flex: none;
-  color: var(--ink-2); font: 400 14px var(--sans); cursor: pointer; border-radius: 0;
+  color: var(--ink-2); font: 400 var(--fs-body) var(--sans); cursor: pointer; border-radius: 0;
   transition: color 0.12s;
 }
 .tab:hover { color: var(--ink); }
 .label { position: relative; display: inline-block; padding: 4px 0; }
 .tab.on { color: var(--ink); font-weight: 500; }
 .tab.on .label::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--accent); }
-.fresh { margin-left: auto; font: 400 12px var(--mono); color: var(--ink-2); white-space: nowrap; }
+.fresh { margin-left: auto; font: 400 var(--fs-sm) var(--mono); color: var(--ink-2); white-space: nowrap; }
 .fresh.stale { color: var(--warn); }
 .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
@@ -26,7 +26,7 @@
 .mode { display: inline-flex; gap: 16px; padding-right: 8px; }
 .mode button {
   position: relative; background: none; border: 0; padding: 0; min-height: 34px;
-  color: var(--ink-2); font: 400 14px var(--sans); cursor: pointer; border-radius: 0; transition: color 0.12s;
+  color: var(--ink-2); font: 400 var(--fs-body) var(--sans); cursor: pointer; border-radius: 0; transition: color 0.12s;
 }
 .mode button:hover:not(:disabled) { color: var(--ink); }
 .mode button[aria-pressed="true"] { color: var(--ink); font-weight: 500; }
@@ -35,11 +35,16 @@
 .mode button:disabled { opacity: 0.5; cursor: not-allowed; }
 .controls .is-on { background: var(--loss); color: var(--page); }
 .controls .is-on:hover:not(:disabled) { background: var(--loss); }
-@media (max-width: 639px) {
+@media (max-width: 720px) {
   .bar { gap: 0 12px; margin-bottom: 16px; }
   .fresh { margin-left: auto; }
   .tabs { order: 3; width: 100%; gap: 20px; }
   .controls { order: 4; width: 100%; padding: 4px 0 8px; }
   .controls > :global(.button) { flex: 1 1 auto; }
   .mode button { min-height: 44px; }
+}
+.tab:focus-visible, .mode button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+@media (max-width: 720px) {
+  .tabs { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); padding-right: 24px; }
 }

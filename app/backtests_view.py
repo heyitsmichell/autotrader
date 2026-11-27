@@ -6,7 +6,9 @@ import csv
 import json
 import math
 import time
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 
@@ -38,6 +40,14 @@ def _f(v):
         x = float(v)
         return x if math.isfinite(x) else None
     except (TypeError, ValueError):
+        return None
+
+
+def _asof(path: Path) -> str | None:
+    """ET date the backtest result file was last written (its 'as of'), or None if missing."""
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, ZoneInfo("America/New_York")).date().isoformat()
+    except OSError:
         return None
 
 
@@ -128,6 +138,7 @@ def _backtest(pid: str) -> tuple[dict | None, str | None]:
             f"{rets[0][0]}..{rets[-1][0]}" if rets else None)
         return {"cagr": m["cagr"], "vol": m["vol"], "sharpe": m["sharpe"], "max_dd": m["max_dd"],
                 "window": win, "source": f"app/sleeves/reference/{pid}.csv.gz",
+                "as_of": _asof(analytics.REF_DIR / f"{pid}.csv.gz"),
                 "biased": pid in _BIASED}, None
     if pid in _SHADOW_ROWS:
         rel, name = _SHADOW_ROWS[pid]
@@ -138,7 +149,7 @@ def _backtest(pid: str) -> tuple[dict | None, str | None]:
         return {"cagr": _f(row.get("cagr")), "vol": _f(row.get("vol")), "sharpe": _f(row.get("sharpe")),
                 "max_dd": _f(row.get("maxdd")),
                 "window": _row_window(row, n),
-                "source": f"{rel}:{name}", "biased": pid in _BIASED}, None
+                "source": f"{rel}:{name}", "as_of": _asof(_data() / rel), "biased": pid in _BIASED}, None
     if pid == "swing_dynamic":
         try:
             d = json.loads((_data() / SWING_JSON).read_text(encoding="utf-8"))
@@ -149,7 +160,7 @@ def _backtest(pid: str) -> tuple[dict | None, str | None]:
         return {"cagr": _f(w.get("cagr")), "vol": None, "sharpe": _f(w.get("sharpe")),
                 "max_dd": -abs(mdd) if mdd is not None else None,
                 "window": f"{w.get('from')}..{w.get('to')}", "source": f"{SWING_JSON}:C",
-                "biased": False}, None
+                "as_of": _asof(_data() / SWING_JSON), "biased": False}, None
     return None, "no backtest source"
 
 

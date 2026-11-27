@@ -728,7 +728,7 @@ export interface RegimePayload extends ResearchBase {
 export interface BtEvidence { path: string; title?: string; exists?: boolean }
 export interface BtCard {
   id: string; name?: string; stage?: string; kind?: string; since?: string; verdict?: string;
-  backtest?: { cagr?: number | null; vol?: number | null; sharpe?: number | null; max_dd?: number | null; window?: string | null; source?: string | null; biased?: boolean } | null;
+  backtest?: { cagr?: number | null; vol?: number | null; sharpe?: number | null; max_dd?: number | null; window?: string | null; source?: string | null; as_of?: string | null; biased?: boolean } | null;
   live?: { days?: number | null; return_pct?: number | null; sharpe?: number | null; max_dd?: number | null } | null;
   trials?: { lab?: string; n?: number } | null;
   evidence?: BtEvidence[]; compare_to?: string | null; note?: string | null;
@@ -760,4 +760,50 @@ export interface PromotionCriterion {
 export interface PromotionCheck {
   shadow: string; target: string; days: number; min_days: number; criteria: PromotionCriterion[];
   passed: boolean; verdict: string; first_day: string | null; last_day: string | null;
+}
+
+// ---- Risk tab (GET /api/risk, GET /api/risk/options) ----
+export interface RiskSleeve {
+  id: string; name: string; equity: number | null; var95: number | null; es95: number | null;
+  var95_pct: number | null; vol_ann_pct: number | null; beta_spy: number | null;
+  contribution_pct: number | null; n_positions: number | null;
+}
+export interface RiskHolding {
+  symbol: string; kind: string; sleeves: string[]; market_value: number | null; weight_pct: number | null;
+  vol_ann_pct: number | null; beta_spy: number | null; contribution_pct: number | null;
+}
+export interface RiskStress {
+  name: string; kind: string; date: string | null; spy_pct: number | null;
+  pnl: number | null; pnl_pct: number | null; by_sleeve: Record<string, number | null>;
+}
+export interface RiskDrawdown {
+  peak: string | null; trough: string | null; recovery: string | null; depth_pct: number | null; days: number | null;
+}
+export interface RiskReport {
+  error?: boolean; as_of: string | null; lookback_days: number | null; cached: boolean | null; method: string | null; warnings: string[];
+  account: {
+    equity: number | null; var95: number | null; var99: number | null; es95: number | null; es99: number | null;
+    var95_pct: number | null; vol_ann_pct: number | null; beta_spy: number | null;
+    gross_exposure: number | null; net_exposure: number | null; delta_dollars: number | null;
+  };
+  sleeves: RiskSleeve[];
+  holdings: RiskHolding[];
+  concentration: { top5_pct: number | null; shared_symbols: { symbol: string; sleeves: string[]; market_value: number | null }[] };
+  correlation: { ids: string[]; holdings: (number | null)[][] | null; live: (number | null)[][] | null; live_days: number | null };
+  stress: RiskStress[];
+  drawdowns: Record<string, RiskDrawdown[]>;
+}
+export interface RiskOptionPosition {
+  symbol: string; underlying: string; sleeve: string; right: string; strike: number | null; expiry: string | null;
+  dte: number | null; qty: number | null; mark: number | null; iv: number | null; iv_source: string | null; spot: number | null;
+  delta_dollars: number | null; gamma_dollars_1pct: number | null; vega_dollars: number | null; theta_dollars: number | null;
+  breakeven: number | null; max_loss: number | null; assignment_cash: number | null; sleeve_cash: number | null;
+}
+export interface RiskOptions {
+  error?: boolean; cached?: boolean | null; as_of: string | null; rate: number | null; warnings: string[];
+  positions: RiskOptionPosition[];
+  grid: {
+    spot_pct: number[]; iv_shift_pct: number[]; horizons: { label: string; days: number | null }[];
+    pnl: Record<string, number[][][]>; total: number[][][];
+  };
 }
