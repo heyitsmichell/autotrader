@@ -75,7 +75,8 @@ async def test_strategies_with_files_and_live(app, data):
     assert r.status_code == 200
     cards = r.json()["cards"]
     assert [c["id"] for c in cards] == ["swing", "momentum", "putwrite", "vaa",
-                                         "mom_skip1w", "overnight_mom", "vaa_g4", "swing_dynamic"]
+                                         "mom_skip1w", "overnight_mom", "vaa_g4", "swing_dynamic",
+                                         "crypto_trend", "ibit_put_trend", "ibit_put_always"]
     by = {c["id"]: c for c in cards}
     assert by["momentum"]["backtest"]["cagr"] is not None and by["momentum"]["backtest"]["biased"] is True
     assert by["momentum"]["live"]["days"] == 5 and by["momentum"]["live"]["return_pct"] == pytest.approx(5.0)
@@ -121,7 +122,7 @@ async def test_pipeline_stages_and_shadow_vs_live(app, data):
     st = r.json()["stages"]
     assert set(st) == {"live", "shadow", "rejected"}
     assert [e["id"] for e in st["live"]] == ["swing", "momentum", "putwrite", "vaa"]
-    assert len(st["shadow"]) == 4 and len(st["rejected"]) >= 8
+    assert len(st["shadow"]) == 7 and len(st["rejected"]) >= 8
     sh = next(e for e in st["shadow"] if e["id"] == "mom_skip1w")
     assert sh["compare_to"] == "momentum"
     assert sh["live_stats"]["return_pct"] == pytest.approx(10.0)

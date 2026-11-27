@@ -97,7 +97,7 @@ def shadow_rows(db, shadow: str | None, days: int, sell_pnl: dict | None = None)
         args.append(shadow)
     if sell_pnl is None:
         sell_pnl = shadow_trips(db)[1]
-    return [_row(r["ts"], r["shadow"], False, r["symbol"], "stock", r["side"], r["qty"], r["price"],
+    return [_row(r["ts"], r["shadow"], False, r["symbol"], _shadow_kind(r["symbol"]), r["side"], r["qty"], r["price"],
                  "filled", sell_pnl.get(r["id"]), r.get("reason"), "shadow")
             for r in db._rows(f"SELECT * FROM shadow_trades WHERE {' AND '.join(where)} ORDER BY id", *args)]
 
@@ -367,8 +367,14 @@ def sleeve_trips(db):
     return _fifo(_sleeve_fills(db), "sleeve", True, held)
 
 
+def _shadow_kind(symbol: str) -> str:
+    """Option shadows (app/shadows/options.py) store OCC symbols; everything else is stock."""
+    return "option" if parse_occ(symbol) else "stock"
+
+
 def shadow_trips(db):
-    return _fifo([{**r, "kind": "stock"} for r in _shadow_fills(db)], "shadow", False)
+    # option shadows record expiry as a closing BUY/SELL at intrinsic, so no synthetic EXPIRE is needed
+    return _fifo([{**r, "kind": _shadow_kind(r["symbol"])} for r in _shadow_fills(db)], "shadow", False)
 
 
 def _avg(a: list) -> float | None:

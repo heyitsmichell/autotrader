@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from ..sleeves.strategies import vaa
-from .registry import VAA_G4_DEFENSE, VAA_G4_OFFENSE
+from .registry import CRYPTO_ETF, VAA_G4_DEFENSE, VAA_G4_OFFENSE
 
 
 def _top(score: pd.Series, n: int) -> dict[str, float]:
@@ -89,6 +89,56 @@ def amihud_quality_targets(closes: pd.DataFrame, volumes: pd.DataFrame, n: int =
     return _top(score[elig.reindex(score.index).fillna(False)], n)
 
 
+# ---- crypto trend (scripts/crypto_trend_study.py, default rule "ens_all|vt40")
+TREND_SMA = (50, 100, 150, 200)
+TREND_TSM = (21, 63, 126, 252)
+CRYPTO_VOL_TARGET = 0.40
+CRYPTO_VOL_WINDOW = 21
+
+
+def nyse_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep NYSE trading days only (crypto trades every day; the ETFs and the study do not)."""
+    from ..market import is_trading_day
+    if df is None or df.empty:
+        return df
+    keep = [is_trading_day(pd.Timestamp(i).date()) for i in df.index]
+    return df[keep]
+
+
+def trend_signal(close: pd.Series, rule: str = "ens_all") -> float | None:
+    """Trend exposure 0..1 at the LAST row: "ens_all" = mean of 8 tests (close > SMA n for n in TREND_SMA;
+    close > close n rows ago for n in TREND_TSM). None when there is not enough history."""
+    c = close.dropna()
+    if len(c) < max(TREND_SMA + TREND_TSM) + 1:
+        return None
+    last = float(c.iloc[-1])
+    sma = [last > float(c.iloc[-n:].mean()) for n in TREND_SMA]
+    tsm = [last > float(c.iloc[-1 - n]) for n in TREND_TSM]
+    tests = {"ens_all": sma + tsm, "ens_sma": sma, "ens_tsm": tsm}.get(rule)
+    if tests is None:
+        raise ValueError(f"unknown trend rule {rule!r}")
+    return sum(tests) / len(tests)
+
+
+def crypto_trend_targets(closes: pd.DataFrame, vol_target: float = CRYPTO_VOL_TARGET) -> dict[str, float]:
+    """{ETF: weight}: per coin 1/n x trend_signal x min(1, vol_target / 21-day vol). Rows must already be
+    NYSE days and completed bars. Empty dict (= keep waiting) when any coin lacks history; a zero weight
+    is returned explicitly so the shadow sells."""
+    if closes is None or closes.empty or any(s not in closes.columns for s in CRYPTO_ETF):
+        return {}
+    out = {}
+    for sym, etf in CRYPTO_ETF.items():
+        c = closes[sym].dropna()
+        sig = trend_signal(c)
+        r = c.pct_change().dropna().iloc[-CRYPTO_VOL_WINDOW:]
+        if sig is None or len(r) < CRYPTO_VOL_WINDOW:
+            return {}
+        vol = float(r.std(ddof=1) * math.sqrt(252))
+        scale = min(1.0, vol_target / vol) if vol > 0 else 0.0
+        out[etf] = round(sig * scale / len(CRYPTO_ETF), 4)
+    return out
+
+
 def compute(shadow_id: str, ohlc: dict, n: int = 10) -> dict[str, float]:
     if shadow_id == "mom_skip1w":
         return mom_skip1w_targets(ohlc.get("close"), n)
@@ -98,4 +148,6 @@ def compute(shadow_id: str, ohlc: dict, n: int = 10) -> dict[str, float]:
         return vaa_g4_targets(ohlc.get("close"))
     if shadow_id == "amihud_quality":
         return amihud_quality_targets(ohlc.get("close"), ohlc.get("volume"), n)
+    if shadow_id == "crypto_trend":
+        return crypto_trend_targets(ohlc.get("close"))
     return {}

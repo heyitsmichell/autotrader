@@ -18,7 +18,7 @@ from ..broker import BrokerError
 from ..market import is_trading_day, market_is_open, now_et, now_utc
 from ..sleeves import data
 from ..sleeves.manager import next_rebalance_day
-from . import registry, strategies, swing_dynamic
+from . import options, registry, strategies, swing_dynamic
 
 log = logging.getLogger("app.shadows")
 TICK_SECONDS = 60.0
@@ -87,8 +87,11 @@ class ShadowManager:
         window = self._trading_window()
         for d in registry.SHADOWS:
             try:
-                if not d.monthly:
+                if d.mode == "replay":
                     await self._replay_tick(d)
+                    continue
+                if d.mode == "option":
+                    await options.step(self, d, window)
                     continue
                 if window and self._due_month(d.id):
                     await self._rebalance(d)
@@ -151,6 +154,9 @@ class ShadowManager:
     def _due_month(self, sid: str) -> bool:
         if sid == "amihud_quality":
             return self._due_days(sid, strategies.AMIHUD_REBALANCE_DAYS)
+        if registry.get(sid).daily:     # crypto_trend: checked once per trading day (the band decides trades)
+            last = (self.db.shadow_state(sid) or {}).get("last_rebalance")
+            return not last or datetime.fromisoformat(last).date() != now_et().date()
         last = (self.db.shadow_state(sid) or {}).get("last_rebalance")
         if not last:
             return True
@@ -221,6 +227,9 @@ class ShadowManager:
                 if p:
                     cache["prices"][h["symbol"]] = p
             cache["at"] = time.monotonic()
+        self._record_equity(sid)
+
+    def _record_equity(self, sid: str) -> None:
         eq, _ = self._equity(sid)
         if is_trading_day(now_et().date()):          # no equity rows on weekends/holidays
             self.db.record_shadow_equity(now_et().date().isoformat(), sid, eq)
@@ -232,21 +241,56 @@ class ShadowManager:
     def _equity(self, sid: str) -> tuple[float, float]:
         """(equity, invested) from cash plus holdings at the cached price (cost as the fallback)."""
         d = registry.get(sid)
-        if not d.monthly:
+        if d.mode == "replay":
             rows = [r[sid] for r in self.db.shadow_equity_series(3650) if r.get(sid) is not None]
             if rows:
                 return round(float(rows[-1]), 2), 0.0
         prices = self._px.get(sid, {}).get("prices", {})
         cash = self._cash(sid)
-        invested = sum(float(h["qty"]) * float(prices.get(h["symbol"]) or h.get("avg_cost") or 0.0)
+        mult = options.MULTIPLIER if d.mode == "option" else 1.0
+        invested = sum(float(h["qty"]) * mult * float(prices.get(h["symbol"]) or h.get("avg_cost") or 0.0)
                        for h in self.db.shadow_holdings(sid))
         return round(cash + invested, 2), round(invested, 2)
+
+    # ------------------------------------------------------------------ daily signal data (crypto_trend, option gates)
+    async def crypto_closes(self, symbols: list[str]):
+        """Completed NYSE-day Yahoo closes for ``symbols`` (2 years), downloaded at most once per day per
+        symbol. A bar dated today (crypto: the UTC day is still running) is dropped."""
+        import pandas as pd
+        today = now_et().date()
+        cache = self.__dict__.setdefault("_daily_closes", {})
+        if cache.get("day") != today.isoformat():
+            cache.clear()
+            cache["day"] = today.isoformat()
+        miss = [x for x in symbols if x not in cache]
+        if miss and time.monotonic() >= cache.get("retry_after", 0.0):
+            ohlc = await asyncio.to_thread(data.daily_ohlc, list(miss), "2y")
+            close = ohlc.get("close")
+            if close is None or close.empty:
+                cache["retry_after"] = time.monotonic() + 1800
+            else:
+                close = strategies.nyse_rows(close[[pd.Timestamp(i).date() < today for i in close.index]])
+                for c in close.columns:
+                    if c in miss:
+                        cache[c] = close[c].dropna()
+        have = {x: cache[x] for x in symbols if x in cache}
+        return pd.DataFrame(have) if have else pd.DataFrame()
+
+    async def gate_value(self, gate: tuple[str, str] | None) -> float | None:
+        """Trend gate 0..1 at the last completed close; 1.0 without a gate; None when data is missing."""
+        if gate is None:
+            return 1.0
+        sym, rule = gate
+        close = await self.crypto_closes([sym])
+        if close is None or close.empty or sym not in close.columns:
+            return None
+        return strategies.trend_signal(close[sym], rule)
 
     # ------------------------------------------------------------------ rebalance (virtual fills)
     async def _targets(self, d: registry.ShadowDef) -> dict[str, float] | None:
         meta = _meta(self.db.shadow_state(d.id))
         month = now_et().strftime("%Y-%m")
-        if d.id == "amihud_quality":
+        if d.id == "amihud_quality" or d.daily:
             month = now_et().date().isoformat()         # signal recomputed per rebalance day
         if meta.get("targets_month") == month and meta.get("targets") is not None:
             return meta["targets"]
@@ -257,6 +301,8 @@ class ShadowManager:
             for k, df in list(ohlc.items()):          # signal at the last COMPLETED close: drop today's bar
                 if len(df) and df.index[-1].date() >= now_et().date():
                     ohlc[k] = df.iloc[:-1]
+        elif d.kind == "crypto_trend":
+            ohlc = {"close": await self.crypto_closes(d.symbols())}
         else:
             ohlc = await asyncio.to_thread(data.daily_ohlc, d.symbols())
         close = ohlc.get("close")
@@ -294,6 +340,12 @@ class ShadowManager:
         equity = self._cash(sid) + sum(float(h["qty"]) * prices.get(s, float(h.get("avg_cost") or 0))
                                        for s, h in held.items())
         want = {s: int(math.floor(equity * w / (prices[s] * (1 + cost)))) for s, w in tg.items()}
+        if d.band and equity > 0:     # no-trade band: keep a non-zero holding whose weight is close to target
+            for sym, w in tg.items():
+                cur = float((held.get(sym) or {}).get("qty") or 0)
+                if w > 0 and cur > 0 and abs(cur * prices[sym] / equity - w) < d.band:
+                    want[sym] = int(math.floor(cur))
+        n_trades = len(self.db.shadow_trades(sid, 1_000_000))
         # sells first (names that dropped out, and trims), then buys from the cash raised
         for sym, h in sorted(held.items()):
             q = float(h["qty"])
@@ -321,7 +373,8 @@ class ShadowManager:
         self._px[sid]["at"] = time.monotonic()
         self.db.upsert_shadow_state(sid, last_rebalance=now_et().isoformat(timespec="seconds"))
         top = ", ".join(f"{k} {v:.0%}" for k, v in sorted(tg.items(), key=lambda kv: -kv[1]))
-        self.db.log("info", f"Shadow {d.name}: rebalanced (virtual) to {top}")
+        if not d.daily or len(self.db.shadow_trades(sid, 1_000_000)) != n_trades:   # daily: log only real trades
+            self.db.log("info", f"Shadow {d.name}: rebalanced (virtual) to {top}")
 
     # ------------------------------------------------------------------ controls
     def reset(self, sid: str) -> None:
@@ -353,8 +406,13 @@ class ShadowManager:
             sd = (sum((x - m) ** 2 for x in rets) / (len(rets) - 1)) ** 0.5
             sharpe = round(m / sd * math.sqrt(252), 2) if sd > 0 else None
         last_rb = st.get("last_rebalance")
-        nxt = (self._next_replay_day(d.id) if not d.monthly else next_rebalance_day(datetime.fromisoformat(last_rb).date()).isoformat()
+        nxt = (self._next_replay_day(d.id) if d.mode == "replay" else next_rebalance_day(datetime.fromisoformat(last_rb).date()).isoformat()
                if last_rb else now_et().date().isoformat())
+        if d.daily:
+            today = now_et().date()
+            done = (last_rb or "")[:10] == today.isoformat()
+            nxt = (today.isoformat() if not done and is_trading_day(today)
+                   else self._next_trading_days(today.isoformat(), 1))
         if d.id == "amihud_quality":
             nxt = self._next_trading_days(last_rb or st.get("start_date"), strategies.AMIHUD_REBALANCE_DAYS if last_rb else 1)
         return {
@@ -378,13 +436,14 @@ class ShadowManager:
         d = registry.get(sid)
         base = self._view(d, self.db.shadow_equity_series(3650))
         eq = base.get("equity") or 0
-        prices = (self._px.get(sid, {}).get("prices", {}) if registry.get(sid).monthly
+        prices = (self._px.get(sid, {}).get("prices", {}) if d.mode != "replay"
                   else _meta(self.db.shadow_state(sid)).get("last_prices", {}))
+        mult = options.MULTIPLIER if d.mode == "option" else 1.0
         holdings = []
         for h in self.db.shadow_holdings(sid):
             q, cost = float(h["qty"]), _f(h.get("avg_cost"))
             last = prices.get(h["symbol"]) or cost
-            mv = q * (last or 0)
+            mv = q * mult * (last or 0)
             holdings.append({"symbol": h["symbol"], "qty": q, "avg_cost": cost, "last": last,
                              "market_value": round(mv, 2),
                              "weight_pct": round(mv / eq * 100, 2) if eq else None})

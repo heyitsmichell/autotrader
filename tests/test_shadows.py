@@ -119,7 +119,7 @@ async def test_rebalance_and_valuation_never_touch_order_methods(env):
     m, db = env.mgr, env.db
     await m.tick()
     assert m.last_error is None
-    for d in [x for x in registry.SHADOWS if x.monthly and x.id != "amihud_quality"]:   # amihud: first rebalance next trading day
+    for d in [x for x in registry.SHADOWS if x.kind in ("sp500", "vaa_g4")]:   # amihud: first rebalance next day; crypto/options: own tests
         st = db.shadow_state(d.id)
         assert st["last_rebalance"] and st["cash"] >= 0
         hold = db.shadow_holdings(d.id)
