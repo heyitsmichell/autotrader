@@ -26,7 +26,7 @@ from ..portfolio import ACTIVE, DONE_CANCELLED, parse_orders
 from ..portfolio_parsing import _age as _row_age_seconds
 from ..risk import OptionRiskManager, RiskManager
 from ..sizing import max_allowed_qty, ml_size_factor, overnight_scaled_qty, volatility_scaled_qty
-from .util import (MAX_PROPOSALS_PER_RUN, _coid, _is_option_symbol, _session_rejection,
+from .util import (_coid, _is_option_symbol, _session_rejection,
                    classify_order_error, normalize_proposal)
 
 log = logging.getLogger("app.engine")

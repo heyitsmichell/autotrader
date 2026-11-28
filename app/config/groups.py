@@ -30,7 +30,7 @@ GROUP_FIELDS: dict[str, tuple[str, ...]] = {
         "max_daily_loss_usd", "price_band_pct", "proposal_ttl_minutes", "max_risk_per_trade_usd",
         "sl_atr_mult", "tp_atr_mult", "min_sl_pct", "max_sl_pct", "bracket_orders",
         "kill_max_drawdown_pct", "kill_daily_loss_usd", "kill_max_consecutive_errors",
-        "kill_action", "flatten_slippage_pct", "max_sector_exposure_pct", "max_correlation",
+        "kill_action", "flatten_slippage_pct", "max_sector_exposure_pct",
         "max_adds_per_symbol", "block_add_to_loser", "equity_quote_max_age_seconds",
         "risk_loop_seconds", "symbol_whitelist", "db_retention_days",
     ),
@@ -76,7 +76,7 @@ GROUP_FIELDS: dict[str, tuple[str, ...]] = {
     ),
     "LLMSettings": (
         "llm_model", "groq_fallback_model", "nvidia_nim_model", "llm_min_cycle_minutes",
-        "llm_timeout_seconds", "llm_deadline_seconds", "max_agent_iterations",
+        "llm_timeout_seconds", "llm_deadline_seconds",
         "agent_result_chars", "agent_old_result_chars", "sizing_mode", "headline_max_chars",
         "yfinance_timeout_seconds", "yfinance_negative_ttl_seconds",
         "yfinance_breaker_failures", "yfinance_breaker_cooldown_seconds",

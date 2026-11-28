@@ -76,7 +76,6 @@ def load_settings() -> Settings:
         max_daily_loss_usd=_float("MAX_DAILY_LOSS_USD", 200.0),
         price_band_pct=_float("PRICE_BAND_PCT", 1.0),
         proposal_ttl_minutes=_int("PROPOSAL_TTL_MINUTES", 30),
-        max_agent_iterations=_int("MAX_AGENT_ITERATIONS", 20),
         research_scan_minutes=max(0, _int("RESEARCH_SCAN_MINUTES", 60)),
         auto_trade_research_candidates=_bool("AUTO_TRADE_RESEARCH_CANDIDATES", False),
         realtime_source=_str("REALTIME_SOURCE", "auto").lower(),
@@ -262,7 +261,6 @@ def load_settings() -> Settings:
 
         # Diversification limits (Task 3)
         max_sector_exposure_pct=max(0.0, min(100.0, _float("MAX_SECTOR_EXPOSURE_PCT", 30.0))),
-        max_correlation=max(0.0, min(1.0, _float("MAX_CORRELATION", 0.70))),
         sector_map=_str("SECTOR_MAP", "XLK:Technology,XLF:Financials,XLV:Healthcare,XLE:Energy,XLI:Industrials,XLP:Staples,XLY:Discretionary,XLB:Materials,XLRE:RealEstate,XLU:Utilities,XLC:Communication,SPY:Broad,QQQ:Tech,VTI:Broad,IEFA:Intl,VWO:EM"),
 
         # Options trading (Phase B)

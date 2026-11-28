@@ -96,7 +96,6 @@ class CoreMixin(_Host):
         self._cycle_active = False
         self._scheduler: asyncio.Task | None = None
         self.on_order = None   # callback after an order is placed (refreshes portfolio cache)
-        self._proposal_attempts = {}
         self._last_llm_run: datetime | None = None
         self._min_llm_cycle_seconds = settings.llm_min_cycle_minutes * 60  # LLM_MIN_CYCLE_MINUTES
         # M4: cold-path signals land here; the slow cycle and the fast loop only read it.
@@ -304,6 +303,3 @@ class CoreMixin(_Host):
             self.order_failures += 1
         self.last_failure = message
 
-    # In-memory counter for proposal attempts per run (includes early rejections)
-    # This ensures the per-run cap counts ALL attempts, not just ones that reach the DB.
-    _proposal_attempts: dict[int, int]

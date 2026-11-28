@@ -214,13 +214,13 @@ async def test_kill_switch_and_non_long_and_not_allowed(eng):
     assert await eng.propose_option_entries(2, [sig()]) == 0
 
 
-async def test_routes_through_on_proposal_and_caps_candidates(eng):
+async def test_routes_through_on_proposal_no_candidate_cap(eng):
     with_settings(eng, options_allowed_underlyings=[f"S{c}" for c in "ABCDEFGH"])
     sigs = [sig(f"S{c}") for c in "ABCDEFGH"]
     # the fake chain returns the requested underlying's symbols
     n = await eng.propose_option_entries(1, sigs)
-    assert n == 5 and len(eng.captured) == 5            # candidate cap per run
-    assert eng.broker.calls["contracts"] == 5 and eng.broker.calls["snap"] == 5
+    assert n == 8 and len(eng.captured) == 8            # no per-run candidate cap
+    assert eng.broker.calls["contracts"] == 8 and eng.broker.calls["snap"] == 8
 
 
 async def test_deterministic_cycle_calls_option_entries(eng, monkeypatch):

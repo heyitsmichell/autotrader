@@ -60,7 +60,7 @@ from .rebalance import RebalanceMixin
 from .reconcile import ReconcileMixin
 from .risk_loop import RiskLoop, RiskLoopMixin
 from .scheduler import SchedulerMixin
-from .util import (MAX_PROPOSALS_PER_RUN, _coid, _is_option_symbol, _session_rejection,  # noqa: F401
+from .util import (_coid, _is_option_symbol, _session_rejection,  # noqa: F401
                    normalize_proposal, parse_occ)
 from .workers import Workers, WorkersMixin
 
@@ -87,7 +87,7 @@ class Engine(CoreMixin, CycleMixin, ProposalsMixin, OptionsFlowMixin, OptionEntr
 TradingEngine = Engine
 
 __all__ = [
-    "AUTO_APPLICABLE", "Engine", "HeldOption", "MAX_PROPOSALS_PER_RUN", "NEVER_AUTO_APPLY",
+    "AUTO_APPLICABLE", "Engine", "HeldOption", "NEVER_AUTO_APPLY",
     "OptionExitManager", "PROPOSAL_STATUSES", "RiskLoop", "TradingEngine", "Workers",
     "_coid", "_is_option_symbol", "_session_rejection", "evaluate_exit", "iv_rank",
     "normalize_iv", "normalize_proposal", "parse_held_options", "parse_occ",

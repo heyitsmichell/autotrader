@@ -7,8 +7,6 @@ import uuid
 
 from ..broker import BrokerError
 
-MAX_PROPOSALS_PER_RUN = 8  # includes rejected ones, so the analyst can correct a few
-
 
 def normalize_proposal(args: dict) -> dict:
     def as_int(v):

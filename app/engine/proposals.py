@@ -21,7 +21,7 @@ from ..market import (market_is_open, market_is_open_extended, now_et, now_utc, 
 from ..portfolio import ACTIVE, DONE_CANCELLED, parse_orders
 from ..risk import OptionRiskManager, RiskManager, working_buy_symbols
 from ..sizing import max_allowed_qty, ml_size_factor, volatility_scaled_qty
-from .util import (MAX_PROPOSALS_PER_RUN, _coid, _is_option_symbol, _session_rejection,
+from .util import (_coid, _is_option_symbol, _session_rejection,
                    normalize_proposal)
 
 log = logging.getLogger("app.engine")
@@ -67,8 +67,6 @@ class ProposalsMixin(_Host):
         buys_generated = 0
         working_syms = working_buy_symbols(self.db)   # followup-correctness: no re-propose
         for sig in sigs:
-            if proposals_generated >= MAX_PROPOSALS_PER_RUN:
-                break
             if ml_ranked and buys_generated >= self.s.ml_first_top_n:
                 break
 
@@ -168,8 +166,6 @@ class ProposalsMixin(_Host):
         self.db.set_kv("profit_state_symbols", state_symbols)
 
         for symbol, qty in positions.items():
-            # NOTE: no MAX_PROPOSALS_PER_RUN break here. Exits must never be starved by BUY
-            # proposals that used up the per-run cap earlier in this same method.
             if qty <= 0:
                 continue
 
@@ -295,12 +291,6 @@ class ProposalsMixin(_Host):
                  "position_intent": args.get("position_intent")}):
             return f"REJECTED (kill switch): {self.kill_reason or 'kill switch is on'}"
 
-        # Count ALL proposal attempts (including early rejections) toward the per-run cap
-        is_sell = str(args.get("side", "")).upper() == "SELL"
-        if not is_sell:   # exits are never throttled by the BUY proposal cap
-            self._proposal_attempts[run_id] = self._proposal_attempts.get(run_id, 0) + 1
-        if self._proposal_attempts.get(run_id, 0) > MAX_PROPOSALS_PER_RUN:
-            return f"REJECTED: at most {MAX_PROPOSALS_PER_RUN} proposals per run. Stop proposing."
 
         # Validate arguments at the tool boundary before creating a proposal row
         try:

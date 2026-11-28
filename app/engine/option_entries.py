@@ -27,7 +27,6 @@ from .util import _is_option_symbol, parse_occ
 log = logging.getLogger("app.engine")
 
 _OCC_TOKEN = re.compile(r"\b[A-Z]{1,5}\d{6}[CP]\d{8}\b")
-MAX_CANDIDATES_PER_RUN = 5
 STRIKES_TO_QUOTE = 8
 
 
@@ -140,11 +139,8 @@ class OptionEntriesMixin(_Host):
             cands = sorted(cands, key=lambda x: -_pre(x))
 
         accepted = 0
-        tried = 0
         for sig in cands:
             sym = sig["symbol"]
-            if tried >= MAX_CANDIDATES_PER_RUN:
-                break
             if sym in busy:
                 self._entry_skip(run_id, (sym, "busy"),
                                  f"{sym} call skipped: {busy[sym]} on {sym}")
@@ -166,7 +162,6 @@ class OptionEntriesMixin(_Host):
                     self._entry_skip(run_id, (sym, "earnings"),
                                      f"{sym} call skipped: {er.reason}")
                     continue
-            tried += 1
             try:
                 arm = (options_ml.explore_arm(run_id, sym, now.date(), s) if ml_on else None)
                 p = await self._select_call(run_id, sig, now, arm=arm)

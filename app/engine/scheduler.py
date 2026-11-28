@@ -21,7 +21,7 @@ from ..market import (market_is_open, market_is_open_extended, now_et, now_utc, 
 from ..portfolio import ACTIVE, DONE_CANCELLED, parse_orders
 from ..risk import OptionRiskManager, RiskManager
 from ..sizing import max_allowed_qty, ml_size_factor, volatility_scaled_qty
-from .util import (MAX_PROPOSALS_PER_RUN, _coid, _is_option_symbol, _session_rejection,
+from .util import (_coid, _is_option_symbol, _session_rejection,
                    normalize_proposal)
 
 log = logging.getLogger("app.engine")

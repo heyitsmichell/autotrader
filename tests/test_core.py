@@ -42,7 +42,6 @@ def make_settings(**overrides) -> Settings:
         "max_daily_loss_usd": 200,
         "price_band_pct": 1.0,
         "proposal_ttl_minutes": 30,
-        "max_agent_iterations": 20,
         "research_scan_minutes": 60,
         "auto_trade_research_candidates": False,
         "realtime_source": "auto",

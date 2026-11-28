@@ -39,7 +39,6 @@ class Settings:
     price_band_pct: float
     proposal_ttl_minutes: int
 
-    max_agent_iterations: int
     research_scan_minutes: int  # 0 = manual only; otherwise refresh on this interval
     auto_trade_research_candidates: bool
 
@@ -303,8 +302,7 @@ class Settings:
     ml_min_auc: float = 0.51          # ML_MIN_AUC: minimum mean AUC for model promotion
 
     # Diversification limits (Task 3)
-    max_sector_exposure_pct: float = 30.0  # MAX_SECTOR_EXPOSURE_PCT
-    max_correlation: float = 0.70          # MAX_CORRELATION
+    max_sector_exposure_pct: float = 30.0  # MAX_SECTOR_EXPOSURE_PCT: backtest only; live does not enforce it (user 2026-11-28)
     sector_map: str = "XLK:Technology,XLF:Financials,XLV:Healthcare,XLE:Energy,XLI:Industrials,XLP:Staples,XLY:Discretionary,XLB:Materials,XLRE:RealEstate,XLU:Utilities,XLC:Communication,SPY:Broad,QQQ:Tech,VTI:Broad,IEFA:Intl,VWO:EM"
 
     # --- Wave 1 additions (docs/ARCHITECTURE_CONTRACTS.md section 2) ---
